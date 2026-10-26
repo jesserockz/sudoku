@@ -33,6 +33,13 @@ kotlin {
     }
 
     sourceSets {
+        commonMain.dependencies {
+            api(libs.kotlinx.datetime)
+        }
+        jsMain.dependencies {
+            // kotlinx-datetime needs the IANA database on JS for Pacific/Auckland.
+            implementation(npm("@js-joda/timezone", libs.versions.js.joda.timezone.get()))
+        }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
         }
