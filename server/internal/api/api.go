@@ -4,6 +4,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jesserockz/sudoku/server/internal/auth"
@@ -20,6 +21,8 @@ type Deps struct {
 	Clock    clock.Clock
 	Store    *store.Store
 	Verifier auth.Verifier
+	// Web serves the web client for every other GET path; nil disables it.
+	Web http.Handler
 }
 
 type Server struct {
@@ -51,6 +54,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/me/results", s.requireAuth(s.getMyResults))
 	s.mux.HandleFunc("POST /api/v1/results", s.requireAuth(s.postResult))
 	s.mux.HandleFunc("GET /api/v1/leaderboard", s.requireAuth(s.getLeaderboard))
+	if s.deps.Web != nil {
+		s.mux.HandleFunc("GET /", s.static)
+	}
 }
 
 // today is the current game date in the configured timezone.
@@ -63,6 +69,17 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// static serves the web client, but never for API or health paths: an
+// unknown API route must stay a JSON 404, not the client's index.html.
+func (s *Server) static(w http.ResponseWriter, r *http.Request) {
+	p := r.URL.Path
+	if p == "/api" || strings.HasPrefix(p, "/api/") || p == "/healthz" {
+		httpx.Error(w, http.StatusNotFound, httpx.CodeNotFound, "not found")
+		return
+	}
+	s.deps.Web.ServeHTTP(w, r)
 }
 
 // jsonFallback serves requests no route matches with the JSON error envelope
