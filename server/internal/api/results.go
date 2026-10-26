@@ -15,7 +15,6 @@ import (
 // Sanity caps from docs/API.md.
 const (
 	minLevel       = 1
-	maxLevel       = 5
 	minElapsedMs   = 5_000
 	maxElapsedMs   = 86_400_000
 	maxDaysBack    = 8
@@ -57,6 +56,15 @@ func (s *Server) postResult(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, httpx.CodeInvalidResult, err.Error())
 		return
 	}
+	levels, err := s.levelsFor(r.Context(), date)
+	if err != nil {
+		httpx.Internal(w, r, err)
+		return
+	}
+	if *req.Level > levels {
+		httpx.Error(w, http.StatusBadRequest, httpx.CodeInvalidResult, fmt.Sprintf("level must be %d..%d on %s", minLevel, levels, date))
+		return
+	}
 
 	stored, created, err := s.deps.Store.InsertResult(r.Context(), store.Result{
 		UserID:      currentUser(r).ID,
@@ -76,10 +84,11 @@ func (s *Server) postResult(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, status, toResultJSON(stored))
 }
 
-// validateResult applies the sanity caps relative to today.
+// validateResult applies the sanity caps relative to today. The level's
+// upper bound depends on the date's week and is checked by the caller.
 func validateResult(req submitRequest, today week.Date) (week.Date, error) {
-	if l := *req.Level; l < minLevel || l > maxLevel {
-		return week.Date{}, fmt.Errorf("level must be %d..%d", minLevel, maxLevel)
+	if *req.Level < minLevel {
+		return week.Date{}, fmt.Errorf("level must be at least %d", minLevel)
 	}
 	if ms := *req.ElapsedMs; ms < minElapsedMs {
 		return week.Date{}, errors.New("elapsedMs below minimum")

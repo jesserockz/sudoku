@@ -5,6 +5,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 	// Embed zoneinfo so any IANA timezone works without system tzdata.
@@ -22,6 +23,13 @@ const (
 // the weekly seed HMAC, so a short one would make seeds guessable.
 const minSecretLen = 16
 
+// Bounds and default for the number of puzzle levels per day.
+const (
+	DefaultLevels = 5
+	MinLevels     = 1
+	MaxLevels     = 10
+)
+
 // DefaultTimezone is the game timezone when none is configured.
 const DefaultTimezone = "UTC"
 
@@ -38,6 +46,9 @@ type Config struct {
 	// Timezone is the IANA zone that defines the game's days and weeks for
 	// every player, regardless of host or device timezone.
 	Timezone string `toml:"timezone"`
+	// Levels is the number of puzzles (difficulty levels 1..Levels) per day.
+	// A change applies from the next ISO week; see store.ScheduleLevels.
+	Levels int `toml:"levels"`
 
 	Auth Auth `toml:"auth"`
 	OIDC OIDC `toml:"oidc"`
@@ -66,6 +77,7 @@ func Default() Config {
 		Bind:     "127.0.0.1:8080",
 		DBPath:   "sudoku.db",
 		Timezone: DefaultTimezone,
+		Levels:   DefaultLevels,
 		Auth:     Auth{Mode: AuthModeOIDC},
 		OIDC: OIDC{
 			Scopes: []string{"openid", "profile", "offline_access"},
@@ -86,7 +98,9 @@ func Load(path string, getenv func(string) string) (Config, error) {
 			return Config{}, fmt.Errorf("read config %s: unknown keys %v", path, undec)
 		}
 	}
-	applyEnv(&cfg, getenv)
+	if err := applyEnv(&cfg, getenv); err != nil {
+		return Config{}, err
+	}
 	if len(cfg.OIDC.Audience) == 0 && cfg.OIDC.ClientID != "" {
 		cfg.OIDC.Audience = []string{cfg.OIDC.ClientID}
 	}
@@ -96,7 +110,7 @@ func Load(path string, getenv func(string) string) (Config, error) {
 	return cfg, nil
 }
 
-func applyEnv(cfg *Config, getenv func(string) string) {
+func applyEnv(cfg *Config, getenv func(string) string) error {
 	str := func(key string, dst *string) {
 		if v := getenv(key); v != "" {
 			*dst = v
@@ -117,6 +131,14 @@ func applyEnv(cfg *Config, getenv func(string) string) {
 	list("SUDOKU_OIDC_AUDIENCE", &cfg.OIDC.Audience)
 	str("SUDOKU_OIDC_CLIENT_ID", &cfg.OIDC.ClientID)
 	list("SUDOKU_OIDC_SCOPES", &cfg.OIDC.Scopes)
+	if v := getenv("SUDOKU_LEVELS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("SUDOKU_LEVELS: %q is not a number", v)
+		}
+		cfg.Levels = n
+	}
+	return nil
 }
 
 // splitList splits on commas and whitespace, dropping empty items.
@@ -138,6 +160,9 @@ func (c Config) Validate() error {
 		errs = append(errs, errors.New("timezone must be set"))
 	} else if _, err := time.LoadLocation(c.Timezone); err != nil {
 		errs = append(errs, fmt.Errorf("timezone: %w", err))
+	}
+	if c.Levels < MinLevels || c.Levels > MaxLevels {
+		errs = append(errs, fmt.Errorf("levels must be %d..%d, got %d", MinLevels, MaxLevels, c.Levels))
 	}
 	if len(c.ServerSecret) < minSecretLen {
 		errs = append(errs, fmt.Errorf("server_secret must be at least %d bytes", minSecretLen))

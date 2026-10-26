@@ -63,9 +63,16 @@ func run() error {
 		slog.Info("web_dir not set; not serving the web client")
 	}
 
+	apiServer := api.New(api.Deps{Config: cfg, Clock: clock.System{}, Store: st, Verifier: verifier, Web: webHandler})
+	effective, err := apiServer.SyncLevels(ctx)
+	if err != nil {
+		return err
+	}
+	slog.Info("levels", "configured", cfg.Levels, "effectiveFrom", effective)
+
 	srv := &http.Server{
 		Addr:              cfg.Bind,
-		Handler:           api.New(api.Deps{Config: cfg, Clock: clock.System{}, Store: st, Verifier: verifier, Web: webHandler}).Handler(),
+		Handler:           apiServer.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,

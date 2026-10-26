@@ -34,6 +34,7 @@ overrides. Environment wins.
 | `server_secret`      | `SUDOKU_SERVER_SECRET`  | required, at least 16 bytes          |
 | `web_dir`            | `SUDOKU_WEB_DIR`        | empty (no static serving)            |
 | `timezone`           | `SUDOKU_TIMEZONE`       | `UTC`                                |
+| `levels`             | `SUDOKU_LEVELS`         | `5` (1 to 10)                        |
 | `auth.mode`          | `SUDOKU_AUTH_MODE`      | `oidc` (or `dev`)                    |
 | `oidc.issuer`        | `SUDOKU_OIDC_ISSUER`    | required in `oidc` mode              |
 | `oidc.audience`      | `SUDOKU_OIDC_AUDIENCE`  | `[client_id]`                        |
@@ -46,3 +47,11 @@ seed and must never change once the deployment is live.
 `timezone` is the IANA zone that defines each game day and ISO week for
 every player. Changing it on a live deployment moves the day and week
 boundaries, so pick it once.
+
+`levels` is how many puzzles (levels `1..levels`) each day has. The server
+keeps a per-week schedule in the database, so a change made by restarting
+with a new value takes effect from the **next** ISO week; the current week,
+and any earlier week, keep the count they were played with. Before anyone
+has submitted a result the new value applies immediately. Restarting with
+the current week's value again cancels a pending change. `/api/v1/week`
+reports the count for the current week as `levels`.

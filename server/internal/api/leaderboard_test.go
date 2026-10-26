@@ -30,7 +30,7 @@ func TestBuildLeaderboard(t *testing.T) {
 		{UserID: bob, DisplayName: "Bob", Level: 5, ElapsedMs: 500000},
 		{UserID: carol, DisplayName: "Carol", Level: 5, ElapsedMs: 500000},
 	}
-	got := buildLeaderboard(rows)
+	got := buildLeaderboard(rows, 5)
 
 	wantL1 := []puzzleEntry{
 		{1, "2", "Bob", 150000},
