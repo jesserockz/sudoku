@@ -19,6 +19,7 @@ import (
 	"github.com/jesserockz/sudoku/server/internal/clock"
 	"github.com/jesserockz/sudoku/server/internal/config"
 	"github.com/jesserockz/sudoku/server/internal/store"
+	"github.com/jesserockz/sudoku/server/internal/web"
 )
 
 func main() {
@@ -53,9 +54,18 @@ func run() error {
 	}
 	defer st.Close()
 
+	var webHandler http.Handler
+	if cfg.WebDir != "" {
+		if webHandler, err = web.Handler(cfg.WebDir); err != nil {
+			return err
+		}
+	} else {
+		slog.Info("web_dir not set; not serving the web client")
+	}
+
 	srv := &http.Server{
 		Addr:              cfg.Bind,
-		Handler:           api.New(api.Deps{Config: cfg, Clock: clock.System{}, Store: st, Verifier: verifier}).Handler(),
+		Handler:           api.New(api.Deps{Config: cfg, Clock: clock.System{}, Store: st, Verifier: verifier, Web: webHandler}).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
