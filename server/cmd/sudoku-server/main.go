@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jesserockz/sudoku/server/internal/api"
+	"github.com/jesserockz/sudoku/server/internal/clock"
 	"github.com/jesserockz/sudoku/server/internal/config"
 )
 
@@ -42,7 +43,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              cfg.Bind,
-		Handler:           api.New(api.Deps{Config: cfg}).Handler(),
+		Handler:           api.New(api.Deps{Config: cfg, Clock: clock.System{}}).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,

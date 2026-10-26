@@ -2,31 +2,50 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
+	"time"
 
+	"github.com/jesserockz/sudoku/server/internal/clock"
 	"github.com/jesserockz/sudoku/server/internal/config"
 	"github.com/jesserockz/sudoku/server/internal/httpx"
+	"github.com/jesserockz/sudoku/server/internal/week"
 )
 
 // Deps are the server's collaborators.
 type Deps struct {
 	Config config.Config
+	Clock  clock.Clock
 }
 
 type Server struct {
 	deps Deps
 	mux  *http.ServeMux
+	// loc is the game timezone, from Config.Timezone.
+	loc *time.Location
 }
 
 func New(deps Deps) *Server {
-	s := &Server{deps: deps, mux: http.NewServeMux()}
+	if deps.Clock == nil {
+		deps.Clock = clock.System{}
+	}
+	// config.Load has already validated the zone; a bad one here is a bug.
+	loc, err := time.LoadLocation(deps.Config.Timezone)
+	if err != nil {
+		panic(fmt.Sprintf("api: timezone %q: %v", deps.Config.Timezone, err))
+	}
+	s := &Server{deps: deps, mux: http.NewServeMux(), loc: loc}
 	s.routes()
 	return s
 }
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", s.healthz)
+	s.mux.HandleFunc("GET /api/v1/week", s.getWeek)
 }
+
+// today is the current game date in the configured timezone.
+func (s *Server) today() week.Date { return week.DateOf(s.deps.Clock.Now(), s.loc) }
 
 // Handler returns the full handler chain.
 func (s *Server) Handler() http.Handler {

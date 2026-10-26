@@ -9,11 +9,24 @@ import (
 	"github.com/jesserockz/sudoku/server/internal/config"
 )
 
-func newTestServer(t *testing.T) *httptest.Server {
-	t.Helper()
+const testSecret = "test-secret-0123456789"
+
+func testConfig() config.Config {
 	cfg := config.Default()
 	cfg.Auth.Mode = config.AuthModeDev
-	srv := httptest.NewServer(New(Deps{Config: cfg}).Handler())
+	cfg.ServerSecret = testSecret
+	// The week and result tests are written against Auckland's boundaries.
+	cfg.Timezone = "Pacific/Auckland"
+	return cfg
+}
+
+// newTestServer starts a server with deps; a zero Config gets testConfig.
+func newTestServer(t *testing.T, deps Deps) *httptest.Server {
+	t.Helper()
+	if deps.Config.ServerSecret == "" {
+		deps.Config = testConfig()
+	}
+	srv := httptest.NewServer(New(deps).Handler())
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -36,7 +49,7 @@ type errorBody struct {
 }
 
 func TestHealthz(t *testing.T) {
-	srv := newTestServer(t)
+	srv := newTestServer(t, Deps{})
 	resp, err := http.Get(srv.URL + "/healthz")
 	if err != nil {
 		t.Fatal(err)
@@ -54,7 +67,7 @@ func TestHealthz(t *testing.T) {
 }
 
 func TestUnknownRouteIsJSON404(t *testing.T) {
-	srv := newTestServer(t)
+	srv := newTestServer(t, Deps{})
 	resp, err := http.Get(srv.URL + "/api/v1/nope")
 	if err != nil {
 		t.Fatal(err)
@@ -68,7 +81,7 @@ func TestUnknownRouteIsJSON404(t *testing.T) {
 }
 
 func TestWrongMethodIsJSON405(t *testing.T) {
-	srv := newTestServer(t)
+	srv := newTestServer(t, Deps{})
 	resp, err := http.Post(srv.URL+"/healthz", "application/json", nil)
 	if err != nil {
 		t.Fatal(err)
