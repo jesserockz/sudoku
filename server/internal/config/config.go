@@ -23,7 +23,7 @@ const (
 const minSecretLen = 16
 
 // DefaultTimezone is the game timezone when none is configured.
-const DefaultTimezone = "Pacific/Auckland"
+const DefaultTimezone = "UTC"
 
 type Config struct {
 	// Bind is the listen address. Defaults to localhost; Caddy proxies to it.

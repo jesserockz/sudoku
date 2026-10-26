@@ -28,7 +28,7 @@ overrides. Environment wins.
 | `db_path`            | `SUDOKU_DB_PATH`        | `sudoku.db`                          |
 | `server_secret`      | `SUDOKU_SERVER_SECRET`  | required, at least 16 bytes          |
 | `web_dir`            | `SUDOKU_WEB_DIR`        | empty (no static serving)            |
-| `timezone`           | `SUDOKU_TIMEZONE`       | `Pacific/Auckland`                   |
+| `timezone`           | `SUDOKU_TIMEZONE`       | `UTC`                                |
 | `auth.mode`          | `SUDOKU_AUTH_MODE`      | `oidc` (or `dev`)                    |
 | `oidc.issuer`        | `SUDOKU_OIDC_ISSUER`    | required in `oidc` mode              |
 | `oidc.audience`      | `SUDOKU_OIDC_AUDIENCE`  | `[client_id]`                        |

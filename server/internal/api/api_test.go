@@ -15,6 +15,8 @@ func testConfig() config.Config {
 	cfg := config.Default()
 	cfg.Auth.Mode = config.AuthModeDev
 	cfg.ServerSecret = testSecret
+	// The week and result tests are written against Auckland's boundaries.
+	cfg.Timezone = "Pacific/Auckland"
 	return cfg
 }
 

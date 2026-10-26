@@ -46,7 +46,7 @@ client_id = "sudoku-web"
 		DBPath:       "/var/lib/sudoku/sudoku.db",
 		ServerSecret: testSecret,
 		WebDir:       "/opt/sudoku/web",
-		Timezone:     "Pacific/Auckland",
+		Timezone:     "UTC",
 		Auth:         Auth{Mode: AuthModeOIDC},
 		OIDC: OIDC{
 			Issuer:   "https://auth.example.com/application/o/sudoku/",
@@ -107,6 +107,9 @@ func TestDevModeFromEnvOnly(t *testing.T) {
 	}
 	if cfg.Bind != "127.0.0.1:8080" {
 		t.Errorf("default bind = %q, want localhost", cfg.Bind)
+	}
+	if cfg.Timezone != "UTC" {
+		t.Errorf("default timezone = %q, want UTC", cfg.Timezone)
 	}
 	if cfg.Auth.Mode != AuthModeDev {
 		t.Errorf("mode = %q", cfg.Auth.Mode)
