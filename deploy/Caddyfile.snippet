@@ -1,0 +1,9 @@
+# Add to the existing Caddy config and replace the host name.
+sudoku.example.com {
+	encode zstd gzip
+	# Caddy in the same LXC: proxy to localhost (the default bind).
+	reverse_proxy 127.0.0.1:8080
+	# Caddy elsewhere: set bind = "<lxc-ip>:8080" in config.toml and use
+	#   reverse_proxy <lxc-ip>:8080
+	# allowing only Caddy's address to reach that port.
+}

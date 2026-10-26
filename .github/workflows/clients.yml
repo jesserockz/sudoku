@@ -20,17 +20,17 @@ jobs:
     name: Shared tests (JVM, Android, JS)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: "21"
-      - uses: gradle/actions/setup-gradle@v4
+          java-version: "25"
+      - uses: gradle/actions/setup-gradle@v6
       - name: Test shared module on every target
-        run: ./gradlew :shared:jvmTest :shared:testDebugUnitTest :shared:jsNodeTest --console=plain
+        run: ./gradlew :shared:jvmTest :shared:testAndroidHostTest :shared:jsNodeTest --console=plain
       - name: Upload test reports
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: shared-test-reports
           path: shared/build/reports/tests/

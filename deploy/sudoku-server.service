@@ -1,0 +1,41 @@
+[Unit]
+Description=Sudoku server
+Documentation=https://github.com/jesserockz/sudoku/tree/main/deploy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sudoku
+Group=sudoku
+ExecStart=/usr/local/bin/sudoku-server -config /etc/sudoku/config.toml
+# Secrets (SUDOKU_SERVER_SECRET) live here, readable only by root and sudoku.
+EnvironmentFile=-/etc/sudoku/env
+Restart=on-failure
+RestartSec=5
+
+# /var/lib/sudoku, owned by the service user; holds the SQLite database.
+StateDirectory=sudoku
+StateDirectoryMode=0750
+WorkingDirectory=/var/lib/sudoku
+
+# Hardening. The server only needs its state dir and outbound HTTPS to
+# Authentik for the JWKS.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target
