@@ -1,0 +1,38 @@
+# sudoku-server
+
+The Go backend: issues the weekly seed, stores results in SQLite and serves
+leaderboards and the web client. It implements [`docs/API.md`](../docs/API.md).
+
+## Build
+
+```sh
+cd server
+CGO_ENABLED=0 go build -trimpath -o sudoku-server ./cmd/sudoku-server
+```
+
+## Run locally (dev auth)
+
+```sh
+SUDOKU_AUTH_MODE=dev SUDOKU_SERVER_SECRET=dev-secret-change-me ./sudoku-server
+curl localhost:8080/healthz
+```
+
+## Configuration
+
+An optional TOML file (`-config path` or `SUDOKU_CONFIG`), then environment
+overrides. Environment wins.
+
+| TOML key             | Env                     | Default                              |
+| -------------------- | ----------------------- | ------------------------------------ |
+| `bind`               | `SUDOKU_BIND`           | `127.0.0.1:8080`                     |
+| `db_path`            | `SUDOKU_DB_PATH`        | `sudoku.db`                          |
+| `server_secret`      | `SUDOKU_SERVER_SECRET`  | required, at least 16 bytes          |
+| `web_dir`            | `SUDOKU_WEB_DIR`        | empty (no static serving)            |
+| `auth.mode`          | `SUDOKU_AUTH_MODE`      | `oidc` (or `dev`)                    |
+| `oidc.issuer`        | `SUDOKU_OIDC_ISSUER`    | required in `oidc` mode              |
+| `oidc.audience`      | `SUDOKU_OIDC_AUDIENCE`  | `[client_id]`                        |
+| `oidc.client_id`     | `SUDOKU_OIDC_CLIENT_ID` |                                      |
+| `oidc.scopes`        | `SUDOKU_OIDC_SCOPES`    | `["openid","profile","offline_access"]` |
+
+List env vars are comma or space separated. `server_secret` keys the weekly
+seed and must never change once the deployment is live.
