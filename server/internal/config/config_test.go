@@ -47,6 +47,7 @@ client_id = "sudoku-web"
 		ServerSecret: testSecret,
 		WebDir:       "/opt/sudoku/web",
 		Timezone:     "UTC",
+		Levels:       5,
 		Auth:         Auth{Mode: AuthModeOIDC},
 		OIDC: OIDC{
 			Issuer:   "https://auth.example.com/application/o/sudoku/",
@@ -75,6 +76,7 @@ client_id = "file-client"
 		"SUDOKU_SERVER_SECRET":  testSecret,
 		"SUDOKU_WEB_DIR":        "/web",
 		"SUDOKU_TIMEZONE":       "Europe/London",
+		"SUDOKU_LEVELS":         "3",
 		"SUDOKU_OIDC_ISSUER":    "https://env.example.com/",
 		"SUDOKU_OIDC_AUDIENCE":  "sudoku-web, sudoku-android",
 		"SUDOKU_OIDC_CLIENT_ID": "env-client",
@@ -83,7 +85,7 @@ client_id = "file-client"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Bind != "0.0.0.0:1234" || cfg.DBPath != "/tmp/x.db" || cfg.ServerSecret != testSecret || cfg.WebDir != "/web" || cfg.Timezone != "Europe/London" {
+	if cfg.Bind != "0.0.0.0:1234" || cfg.DBPath != "/tmp/x.db" || cfg.ServerSecret != testSecret || cfg.WebDir != "/web" || cfg.Timezone != "Europe/London" || cfg.Levels != 3 {
 		t.Errorf("scalar overrides not applied: %+v", cfg)
 	}
 	if cfg.OIDC.Issuer != "https://env.example.com/" || cfg.OIDC.ClientID != "env-client" {
@@ -125,6 +127,9 @@ func TestValidationErrors(t *testing.T) {
 		{"missing secret", map[string]string{"SUDOKU_AUTH_MODE": "dev"}, "server_secret"},
 		{"short secret", map[string]string{"SUDOKU_AUTH_MODE": "dev", "SUDOKU_SERVER_SECRET": "short"}, "server_secret"},
 		{"unknown timezone", map[string]string{"SUDOKU_AUTH_MODE": "dev", "SUDOKU_SERVER_SECRET": testSecret, "SUDOKU_TIMEZONE": "Mars/Olympus_Mons"}, "timezone"},
+		{"zero levels", map[string]string{"SUDOKU_AUTH_MODE": "dev", "SUDOKU_SERVER_SECRET": testSecret, "SUDOKU_LEVELS": "0"}, "levels"},
+		{"too many levels", map[string]string{"SUDOKU_AUTH_MODE": "dev", "SUDOKU_SERVER_SECRET": testSecret, "SUDOKU_LEVELS": "11"}, "levels"},
+		{"non-numeric levels", map[string]string{"SUDOKU_AUTH_MODE": "dev", "SUDOKU_SERVER_SECRET": testSecret, "SUDOKU_LEVELS": "five"}, "SUDOKU_LEVELS"},
 		{"bad mode", map[string]string{"SUDOKU_AUTH_MODE": "none", "SUDOKU_SERVER_SECRET": testSecret}, "auth.mode"},
 		{"oidc without issuer", map[string]string{"SUDOKU_SERVER_SECRET": testSecret, "SUDOKU_OIDC_CLIENT_ID": "c"}, "oidc.issuer"},
 		{"oidc without audience", map[string]string{"SUDOKU_SERVER_SECRET": testSecret, "SUDOKU_OIDC_ISSUER": "https://x/"}, "oidc.audience"},

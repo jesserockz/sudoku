@@ -25,7 +25,7 @@ func TestGetWeekRollsOverAtAucklandMidnight(t *testing.T) {
 	sunday := get()
 	want := weekResponse{
 		ISOWeek: "2026-W43", WeekStart: "2026-10-19", WeekEnd: "2026-10-25",
-		Today: "2026-10-25", DayOfWeek: 7, Timezone: "Pacific/Auckland",
+		Today: "2026-10-25", DayOfWeek: 7, Timezone: "Pacific/Auckland", Levels: 5,
 	}
 	want.Seed = sunday.Seed
 	if sunday != want {
@@ -36,7 +36,7 @@ func TestGetWeekRollsOverAtAucklandMidnight(t *testing.T) {
 	monday := get()
 	want = weekResponse{
 		ISOWeek: "2026-W44", Seed: "e4d2e1e00e3549cc", WeekStart: "2026-10-26", WeekEnd: "2026-11-01",
-		Today: "2026-10-26", DayOfWeek: 1, Timezone: "Pacific/Auckland",
+		Today: "2026-10-26", DayOfWeek: 1, Timezone: "Pacific/Auckland", Levels: 5,
 	}
 	if monday != want {
 		t.Errorf("monday = %+v\nwant %+v", monday, want)

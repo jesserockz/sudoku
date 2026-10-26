@@ -2,6 +2,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -61,6 +62,28 @@ func (s *Server) routes() {
 
 // today is the current game date in the configured timezone.
 func (s *Server) today() week.Date { return week.DateOf(s.deps.Clock.Now(), s.loc) }
+
+// levelsFor is the number of levels on date d, per the level schedule.
+func (s *Server) levelsFor(ctx context.Context, d week.Date) (int, error) {
+	return s.deps.Store.LevelsForWeek(ctx, d.ISOWeek())
+}
+
+// SyncLevels applies Config.Levels to the level schedule and returns the ISO
+// week from which it is in effect: immediately if nothing has been played
+// yet, otherwise from next week if it differs from this week's count.
+func (s *Server) SyncLevels(ctx context.Context) (string, error) {
+	info := week.InfoAt(s.deps.Clock.Now(), s.loc)
+	next := info.WeekStart.AddDays(7).ISOWeek()
+	eff, err := s.deps.Store.ScheduleLevels(ctx, info.ISOWeek, next, s.deps.Config.Levels)
+	if err != nil {
+		return "", err
+	}
+	if eff < info.ISOWeek {
+		// Already in effect (possibly for every week): report it as now.
+		eff = info.ISOWeek
+	}
+	return eff, nil
+}
 
 // Handler returns the full handler chain.
 func (s *Server) Handler() http.Handler {

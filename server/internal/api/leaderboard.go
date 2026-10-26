@@ -55,7 +55,12 @@ func (s *Server) getLeaderboard(w http.ResponseWriter, r *http.Request) {
 		httpx.Internal(w, r, err)
 		return
 	}
-	lb := buildLeaderboard(rows)
+	levels, err := s.levelsFor(r.Context(), date)
+	if err != nil {
+		httpx.Internal(w, r, err)
+		return
+	}
+	lb := buildLeaderboard(rows, levels)
 	lb.Date = date.String()
 	httpx.WriteJSON(w, http.StatusOK, lb)
 }
@@ -84,8 +89,9 @@ func rank(items []scored) []int {
 	return ranks
 }
 
-func buildLeaderboard(rows []store.DayResult) leaderboardResponse {
-	byLevel := make([][]scored, maxLevel+1)
+// buildLeaderboard ranks rows for a day with levels 1..levels.
+func buildLeaderboard(rows []store.DayResult, levels int) leaderboardResponse {
+	byLevel := make([][]scored, levels+1)
 	type player struct {
 		name    string
 		levels  []int
@@ -93,7 +99,7 @@ func buildLeaderboard(rows []store.DayResult) leaderboardResponse {
 	}
 	players := map[int64]*player{}
 	for _, r := range rows {
-		if r.Level < minLevel || r.Level > maxLevel {
+		if r.Level < minLevel || r.Level > levels {
 			continue
 		}
 		byLevel[r.Level] = append(byLevel[r.Level], scored{r.UserID, r.DisplayName, r.ElapsedMs})
@@ -107,11 +113,11 @@ func buildLeaderboard(rows []store.DayResult) leaderboardResponse {
 	}
 
 	out := leaderboardResponse{
-		Puzzles: make([]puzzleBoard, 0, maxLevel),
+		Puzzles: make([]puzzleBoard, 0, levels),
 		Total:   totalBoard{Entries: []totalEntry{}},
 		Players: make([]playerJSON, 0, len(players)),
 	}
-	for level := minLevel; level <= maxLevel; level++ {
+	for level := minLevel; level <= levels; level++ {
 		items := byLevel[level]
 		ranks := rank(items)
 		entries := make([]puzzleEntry, len(items))
@@ -125,7 +131,7 @@ func buildLeaderboard(rows []store.DayResult) leaderboardResponse {
 	for id, p := range players {
 		slices.Sort(p.levels)
 		out.Players = append(out.Players, playerJSON{UserID: userID(id), DisplayName: p.name, CompletedLevels: p.levels})
-		if len(p.levels) == maxLevel-minLevel+1 {
+		if len(p.levels) == levels-minLevel+1 {
 			totals = append(totals, scored{id, p.name, p.totalMs})
 		}
 	}
