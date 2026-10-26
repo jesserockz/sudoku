@@ -14,6 +14,10 @@ web_dir = "/opt/sudoku/web"
 # Changing it on a live deployment moves the day and week boundaries.
 timezone = "Pacific/Auckland"
 
+# Puzzles (difficulty levels) per day, 1..10 (default 5). Once anyone has
+# played, a change takes effect from the next ISO week.
+levels = 5
+
 # server_secret keys the weekly puzzle seed. Set it in /etc/sudoku/env as
 #   SUDOKU_SERVER_SECRET=<output of: openssl rand -hex 32>
 # rather than here. NEVER change it once people have played: every past and
