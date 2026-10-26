@@ -7,11 +7,12 @@ import (
 	"time"
 
 	"github.com/jesserockz/sudoku/server/internal/clock"
-	"github.com/jesserockz/sudoku/server/internal/week"
 )
 
-// 2026-10-26 09:00 in Auckland (Monday).
-var mondayMorning = time.Date(2026, 10, 26, 9, 0, 0, 0, week.Location)
+var auckland, _ = time.LoadLocation("Pacific/Auckland")
+
+// 2026-10-26 09:00 in Auckland (Monday), the default game timezone.
+var mondayMorning = time.Date(2026, 10, 26, 9, 0, 0, 0, auckland)
 
 func validResult() map[string]any {
 	return map[string]any{
@@ -129,6 +130,25 @@ func TestPostResultUsesAucklandToday(t *testing.T) {
 		t.Errorf("status after rollover = %d", resp.StatusCode)
 	}
 	resp.Body.Close()
+}
+
+func TestPostResultUsesConfiguredTimezone(t *testing.T) {
+	// Monday 09:00 in Auckland is still Sunday 20:00 in London.
+	cfg := testConfig()
+	cfg.Timezone = "Europe/London"
+	srv := newTestServer(t, Deps{Config: cfg, Clock: clock.NewFake(mondayMorning)})
+	expectError(t, do(t, srv, "POST", "/api/v1/results", alice, validResult()), http.StatusBadRequest, "invalid_result")
+
+	resp := do(t, srv, "POST", "/api/v1/results", alice, with(validResult(), "date", "2026-10-25"))
+	if resp.StatusCode != http.StatusCreated {
+		t.Errorf("London Sunday status = %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	mine := decode[myResultsResponse](t, do(t, srv, "GET", "/api/v1/me/results", alice, nil))
+	if mine.Date != "2026-10-25" || len(mine.Results) != 1 {
+		t.Errorf("default date should be London's today: %+v", mine)
+	}
 }
 
 func TestGetMyResults(t *testing.T) {

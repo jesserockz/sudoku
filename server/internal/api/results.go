@@ -52,7 +52,7 @@ func (s *Server) postResult(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, httpx.CodeBadRequest, "date, level, elapsedMs and completedAt are required")
 		return
 	}
-	date, err := validateResult(req, week.DateOf(s.deps.Clock.Now()))
+	date, err := validateResult(req, s.today())
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, httpx.CodeInvalidResult, err.Error())
 		return
@@ -129,7 +129,7 @@ func (s *Server) getMyResults(w http.ResponseWriter, r *http.Request) {
 func (s *Server) dateParam(w http.ResponseWriter, r *http.Request) (week.Date, bool) {
 	raw := r.URL.Query().Get("date")
 	if raw == "" {
-		return week.DateOf(s.deps.Clock.Now()), true
+		return s.today(), true
 	}
 	d, err := week.ParseDate(raw)
 	if err != nil {
