@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily sudoku database backup
+
+[Timer]
+# 03:30 UTC is mid-afternoon in Auckland, a quiet time. Persistent catches up
+# after the container was down.
+OnCalendar=*-*-* 03:30:00 UTC
+RandomizedDelaySec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
