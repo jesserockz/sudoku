@@ -28,6 +28,7 @@ overrides. Environment wins.
 | `db_path`            | `SUDOKU_DB_PATH`        | `sudoku.db`                          |
 | `server_secret`      | `SUDOKU_SERVER_SECRET`  | required, at least 16 bytes          |
 | `web_dir`            | `SUDOKU_WEB_DIR`        | empty (no static serving)            |
+| `timezone`           | `SUDOKU_TIMEZONE`       | `Pacific/Auckland`                   |
 | `auth.mode`          | `SUDOKU_AUTH_MODE`      | `oidc` (or `dev`)                    |
 | `oidc.issuer`        | `SUDOKU_OIDC_ISSUER`    | required in `oidc` mode              |
 | `oidc.audience`      | `SUDOKU_OIDC_AUDIENCE`  | `[client_id]`                        |
@@ -36,3 +37,7 @@ overrides. Environment wins.
 
 List env vars are comma or space separated. `server_secret` keys the weekly
 seed and must never change once the deployment is live.
+
+`timezone` is the IANA zone that defines each game day and ISO week for
+every player. Changing it on a live deployment moves the day and week
+boundaries, so pick it once.

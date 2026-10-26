@@ -19,7 +19,7 @@ type weekResponse struct {
 }
 
 func (s *Server) getWeek(w http.ResponseWriter, r *http.Request) {
-	info := week.InfoAt(s.deps.Clock.Now())
+	info := week.InfoAt(s.deps.Clock.Now(), s.loc)
 	httpx.WriteJSON(w, http.StatusOK, weekResponse{
 		ISOWeek:   info.ISOWeek,
 		Seed:      seed.ForWeek([]byte(s.deps.Config.ServerSecret), info.ISOWeek),
@@ -27,6 +27,6 @@ func (s *Server) getWeek(w http.ResponseWriter, r *http.Request) {
 		WeekEnd:   info.WeekEnd.String(),
 		Today:     info.Today.String(),
 		DayOfWeek: info.DayOfWeek,
-		Timezone:  week.TimeZone,
+		Timezone:  s.deps.Config.Timezone,
 	})
 }

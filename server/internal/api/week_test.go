@@ -48,3 +48,30 @@ func TestGetWeekRollsOverAtAucklandMidnight(t *testing.T) {
 		t.Error("seed should change with the week")
 	}
 }
+
+func TestGetWeekUsesConfiguredTimezone(t *testing.T) {
+	// Monday 00:00 in Auckland, but still Sunday morning in London.
+	cfg := testConfig()
+	cfg.Timezone = "Europe/London"
+	clk := clock.NewFake(time.Date(2026, 10, 25, 11, 0, 0, 0, time.UTC))
+	srv := newTestServer(t, Deps{Config: cfg, Clock: clk})
+
+	resp, err := http.Get(srv.URL + "/api/v1/week")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := decode[weekResponse](t, resp)
+	if got.ISOWeek != "2026-W43" || got.Today != "2026-10-25" || got.DayOfWeek != 7 || got.Timezone != "Europe/London" {
+		t.Errorf("week = %+v", got)
+	}
+
+	// London's Monday starts at 00:00 GMT (after the 25 Oct DST end).
+	clk.Set(time.Date(2026, 10, 26, 0, 0, 0, 0, time.UTC))
+	resp, err = http.Get(srv.URL + "/api/v1/week")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := decode[weekResponse](t, resp); got.ISOWeek != "2026-W44" || got.Today != "2026-10-26" {
+		t.Errorf("after London midnight = %+v", got)
+	}
+}

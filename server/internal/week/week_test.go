@@ -5,6 +5,16 @@ import (
 	"time"
 )
 
+var auckland = mustLoad("Pacific/Auckland")
+
+func mustLoad(name string) *time.Location {
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		panic(err)
+	}
+	return loc
+}
+
 func utc(s string) time.Time {
 	t, err := time.Parse(time.RFC3339, s)
 	if err != nil {
@@ -59,7 +69,7 @@ func TestInfoAt(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := InfoAt(utc(tt.at))
+			got := InfoAt(utc(tt.at), auckland)
 			if got.ISOWeek != tt.week || got.WeekStart.String() != tt.start || got.WeekEnd.String() != tt.end ||
 				got.Today.String() != tt.today || got.DayOfWeek != tt.dow {
 				t.Errorf("InfoAt(%s) = {%s %s %s %s %d}, want {%s %s %s %s %d}", tt.at,
@@ -77,7 +87,7 @@ func TestIndependentOfHostTimezone(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := InfoAt(at.In(loc)); got.Today.String() != "2026-10-26" || got.ISOWeek != "2026-W44" {
+		if got := InfoAt(at.In(loc), auckland); got.Today.String() != "2026-10-26" || got.ISOWeek != "2026-W44" {
 			t.Errorf("%s: got %s %s", name, got.Today, got.ISOWeek)
 		}
 	}
@@ -103,12 +113,40 @@ func TestDateHelpers(t *testing.T) {
 	if !a.Before(b) || !b.After(a) || a.After(a) {
 		t.Error("Before/After wrong")
 	}
-	if got := d.Start().Format(time.RFC3339); got != "2026-10-26T00:00:00+13:00" {
+	if got := d.Start(auckland).Format(time.RFC3339); got != "2026-10-26T00:00:00+13:00" {
 		t.Errorf("Start = %s", got)
 	}
 	for _, bad := range []string{"", "2026-1-26", "2026-02-30", "26-10-2026", "2026-10-26T00:00:00Z"} {
 		if _, err := ParseDate(bad); err == nil {
 			t.Errorf("ParseDate(%q) should fail", bad)
+		}
+	}
+}
+
+// The same instant falls on different game days depending on the configured
+// zone, and each zone rolls its week over at its own midnight.
+func TestInfoAtOtherZones(t *testing.T) {
+	tests := []struct {
+		zone, at, week, today string
+		dow                   int
+	}{
+		// Monday 00:00 in Auckland is still Sunday everywhere else here.
+		{"Pacific/Auckland", "2026-10-25T11:00:00Z", "2026-W44", "2026-10-26", 1},
+		{"UTC", "2026-10-25T11:00:00Z", "2026-W43", "2026-10-25", 7},
+		{"America/Los_Angeles", "2026-10-25T11:00:00Z", "2026-W43", "2026-10-25", 7},
+		// Los Angeles rolls over at its own midnight (PDT, -07:00).
+		{"America/Los_Angeles", "2026-10-26T06:59:59Z", "2026-W43", "2026-10-25", 7},
+		{"America/Los_Angeles", "2026-10-26T07:00:00Z", "2026-W44", "2026-10-26", 1},
+		// Europe/London on its DST end day (25 Oct 2026, BST -> GMT).
+		{"Europe/London", "2026-10-25T23:59:59Z", "2026-W43", "2026-10-25", 7},
+		{"Europe/London", "2026-10-26T00:00:00Z", "2026-W44", "2026-10-26", 1},
+	}
+	for _, tt := range tests {
+		loc := mustLoad(tt.zone)
+		got := InfoAt(utc(tt.at), loc)
+		if got.ISOWeek != tt.week || got.Today.String() != tt.today || got.DayOfWeek != tt.dow {
+			t.Errorf("%s at %s = %s %s %d, want %s %s %d", tt.zone, tt.at,
+				got.ISOWeek, got.Today, got.DayOfWeek, tt.week, tt.today, tt.dow)
 		}
 	}
 }

@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
+	// Embed zoneinfo so any IANA timezone works without system tzdata.
+	_ "time/tzdata"
 
 	"github.com/BurntSushi/toml"
 )
@@ -19,6 +22,9 @@ const (
 // the weekly seed HMAC, so a short one would make seeds guessable.
 const minSecretLen = 16
 
+// DefaultTimezone is the game timezone when none is configured.
+const DefaultTimezone = "Pacific/Auckland"
+
 type Config struct {
 	// Bind is the listen address. Defaults to localhost; Caddy proxies to it.
 	Bind string `toml:"bind"`
@@ -29,6 +35,9 @@ type Config struct {
 	ServerSecret string `toml:"server_secret"`
 	// WebDir is the compiled web client. Empty disables static serving.
 	WebDir string `toml:"web_dir"`
+	// Timezone is the IANA zone that defines the game's days and weeks for
+	// every player, regardless of host or device timezone.
+	Timezone string `toml:"timezone"`
 
 	Auth Auth `toml:"auth"`
 	OIDC OIDC `toml:"oidc"`
@@ -54,9 +63,10 @@ type OIDC struct {
 
 func Default() Config {
 	return Config{
-		Bind:   "127.0.0.1:8080",
-		DBPath: "sudoku.db",
-		Auth:   Auth{Mode: AuthModeOIDC},
+		Bind:     "127.0.0.1:8080",
+		DBPath:   "sudoku.db",
+		Timezone: DefaultTimezone,
+		Auth:     Auth{Mode: AuthModeOIDC},
 		OIDC: OIDC{
 			Scopes: []string{"openid", "profile", "offline_access"},
 		},
@@ -101,6 +111,7 @@ func applyEnv(cfg *Config, getenv func(string) string) {
 	str("SUDOKU_DB_PATH", &cfg.DBPath)
 	str("SUDOKU_SERVER_SECRET", &cfg.ServerSecret)
 	str("SUDOKU_WEB_DIR", &cfg.WebDir)
+	str("SUDOKU_TIMEZONE", &cfg.Timezone)
 	str("SUDOKU_AUTH_MODE", &cfg.Auth.Mode)
 	str("SUDOKU_OIDC_ISSUER", &cfg.OIDC.Issuer)
 	list("SUDOKU_OIDC_AUDIENCE", &cfg.OIDC.Audience)
@@ -122,6 +133,11 @@ func (c Config) Validate() error {
 	}
 	if c.DBPath == "" {
 		errs = append(errs, errors.New("db_path must be set"))
+	}
+	if c.Timezone == "" {
+		errs = append(errs, errors.New("timezone must be set"))
+	} else if _, err := time.LoadLocation(c.Timezone); err != nil {
+		errs = append(errs, fmt.Errorf("timezone: %w", err))
 	}
 	if len(c.ServerSecret) < minSecretLen {
 		errs = append(errs, fmt.Errorf("server_secret must be at least %d bytes", minSecretLen))

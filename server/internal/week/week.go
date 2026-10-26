@@ -1,5 +1,5 @@
-// Package week computes game days and ISO weeks in the fixed game timezone,
-// Pacific/Auckland, independent of the host timezone.
+// Package week computes game days and ISO weeks in the configured game
+// timezone, independent of the host timezone.
 package week
 
 import (
@@ -10,48 +10,37 @@ import (
 	_ "time/tzdata"
 )
 
-const TimeZone = "Pacific/Auckland"
-
 // DateLayout is the API's calendar date format.
 const DateLayout = "2006-01-02"
 
-// Location is Pacific/Auckland.
-var Location = mustLoad(TimeZone)
-
-func mustLoad(name string) *time.Location {
-	loc, err := time.LoadLocation(name)
-	if err != nil {
-		panic(fmt.Sprintf("load %s: %v", name, err))
-	}
-	return loc
-}
-
-// Date is a calendar date in the game timezone.
+// Date is a calendar date, with no timezone of its own.
 type Date struct {
 	Year  int
 	Month time.Month
 	Day   int
 }
 
-// DateOf returns the game date containing instant t.
-func DateOf(t time.Time) Date {
-	y, m, d := t.In(Location).Date()
+// DateOf returns the date in loc containing instant t.
+func DateOf(t time.Time, loc *time.Location) Date {
+	y, m, d := t.In(loc).Date()
 	return Date{y, m, d}
 }
 
 // ParseDate parses YYYY-MM-DD strictly.
 func ParseDate(s string) (Date, error) {
-	t, err := time.ParseInLocation(DateLayout, s, Location)
+	t, err := time.Parse(DateLayout, s)
 	if err != nil {
 		return Date{}, err
 	}
-	return DateOf(t), nil
+	return DateOf(t, time.UTC), nil
 }
 
 func (d Date) String() string { return fmt.Sprintf("%04d-%02d-%02d", d.Year, d.Month, d.Day) }
 
-// Start is midnight at the start of d in the game timezone.
-func (d Date) Start() time.Time { return time.Date(d.Year, d.Month, d.Day, 0, 0, 0, 0, Location) }
+// Start is midnight at the start of d in loc.
+func (d Date) Start(loc *time.Location) time.Time {
+	return time.Date(d.Year, d.Month, d.Day, 0, 0, 0, 0, loc)
+}
 
 // AddDays returns d shifted by n calendar days.
 func (d Date) AddDays(n int) Date {
@@ -93,8 +82,9 @@ type Info struct {
 	DayOfWeek int
 }
 
-func InfoAt(t time.Time) Info {
-	today := DateOf(t)
+// InfoAt returns the day and ISO week in loc containing instant t.
+func InfoAt(t time.Time, loc *time.Location) Info {
+	today := DateOf(t, loc)
 	dow := today.Weekday()
 	start := today.AddDays(1 - dow)
 	return Info{
