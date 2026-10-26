@@ -1,0 +1,50 @@
+package api
+
+import (
+	"net/http"
+	"testing"
+	"time"
+
+	"github.com/jesserockz/sudoku/server/internal/clock"
+)
+
+func TestGetWeekRollsOverAtAucklandMidnight(t *testing.T) {
+	// 2026-10-25T10:59:59Z is Sunday 23:59:59 in Auckland (NZDT, +13).
+	clk := clock.NewFake(time.Date(2026, 10, 25, 10, 59, 59, 0, time.UTC))
+	srv := newTestServer(t, Deps{Clock: clk})
+
+	get := func() weekResponse {
+		t.Helper()
+		resp, err := http.Get(srv.URL + "/api/v1/week")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d", resp.StatusCode)
+		}
+		return decode[weekResponse](t, resp)
+	}
+
+	sunday := get()
+	want := weekResponse{
+		ISOWeek: "2026-W43", WeekStart: "2026-10-19", WeekEnd: "2026-10-25",
+		Today: "2026-10-25", DayOfWeek: 7, Timezone: "Pacific/Auckland",
+	}
+	want.Seed = sunday.Seed
+	if sunday != want {
+		t.Errorf("sunday = %+v\nwant %+v", sunday, want)
+	}
+
+	clk.Advance(time.Second)
+	monday := get()
+	want = weekResponse{
+		ISOWeek: "2026-W44", Seed: "e4d2e1e00e3549cc", WeekStart: "2026-10-26", WeekEnd: "2026-11-01",
+		Today: "2026-10-26", DayOfWeek: 1, Timezone: "Pacific/Auckland",
+	}
+	if monday != want {
+		t.Errorf("monday = %+v\nwant %+v", monday, want)
+	}
+	if sunday.Seed == monday.Seed {
+		t.Error("seed should change with the week")
+	}
+}

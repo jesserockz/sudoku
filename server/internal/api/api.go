@@ -4,6 +4,7 @@ package api
 import (
 	"net/http"
 
+	"github.com/jesserockz/sudoku/server/internal/clock"
 	"github.com/jesserockz/sudoku/server/internal/config"
 	"github.com/jesserockz/sudoku/server/internal/httpx"
 )
@@ -11,6 +12,7 @@ import (
 // Deps are the server's collaborators.
 type Deps struct {
 	Config config.Config
+	Clock  clock.Clock
 }
 
 type Server struct {
@@ -19,6 +21,9 @@ type Server struct {
 }
 
 func New(deps Deps) *Server {
+	if deps.Clock == nil {
+		deps.Clock = clock.System{}
+	}
 	s := &Server{deps: deps, mux: http.NewServeMux()}
 	s.routes()
 	return s
@@ -26,6 +31,7 @@ func New(deps Deps) *Server {
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", s.healthz)
+	s.mux.HandleFunc("GET /api/v1/week", s.getWeek)
 }
 
 // Handler returns the full handler chain.
