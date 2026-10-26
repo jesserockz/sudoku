@@ -1,6 +1,7 @@
 package sudoku.game
 
 import kotlinx.datetime.LocalDate
+import kotlinx.serialization.json.Json
 import sudoku.generator.WeekSeed
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -144,6 +145,13 @@ class GameTest {
 
         // A save claiming completion for an unsolved board isn't trusted.
         assertNull(Game.restore(saved.copy(completed = true)).completedElapsedMs)
+    }
+
+    @Test
+    fun savedGameSerializes() {
+        val saved = Game.new(puzzle).toggleNote(2, 4).place(3, 6, 0).save(nowMs = 0)
+        val json = Json.encodeToString(SavedGame.serializer(), saved)
+        assertEquals(saved, Json.decodeFromString(SavedGame.serializer(), json))
     }
 
     @Test
