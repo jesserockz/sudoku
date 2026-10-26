@@ -2,7 +2,6 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.androidApplication)
-    alias(libs.plugins.kotlinAndroid)
     alias(libs.plugins.kotlinSerialization)
     alias(libs.plugins.composeCompiler)
 }
@@ -72,10 +71,6 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 
-    constraints {
-        // Ktor 3.6 asks for OkHttp 5.5, which needs compileSdk 37 (see libs.versions.toml).
-        implementation(libs.okhttp) { version { strictly(libs.versions.okhttp.get()) } }
-    }
 
     testImplementation(libs.kotlin.test.junit)
     testImplementation(libs.kotlinx.coroutines.test)
