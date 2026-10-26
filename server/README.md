@@ -7,8 +7,13 @@ leaderboards and the web client. It implements [`docs/API.md`](../docs/API.md).
 
 ```sh
 cd server
-CGO_ENABLED=0 go build -trimpath -o sudoku-server ./cmd/sudoku-server
+make build      # host OS/arch -> ./sudoku-server
+make dist       # static linux/amd64 and linux/arm64 -> dist/
 ```
+
+Builds are `CGO_ENABLED=0`, so cross-compiling needs nothing beyond Go. To
+run the tests as arm64 binaries on an x86 machine, install
+`qemu-user-static` and run `make test-arm64`; CI does both.
 
 ## Run locally (dev auth)
 
