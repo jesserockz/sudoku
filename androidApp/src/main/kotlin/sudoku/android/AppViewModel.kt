@@ -104,7 +104,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val list = repo.puzzles(date)
         puzzles = list
         games.clear()
-        list?.forEach { p -> repo.loadGame(date, p)?.let { games[p.difficulty.level] = it } }
+        list?.forEach { p -> repo.loadGame(date, p)?.let { games[p.level] = it } }
         serverDone.clear()
         repo.serverResults(date).forEach { (level, r) -> serverDone[level] = r.elapsedMs }
         viewModelScope.launch { refreshQueued() }
@@ -152,7 +152,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         return PuzzleStatus.InProgress(game.elapsedMs(ticker.nowMs()))
     }
 
-    fun puzzle(level: Int): Puzzle? = puzzles?.firstOrNull { it.difficulty.level == level }
+    fun puzzle(level: Int): Puzzle? = puzzles?.firstOrNull { it.level == level }
 
     // Navigation
 

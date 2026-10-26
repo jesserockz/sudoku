@@ -108,6 +108,19 @@ class SudokuApiTest {
     }
 
     @Test
+    fun weekCarriesTheGameCount() = runTest {
+        val body = """{"isoWeek":"2026-W44","seed":"9f2c4a1b7e30d5c8","weekStart":"2026-10-26","weekEnd":"2026-11-01",
+            "today":"2026-10-28","dayOfWeek":3,"timezone":"Pacific/Auckland"LEVELS}"""
+        val seven = api { json(body.replace("LEVELS", ""","levels":7""")) }.week()
+        assertEquals(7, seven.levels)
+        val puzzles = seven.puzzles()
+        assertEquals((1..7).toList(), puzzles.map { it.level })
+        assertTrue(puzzles.all { it.dayOfWeek == 3 && it.levels == 7 })
+        // Servers from before configurable levels always had five.
+        assertEquals(5, api { json(body.replace("LEVELS", "")) }.week().levels)
+    }
+
+    @Test
     fun malformedSeedFailsToDecode() = runTest {
         val api = api {
             json(

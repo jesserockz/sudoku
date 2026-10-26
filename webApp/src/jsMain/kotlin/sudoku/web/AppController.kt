@@ -23,7 +23,6 @@ import sudoku.api.Me
 import sudoku.api.SudokuApi
 import sudoku.api.TokenProvider
 import sudoku.api.WeekResponse
-import sudoku.game.DailyPuzzles
 import sudoku.game.Game
 import sudoku.game.GameCalendar
 import sudoku.game.SavedGame
@@ -173,16 +172,16 @@ class AppController(private val scope: CoroutineScope, private val authFactory: 
         val w = api.week()
         me = user
         week = w
-        puzzles = DailyPuzzles.forDate(w.seed, w.toWeekInfo(), w.today)
+        puzzles = w.puzzles(w.today)
 
         val s = ResultSync(LocalPendingResultStore(user.id)) { api.submitResult(it) }
         sync = s
 
         games.clear()
         for (p in puzzles) {
-            Storage.get(gameKey(user.id, w.today, p.difficulty.level), SavedGame.serializer())
+            Storage.get(gameKey(user.id, w.today, p.level), SavedGame.serializer())
                 ?.takeIf { it.givens == p.givens }
-                ?.let { games[p.difficulty.level] = Game.restore(it) }
+                ?.let { games[p.level] = Game.restore(it) }
         }
         forgetOtherDays(user.id, w.today)
 
@@ -221,7 +220,7 @@ class AppController(private val scope: CoroutineScope, private val authFactory: 
         return PuzzleStatus.InProgress(game.elapsedMs(ticker.nowMs()))
     }
 
-    fun puzzle(level: Int): Puzzle? = puzzles.firstOrNull { it.difficulty.level == level }
+    fun puzzle(level: Int): Puzzle? = puzzles.firstOrNull { it.level == level }
 
     // Navigation
 

@@ -20,6 +20,7 @@ import java.io.IOException
 class FakeServer(private val clock: Clock, val authMode: String = "dev") {
     var online = true
     var rejectAll = false
+    var levels = 5
 
     // OIDC provider state (authMode = "oidc").
     var oidcSub = "alice"
@@ -102,7 +103,7 @@ class FakeServer(private val clock: Clock, val authMode: String = "dev") {
             val seed = seeds.getOrPut(w.isoWeek) { if (w.isoWeek.endsWith("44")) "9f2c4a1b7e30d5c8" else "0123456789abcdef" }
             json(
                 """{"isoWeek":"${w.isoWeek}","seed":"$seed","weekStart":"${w.weekStart}","weekEnd":"${w.weekEnd}",
-                "today":"${w.today}","dayOfWeek":${w.dayOfWeek},"timezone":"Pacific/Auckland"}""",
+                "today":"${w.today}","dayOfWeek":${w.dayOfWeek},"timezone":"Pacific/Auckland","levels":$levels}""",
             )
         }
         "/api/v1/me/results" -> {

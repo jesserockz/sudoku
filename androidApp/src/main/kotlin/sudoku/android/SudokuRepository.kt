@@ -18,7 +18,6 @@ import sudoku.auth.OidcClient
 import sudoku.auth.Pkce
 import sudoku.auth.TokenSession
 import sudoku.auth.randomToken
-import sudoku.game.DailyPuzzles
 import sudoku.game.Game
 import sudoku.game.GameCalendar
 import sudoku.generator.Puzzle
@@ -87,12 +86,12 @@ class SudokuRepository(
     /** The cached week, if it contains [date]. */
     fun weekFor(date: LocalDate = today()): WeekResponse? = storage.week.read()?.takeIf { date in it.toWeekInfo() }
 
-    /** The five puzzles for [date], or `null` if the cached week doesn't cover it. */
+    /** The day's games for [date], or `null` if the cached week doesn't cover it. */
     fun puzzles(date: LocalDate = today()): List<Puzzle>? {
         val week = weekFor(date) ?: return null
         val key = week.seed to date
         puzzleCache?.let { (k, v) -> if (k == key) return v }
-        return DailyPuzzles.forDate(week.seed, week.toWeekInfo(), date).also { puzzleCache = key to it }
+        return week.puzzles(date).also { puzzleCache = key to it }
     }
 
     /** `GET /config` on a server that isn't saved yet (first-run setup). */
@@ -207,7 +206,7 @@ class SudokuRepository(
 
     /** A saved game for [puzzle] on [date], if it still matches the puzzle. */
     fun loadGame(date: LocalDate, puzzle: Puzzle): Game? =
-        storage.games.read()?.get(AppStorage.gameKey(date, puzzle.difficulty.level))
+        storage.games.read()?.get(AppStorage.gameKey(date, puzzle.level))
             ?.takeIf { it.givens == puzzle.givens }
             ?.let(Game::restore)
 

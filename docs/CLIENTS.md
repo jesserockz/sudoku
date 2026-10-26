@@ -89,7 +89,7 @@ must be this provider's client id. The protocol code (`sudoku.auth` in
 
 ### What it does
 
-- **Today**: the day's five puzzles (generated locally from the week's seed),
+- **Today**: the day's games (generated locally from the week's seed),
   each New, In progress (with time so far) or Solved.
 - **Play**: tap or arrow-key to select; digits by keypad or keyboard;
   notes mode (`N`), erase (`Backspace`), undo (`Ctrl/Cmd+Z`). Conflicts are highlighted.
@@ -155,3 +155,24 @@ Authentik: the app uses the issuer and client id from `/api/v1/config` (the
 same Public client as the web app), so add
 `io.github.jesserockz.sudoku:/oauth2redirect` as a second redirect URI on that
 provider. No server changes are needed.
+
+## Games per day and difficulty
+
+The server decides how many games each day has (`levels` in `/api/v1/week`,
+1 to 10, default 5). There are always exactly five difficulty tiers (Easy 40,
+Medium 36, Hard 32, Expert 28, Diabolical 24 givens), and the day's games are
+spread across them easiest-first by `Difficulty.forLevel`: game `i` of `n`
+(0-based) gets tier `round(i * 4 / (n - 1))`, in integer arithmetic.
+
+| Games | Tiers |
+| ----- | ----- |
+| 1 | Hard |
+| 3 | Easy, Hard, Diabolical |
+| 5 | Easy, Medium, Hard, Expert, Diabolical |
+| 7 | Easy, Medium ×2, Hard, Expert ×2, Diabolical |
+| 10 | two of each |
+
+Each game's puzzle seed mixes in its game number, so two games of the same tier
+are different puzzles. Five games produce exactly the original puzzles. Games
+of a repeated tier are titled "Medium 1", "Medium 2" and so on. The tier table
+and puzzles for several counts are pinned by golden tests on every target.

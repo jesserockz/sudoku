@@ -166,7 +166,7 @@ class GameTest {
         val week = GameCalendar.weekOf(LocalDate.parse("2026-10-26"))
         val monday = DailyPuzzles.forDate(seed, week, LocalDate.parse("2026-10-26"))
         assertEquals(5, monday.size)
-        assertEquals((1..5).toList(), monday.map { it.difficulty.level })
+        assertEquals((1..5).toList(), monday.map { it.level })
         assertTrue(monday.all { it.dayOfWeek == 1 })
         assertEquals(7, DailyPuzzles.forDate(seed, week, LocalDate.parse("2026-11-01")).first().dayOfWeek)
         assertFailsWith<IllegalArgumentException> { DailyPuzzles.forDate(seed, week, LocalDate.parse("2026-11-02")) }

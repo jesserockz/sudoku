@@ -15,7 +15,7 @@ class GeneratorTest {
     fun puzzlesAreValidUniqueAndOnTarget() {
         for (day in 1..7) {
             for (p in Generator.generateDay(seed, day)) {
-                val label = "day=$day level=${p.difficulty.level}"
+                val label = "day=$day level=${p.level}"
                 val solution = Board.parse(p.solution)
                 assertTrue(solution.isSolved, "solution solved: $label")
                 // Every given matches the solution.
@@ -56,8 +56,7 @@ class GeneratorTest {
     @Test
     fun difficultyTiers() {
         assertEquals(listOf(40, 36, 32, 28, 24), Difficulty.entries.map { it.targetGivens })
-        assertEquals(Difficulty.DIABOLICAL, Difficulty.of(5))
-        assertEquals((1..5).toList(), Difficulty.entries.map { it.level })
+        assertEquals(Difficulty.entries, (1..5).map { Difficulty.forLevel(it, 5) })
     }
 
     @Test

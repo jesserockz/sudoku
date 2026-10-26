@@ -37,7 +37,7 @@ class SudokuRepositoryTest {
 
     /** Plays [level] to completion by filling in the solution. */
     private fun solved(repo: SudokuRepository, level: Int): Game {
-        val p = repo.puzzles()!!.first { it.difficulty.level == level }
+        val p = repo.puzzles()!!.first { it.level == level }
         var g = Game.new(p.givens).resume(0)
         for (i in 0 until 81) if (p.givens[i] == '0') g = g.place(i, p.solution[i] - '0', 60_000)
         assertTrue(g.isComplete)
@@ -112,6 +112,25 @@ class SudokuRepositoryTest {
     }
 
     @Test
+    fun weeksWithMoreGamesSpreadTheTiers() = runTest {
+        server.levels = 7
+        val repo = repo()
+        repo.signInDev("http://localhost:8080", "alice", "Alice")
+        val puzzles = repo.puzzles()!!
+        assertEquals((1..7).toList(), puzzles.map { it.level })
+        assertEquals(
+            listOf("Easy", "Medium 1", "Medium 2", "Hard", "Expert 1", "Expert 2", "Diabolical"),
+            puzzles.map { it.title },
+        )
+        assertEquals(Generator.generateDay(WeekSeed.parse("9f2c4a1b7e30d5c8"), 1, 7).map { it.givens }, puzzles.map { it.givens })
+        // The count is cached with the week, so offline play keeps it.
+        server.online = false
+        assertEquals(7, repo().puzzles()!!.size)
+        val result = repo.complete(repo.today(), 6, solved(repo, 6))
+        assertEquals(6, result.level)
+    }
+
+    @Test
     fun rejectedResultsAreDropped() = runTest {
         val repo = repo()
         repo.signInDev("http://localhost:8080", "alice", "Alice")
@@ -150,7 +169,7 @@ class SudokuRepositoryTest {
         assertFalse(restored.timer.isRunning)
 
         // A saved game for a different puzzle (e.g. a changed seed) is ignored.
-        assertNull(repo.loadGame(repo.today(), repo.puzzles()!![1].copy(difficulty = p.difficulty)))
+        assertNull(repo.loadGame(repo.today(), repo.puzzles()!![1].copy(level = p.level)))
 
         advanceDays(7)
         repo.refresh()
