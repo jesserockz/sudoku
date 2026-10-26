@@ -9,7 +9,8 @@ db_path = "/var/lib/sudoku/sudoku.db"
 # Compiled web client (index.html + assets). Leave empty to disable.
 web_dir = "/opt/sudoku/web"
 
-# IANA timezone that defines each game day and ISO week for every player.
+# IANA timezone that defines each game day and ISO week for every player
+# (default "UTC").
 # Changing it on a live deployment moves the day and week boundaries.
 timezone = "Pacific/Auckland"
 
