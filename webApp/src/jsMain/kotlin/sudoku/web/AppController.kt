@@ -16,7 +16,6 @@ import kotlinx.datetime.minus
 import kotlinx.datetime.plus
 import sudoku.api.ApiException
 import sudoku.api.AppConfig
-import sudoku.api.AuthMode
 import sudoku.api.DayResult
 import sudoku.api.GameResult
 import sudoku.api.Leaderboard
@@ -119,8 +118,11 @@ class AppController(private val scope: CoroutineScope, private val authFactory: 
         scope.launch {
             try {
                 val cfg = config ?: api.config().also { config = it }
-                val a = auth ?: authFactory(cfg).also { auth = it }
-                if (!a.isSignedIn) {
+                val a = auth ?: authFactory(cfg).also {
+                    auth = it
+                    it.initialize()
+                }
+                if (!a.isSignedIn()) {
                     phase = Phase.SignIn(cfg)
                     return@launch
                 }
@@ -129,15 +131,33 @@ class AppController(private val scope: CoroutineScope, private val authFactory: 
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ApiException) {
-                if (e.isUnauthorized) signOut() else phase = Phase.Failed(describe(e))
+                if (e.isUnauthorized) signOut(everywhere = false) else phase = Phase.Failed(describe(e))
             } catch (e: Throwable) {
                 phase = Phase.Failed(describe(e))
             }
         }
     }
 
-    fun signOut() {
-        auth?.signOut()
+    /** Starts the sign-in for the server's auth mode (OIDC redirects away). */
+    fun signIn() {
+        val a = auth as? OidcWebAuth ?: return
+        scope.launch {
+            try {
+                a.signIn()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                phase = Phase.Failed("Couldn't reach the identity provider. Check your connection and try again.")
+            }
+        }
+    }
+
+    /**
+     * Signs out. [everywhere] (the Sign out button) also ends the identity
+     * provider session; otherwise (e.g. after a `401`) only local tokens go.
+     */
+    fun signOut(everywhere: Boolean = true) {
+        scope.launch { auth?.signOut(everywhere) }
         me = null
         week = null
         sync = null
@@ -184,7 +204,7 @@ class AppController(private val scope: CoroutineScope, private val authFactory: 
         val s = sync ?: return
         val report = s.flush()
         when {
-            report.isUnauthorized -> signOut()
+            report.isUnauthorized -> signOut(everywhere = false)
             report.failure != null -> notice = "Couldn't upload ${report.remaining.size} result(s) yet; they'll be retried."
             else -> notice = null
         }
@@ -251,7 +271,7 @@ class AppController(private val scope: CoroutineScope, private val authFactory: 
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ApiException) {
-                if (e.isUnauthorized) signOut() else leaderboardError = describe(e)
+                if (e.isUnauthorized) signOut(everywhere = false) else leaderboardError = describe(e)
             } catch (e: Throwable) {
                 leaderboardError = describe(e)
             }
@@ -332,22 +352,8 @@ class AppController(private val scope: CoroutineScope, private val authFactory: 
     }
 
     private fun describe(e: Throwable): String = when (e) {
+        is SignInException -> e.message ?: "Sign-in failed."
         is ApiException -> e.error?.message?.takeIf { it.isNotBlank() } ?: "Server error (HTTP ${e.status})"
         else -> "Can't reach the server. Check your connection and try again."
     }
-
-    companion object {
-        fun defaultAuth(config: AppConfig): WebAuth = when (config.authMode) {
-            AuthMode.DEV -> DevWebAuth()
-            AuthMode.OIDC -> UnsupportedAuth
-        }
-    }
-}
-
-/** Placeholder until OIDC sign-in lands: never signed in. */
-object UnsupportedAuth : WebAuth {
-    override val isSignedIn = false
-    override val tokens = TokenProvider { null }
-
-    override fun signOut() = Unit
 }

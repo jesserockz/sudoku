@@ -70,8 +70,9 @@ private fun SignInScreen(app: AppController, config: AppConfig) {
     TopBar("Sudoku")
     when (config.authMode) {
         AuthMode.DEV -> DevSignIn(app)
-        AuthMode.OIDC -> Div({ classes("card") }) {
-            P { Text("This server uses OIDC sign-in, which this build doesn't support yet.") }
+        AuthMode.OIDC -> Div({ classes("card", "center") }) {
+            P { Text("Sign in to play today's puzzles and see the leaderboard.") }
+            Button({ classes("primary"); onClick { app.signIn() } }) { Text("Sign in") }
         }
     }
 }
