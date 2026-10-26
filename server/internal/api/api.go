@@ -48,6 +48,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/config", s.getConfig)
 	s.mux.HandleFunc("GET /api/v1/week", s.requireAuth(s.getWeek))
 	s.mux.HandleFunc("GET /api/v1/me", s.requireAuth(s.getMe))
+	s.mux.HandleFunc("GET /api/v1/me/results", s.requireAuth(s.getMyResults))
+	s.mux.HandleFunc("POST /api/v1/results", s.requireAuth(s.postResult))
 }
 
 // today is the current game date in the configured timezone.
