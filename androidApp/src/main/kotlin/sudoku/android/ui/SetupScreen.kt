@@ -55,10 +55,10 @@ fun SetupScreen(vm: AppViewModel) {
                     OutlinedTextField(name, { name = it }, label = { Text("Display name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     Button(onClick = { vm.signInDev(url, sub, name) }, enabled = !vm.setupBusy) { Text("Sign in") }
                 }
-                AuthMode.OIDC -> Text(
-                    "This server uses OIDC sign-in, which this build doesn't support yet.",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
+                AuthMode.OIDC -> {
+                    Text("Sign in with your family account. Your browser opens to sign in, then returns here.", style = MaterialTheme.typography.bodyMedium)
+                    Button(onClick = { vm.signInOidc(url) }, enabled = !vm.setupBusy) { Text("Sign in") }
+                }
             }
             if (vm.setupBusy) CircularProgressIndicator()
             vm.setupError?.let { Text(it, color = ConflictColor) }
