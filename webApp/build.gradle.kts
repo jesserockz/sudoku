@@ -36,7 +36,7 @@ kotlin {
 
 // The production bundle the Go server serves as its static directory:
 // `./gradlew :webApp:webDist` writes it to `build/web/` at the repository root.
-val webDist by tasks.registering(Sync::class) {
+tasks.register<Sync>("webDist") {
     group = "distribution"
     description = "Builds the production web client into build/web for the Go server."
     from(tasks.named("jsBrowserDistribution"))

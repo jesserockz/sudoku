@@ -11,7 +11,7 @@ the repository root. The Go server in `server/` is built separately.
 
 ## Requirements
 
-- JDK 17 or newer.
+- JDK 25 (the current LTS; CI uses it). Gradle 9.8 also runs on JDK 17+.
 - Android SDK (only for Android targets). Point Gradle at it with `ANDROID_HOME`
   or a `local.properties` file containing `sdk.dir=/path/to/android-sdk`.
 - Nothing else: the Gradle wrapper downloads Gradle, and the Kotlin/JS plugin
@@ -22,7 +22,7 @@ the repository root. The Go server in `server/` is built separately.
 ```sh
 ./gradlew :shared:jvmTest            # fastest; no Android SDK needed
 ./gradlew :shared:jsNodeTest         # same tests compiled to JS, run on Node.js
-./gradlew :shared:testDebugUnitTest  # same tests on the Android target (needs the SDK)
+./gradlew :shared:testAndroidHostTest  # same tests on the Android target (needs the SDK)
 ```
 
 CI (`.github/workflows/clients.yml`) runs all three on every change outside
@@ -133,5 +133,3 @@ How it works:
   until the player taps Resume. Games are saved on every move.
 - **Leaderboard** needs a connection; it shows today and the previous 8 days.
 
-Versions are held at what AGP 8.13 / compileSdk 36 supports (see the comment in
-`gradle/libs.versions.toml`); moving to AGP 9 is a separate upgrade.

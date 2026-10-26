@@ -1,0 +1,40 @@
+# /etc/sudoku/config.toml (root:sudoku, 0640)
+# Every key can be overridden by an environment variable; see server/README.md.
+
+# Plain HTTP on localhost; Caddy terminates TLS and proxies here.
+bind = "127.0.0.1:8080"
+
+db_path = "/var/lib/sudoku/sudoku.db"
+
+# Compiled web client (index.html + assets). Leave empty to disable.
+web_dir = "/opt/sudoku/web"
+
+# IANA timezone that defines each game day and ISO week for every player
+# (default "UTC").
+# Changing it on a live deployment moves the day and week boundaries.
+timezone = "Pacific/Auckland"
+
+# Puzzles (difficulty levels) per day, 1..10 (default 5). Once anyone has
+# played, a change takes effect from the next ISO week.
+levels = 5
+
+# server_secret keys the weekly puzzle seed. Set it in /etc/sudoku/env as
+#   SUDOKU_SERVER_SECRET=<output of: openssl rand -hex 32>
+# rather than here. NEVER change it once people have played: every past and
+# future week's puzzles would change.
+# server_secret = ""
+
+[auth]
+# "oidc" in production. "dev" accepts unsigned "dev:<sub>:<name>" tokens and
+# must never be used on a reachable server.
+mode = "oidc"
+
+[oidc]
+# Must match the token's iss claim exactly, including the trailing slash.
+issuer = "https://auth.example.com/application/o/sudoku/"
+# Published to the web client via /api/v1/config.
+client_id = "sudoku-web"
+scopes = ["openid", "profile", "offline_access"]
+# Accepted aud values. Authentik sets aud to the client id, so list every
+# client that calls the API (web and Android).
+audience = ["sudoku-web", "sudoku-android"]
