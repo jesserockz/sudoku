@@ -6,16 +6,20 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jesserockz/sudoku/server/internal/auth"
 	"github.com/jesserockz/sudoku/server/internal/clock"
 	"github.com/jesserockz/sudoku/server/internal/config"
 	"github.com/jesserockz/sudoku/server/internal/httpx"
+	"github.com/jesserockz/sudoku/server/internal/store"
 	"github.com/jesserockz/sudoku/server/internal/week"
 )
 
 // Deps are the server's collaborators.
 type Deps struct {
-	Config config.Config
-	Clock  clock.Clock
+	Config   config.Config
+	Clock    clock.Clock
+	Store    *store.Store
+	Verifier auth.Verifier
 }
 
 type Server struct {
@@ -41,7 +45,9 @@ func New(deps Deps) *Server {
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", s.healthz)
-	s.mux.HandleFunc("GET /api/v1/week", s.getWeek)
+	s.mux.HandleFunc("GET /api/v1/config", s.getConfig)
+	s.mux.HandleFunc("GET /api/v1/week", s.requireAuth(s.getWeek))
+	s.mux.HandleFunc("GET /api/v1/me", s.requireAuth(s.getMe))
 }
 
 // today is the current game date in the configured timezone.

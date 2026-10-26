@@ -15,8 +15,10 @@ import (
 	"time"
 
 	"github.com/jesserockz/sudoku/server/internal/api"
+	"github.com/jesserockz/sudoku/server/internal/auth"
 	"github.com/jesserockz/sudoku/server/internal/clock"
 	"github.com/jesserockz/sudoku/server/internal/config"
+	"github.com/jesserockz/sudoku/server/internal/store"
 )
 
 func main() {
@@ -34,16 +36,26 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	var verifier auth.Verifier
 	if cfg.Auth.Mode == config.AuthModeDev {
 		slog.Warn("!!! DEV AUTH MODE ENABLED: bearer tokens are NOT verified. Never use this in production. !!!")
+		verifier = auth.Dev{}
+	} else {
+		verifier = &auth.OIDC{Issuer: cfg.OIDC.Issuer, Audience: cfg.OIDC.Audience}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	st, err := store.Open(ctx, cfg.DBPath)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
 	srv := &http.Server{
 		Addr:              cfg.Bind,
-		Handler:           api.New(api.Deps{Config: cfg, Clock: clock.System{}}).Handler(),
+		Handler:           api.New(api.Deps{Config: cfg, Clock: clock.System{}, Store: st, Verifier: verifier}).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
