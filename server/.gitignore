@@ -1,0 +1,5 @@
+/sudoku-server
+/dist/
+*.db
+*.db-wal
+*.db-shm
