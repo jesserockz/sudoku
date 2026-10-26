@@ -9,6 +9,10 @@ db_path = "/var/lib/sudoku/sudoku.db"
 # Compiled web client (index.html + assets). Leave empty to disable.
 web_dir = "/opt/sudoku/web"
 
+# IANA timezone that defines each game day and ISO week for every player.
+# Changing it on a live deployment moves the day and week boundaries.
+timezone = "Pacific/Auckland"
+
 # server_secret keys the weekly puzzle seed. Set it in /etc/sudoku/env as
 #   SUDOKU_SERVER_SECRET=<output of: openssl rand -hex 32>
 # rather than here. NEVER change it once people have played: every past and
