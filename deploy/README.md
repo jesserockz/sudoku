@@ -116,3 +116,14 @@ systemctl restart sudoku-server
 
 Database migrations run automatically at startup. Take a backup first
 (`systemctl start sudoku-backup`).
+
+## Troubleshooting
+
+- `status=226/NAMESPACE` or "Failed to set up mount namespacing" at start:
+  the LXC can't create the mount namespaces the hardening options use. On
+  Proxmox enable `features: nesting=1` for the container, or comment out
+  `ProtectSystem`, `ProtectHome`, `PrivateTmp`, `PrivateDevices` and
+  `ProtectKernel*` in the unit.
+- `401 unauthorized` for every request: compare the token's `iss` and `aud`
+  with `oidc.issuer` and `oidc.audience`; the server logs the reason at info
+  level (`journalctl -u sudoku-server`).
