@@ -26,7 +26,7 @@ import kotlinx.datetime.minus
 import sudoku.android.AppViewModel
 import sudoku.android.Screen
 import sudoku.game.formatDuration
-import sudoku.generator.Difficulty
+import sudoku.generator.Generator
 
 @Composable
 fun ScoresScreen(vm: AppViewModel, screen: Screen.Scores) {
@@ -44,11 +44,15 @@ fun ScoresScreen(vm: AppViewModel, screen: Screen.Scores) {
                 Text(if (screen.date == vm.date) "Today" else screen.date.toString(), Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
                 TextButton(onClick = { vm.shiftScoresDate(1) }, enabled = screen.date < vm.date) { Text("Later ›") }
             }
+            val board = vm.leaderboard
+            // That day's game count: from its leaderboard once loaded (a past week may differ).
+            val levels = board?.takeIf { it.date == screen.date }?.puzzles?.size?.takeIf { it > 0 } ?: (vm.puzzles?.size ?: 5)
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 FilterChip(screen.tab == 0, { vm.showScoresTab(0) }, label = { Text("Total") })
-                for (d in Difficulty.entries) FilterChip(screen.tab == d.level, { vm.showScoresTab(d.level) }, label = { Text(d.displayName) })
+                for (level in 1..levels) {
+                    FilterChip(screen.tab == level, { vm.showScoresTab(level) }, label = { Text(Generator.title(level, levels)) })
+                }
             }
-            val board = vm.leaderboard
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     when {
@@ -56,7 +60,7 @@ fun ScoresScreen(vm: AppViewModel, screen: Screen.Scores) {
                         board == null || board.date != screen.date -> Text("Loading…")
                         screen.tab == 0 ->
                             if (board.total.entries.isEmpty()) {
-                                Text("Nobody has finished all five yet.")
+                                Text("Nobody has finished all $levels yet.")
                             } else {
                                 board.total.entries.forEach { ScoreRow(it.rank, it.displayName, it.totalMs, it.userId == myId) }
                             }
@@ -83,7 +87,7 @@ fun ScoresScreen(vm: AppViewModel, screen: Screen.Scores) {
                                     fontWeight = if (p.userId == myId) FontWeight.Bold else FontWeight.Normal,
                                 )
                                 Text(
-                                    (1..5).joinToString(" ") { if (it in p.completedLevels) "●" else "○" } + "  ${p.completedLevels.size}/5",
+                                    (1..levels).joinToString(" ") { if (it in p.completedLevels) "●" else "○" } + "  ${p.completedLevels.size}/$levels",
                                     color = DoneColor,
                                 )
                             }

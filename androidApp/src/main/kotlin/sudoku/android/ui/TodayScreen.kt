@@ -67,7 +67,7 @@ fun TodayScreen(vm: AppViewModel) {
                     Column(Modifier.padding(horizontal = 16.dp)) {
                         puzzles.forEachIndexed { index, p ->
                             if (index > 0) HorizontalDivider()
-                            PuzzleRow(vm, p.difficulty.level, p.difficulty.displayName, p.givenCount)
+                            PuzzleRow(vm, p.level, p.title, p.givenCount)
                         }
                     }
                 }

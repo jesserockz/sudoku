@@ -8,7 +8,10 @@ import kotlinx.serialization.descriptors.PrimitiveKind
 import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
+import sudoku.game.DailyPuzzles
 import sudoku.game.WeekInfo
+import sudoku.generator.Generator
+import sudoku.generator.Puzzle
 import sudoku.generator.WeekSeed
 
 // Request and response bodies of the v1 API, field for field as in docs/API.md.
@@ -56,7 +59,12 @@ data class WeekResponse(
     val today: LocalDate,
     val dayOfWeek: Int,
     val timezone: String,
+    /** Games per day this week (levels `1..levels`). Servers that predate it always had 5. */
+    val levels: Int = Generator.DEFAULT_LEVELS,
 ) {
+    /** The day's games for [date] in this week. */
+    fun puzzles(date: LocalDate = today): List<Puzzle> = DailyPuzzles.forDate(seed, toWeekInfo(), date, levels)
+
     fun toWeekInfo(): WeekInfo = WeekInfo(isoWeek, weekStart, weekEnd, today, dayOfWeek)
 }
 

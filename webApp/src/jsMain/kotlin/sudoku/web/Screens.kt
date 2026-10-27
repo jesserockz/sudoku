@@ -26,7 +26,7 @@ import org.jetbrains.compose.web.dom.Tr
 import org.jetbrains.compose.web.dom.Ul
 import sudoku.api.AppConfig
 import sudoku.api.AuthMode
-import sudoku.generator.Difficulty
+import sudoku.generator.Generator
 import sudoku.game.formatDuration
 
 @Composable
@@ -132,11 +132,11 @@ private fun TodayScreen(app: AppController) {
         }
         Ul({ classes("puzzles") }) {
             for (p in app.puzzles) {
-                val level = p.difficulty.level
+                val level = p.level
                 val status = app.statusOf(level)
                 Li {
                     Div {
-                        Div({ classes("name") }) { Text(p.difficulty.displayName) }
+                        Div({ classes("name") }) { Text(p.title) }
                         Div({ classes("status") ; if (status is PuzzleStatus.Done) classes("done") }) {
                             Text(
                                 when (status) {
@@ -179,19 +179,21 @@ private fun ScoresScreen(app: AppController, screen: Screen.Scores) {
             onClick { app.shiftScoresDate(1) }
         }) { Text("Later ›") }
     }
-    Div({ classes("tabs") }) {
-        TabButton("Total", screen.tab == 0) { app.showScoresTab(0) }
-        for (d in Difficulty.entries) TabButton(d.displayName, screen.tab == d.level) { app.showScoresTab(d.level) }
-    }
     val board = app.leaderboard
     val error = app.leaderboardError
+    // That day's game count: from its leaderboard once loaded (a past week may differ).
+    val levels = board?.takeIf { it.date == screen.date }?.puzzles?.size?.takeIf { it > 0 } ?: app.puzzles.size
+    Div({ classes("tabs") }) {
+        TabButton("Total", screen.tab == 0) { app.showScoresTab(0) }
+        for (level in 1..levels) TabButton(Generator.title(level, levels), screen.tab == level) { app.showScoresTab(level) }
+    }
     Div({ classes("card") }) {
         when {
             error != null -> P({ classes("error") }) { Text(error) }
             board == null || board.date != screen.date -> P({ classes("muted") }) { Text("Loading…") }
             screen.tab == 0 -> {
                 if (board.total.entries.isEmpty()) {
-                    P({ classes("muted") }) { Text("Nobody has finished all five yet.") }
+                    P({ classes("muted") }) { Text("Nobody has finished all $levels yet.") }
                 } else {
                     Table({ classes("board-table") }) {
                         Tbody {
@@ -226,11 +228,11 @@ private fun ScoresScreen(app: AppController, screen: Screen.Scores) {
                             Td { Text(p.displayName) }
                             Td({ classes("time") }) {
                                 Span({ classes("levels") }) {
-                                    for (level in 1..5) {
+                                    for (level in 1..levels) {
                                         Span({ if (level in p.completedLevels) classes("on") }) { Text("$level") }
                                     }
                                 }
-                                Text(" ${p.completedLevels.size}/5")
+                                Text(" ${p.completedLevels.size}/$levels")
                             }
                         }
                     }

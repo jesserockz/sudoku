@@ -116,7 +116,7 @@ fun PlayScreen(app: AppController, level: Int) {
         }
     }
 
-    TopBar(puzzle.difficulty.displayName, onBack = { app.openToday() }) {
+    TopBar(puzzle.title, onBack = { app.openToday() }) {
         if (!game.isComplete && !paused) Button({ classes("link"); onClick { pause() } }) { Text("Pause") }
     }
 

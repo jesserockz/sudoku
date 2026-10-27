@@ -94,7 +94,7 @@ fun PlayScreen(vm: AppViewModel, level: Int) {
     }
 
     Scaffold(topBar = {
-        Bar(puzzle.difficulty.displayName, onBack = { vm.openToday() }) {
+        Bar(puzzle.title, onBack = { vm.openToday() }) {
             if (!game.isComplete && !paused) TextButton(onClick = { pause() }) { Text("Pause") }
         }
     }) { padding ->
