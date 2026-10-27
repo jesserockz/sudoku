@@ -34,3 +34,20 @@ jobs:
         with:
           name: shared-test-reports
           path: shared/build/reports/tests/
+
+  web:
+    name: Web app build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "25"
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Build production bundle
+        run: ./gradlew :webApp:webDist --console=plain
+      - uses: actions/upload-artifact@v7
+        with:
+          name: web
+          path: build/web/

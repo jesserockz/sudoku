@@ -1,5 +1,6 @@
 package sudoku.game
 
+import kotlinx.serialization.Serializable
 import sudoku.core.Board
 import sudoku.core.Geometry
 
@@ -119,6 +120,7 @@ class Game private constructor(
 }
 
 /** Plain, serialisable game state for local persistence. */
+@Serializable
 data class SavedGame(
     val givens: String,
     val entries: String,
