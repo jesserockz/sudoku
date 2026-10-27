@@ -4,7 +4,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import org.jetbrains.compose.web.attributes.InputType
 import org.jetbrains.compose.web.attributes.disabled
 import org.jetbrains.compose.web.dom.Button
@@ -82,6 +85,8 @@ private fun DevSignIn(app: AppController) {
     var sub by remember { mutableStateOf("") }
     var name by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     Div({ classes("card") }) {
         H2 { Text("Dev sign-in") }
         P({ classes("muted") }) { Text("The server is in dev auth mode. Pick any user id and display name.") }
@@ -89,12 +94,21 @@ private fun DevSignIn(app: AppController) {
             classes("login")
             addEventListener("submit") {
                 it.preventDefault()
-                val auth = app.auth as? DevWebAuth ?: return@addEventListener
-                try {
-                    auth.signIn(sub.trim(), name.trim())
-                    app.reload()
-                } catch (e: IllegalArgumentException) {
-                    error = "User id can't be empty or contain ':', and a name is required."
+                if (busy) return@addEventListener
+                busy = true
+                error = null
+                scope.launch {
+                    try {
+                        app.signInDev(sub.trim(), name.trim())
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: IllegalArgumentException) {
+                        error = "User id can't be empty or contain ':', and a name is required."
+                    } catch (e: Throwable) {
+                        error = "Sign-in failed: couldn't reach the server."
+                    } finally {
+                        busy = false
+                    }
                 }
             }
         }) {
@@ -113,25 +127,44 @@ private fun DevSignIn(app: AppController) {
                 onInput { name = it.value }
             }
             error?.let { P({ classes("error") }) { Text(it) } }
-            Button({ classes("primary"); attr("type", "submit") }) { Text("Sign in") }
+            Button({ classes("primary"); attr("type", "submit"); if (busy) disabled() }) { Text("Sign in") }
         }
     }
 }
 
 @Composable
 private fun TodayScreen(app: AppController) {
-    val week = app.week ?: return
+    val today = app.today
     TopBar("Sudoku") {
         Button({ classes("link"); onClick { app.signOut() } }) { Text("Sign out") }
     }
+    if (app.needsSignIn) {
+        Div({ classes("notice") }) {
+            Text("Your sign-in has expired. ")
+            Button({ classes("link"); onClick { app.signIn() } }) { Text("Sign in again") }
+        }
+    }
     app.notice?.let { Div({ classes("notice") }) { Text(it) } }
+    val puzzles = app.puzzles
+    if (puzzles == null) {
+        Div({ classes("card", "center") }) {
+            P { Text("This week's puzzles haven't been downloaded yet.") }
+            P({ classes("muted") }) {
+                Text("Connect to the internet once this week to get them; after that they play offline all week.")
+            }
+            Button({ classes("primary"); if (app.syncing) disabled(); onClick { app.sync() } }) {
+                Text(if (app.syncing) "Checking…" else "Try again")
+            }
+        }
+        return
+    }
     Div({ classes("card") }) {
         P({ classes("muted") }) {
-            Text("${week.today.dayOfWeek.name.lowercase().replaceFirstChar { it.uppercase() }} ${week.today}")
+            Text("${today.dayOfWeek.name.lowercase().replaceFirstChar { it.uppercase() }} $today")
             app.me?.let { Text(" · ${it.displayName}") }
         }
         Ul({ classes("puzzles") }) {
-            for (p in app.puzzles) {
+            for (p in puzzles) {
                 val level = p.level
                 val status = app.statusOf(level)
                 Li {
@@ -169,20 +202,20 @@ private fun ScoresScreen(app: AppController, screen: Screen.Scores) {
     Div({ classes("date-nav") }) {
         Button({
             classes("link")
-            if (today == null || screen.date <= today.minusDays(8)) disabled()
+            if (screen.date <= today.minusDays(8)) disabled()
             onClick { app.shiftScoresDate(-1) }
         }) { Text("‹ Earlier") }
         Span { Text(if (screen.date == today) "Today" else screen.date.toString()) }
         Button({
             classes("link")
-            if (today == null || screen.date >= today) disabled()
+            if (screen.date >= today) disabled()
             onClick { app.shiftScoresDate(1) }
         }) { Text("Later ›") }
     }
     val board = app.leaderboard
     val error = app.leaderboardError
     // That day's game count: from its leaderboard once loaded (a past week may differ).
-    val levels = board?.takeIf { it.date == screen.date }?.puzzles?.size?.takeIf { it > 0 } ?: app.puzzles.size
+    val levels = board?.takeIf { it.date == screen.date }?.puzzles?.size?.takeIf { it > 0 } ?: app.puzzles?.size ?: 0
     Div({ classes("tabs") }) {
         TabButton("Total", screen.tab == 0) { app.showScoresTab(0) }
         for (level in 1..levels) TabButton(Generator.title(level, levels), screen.tab == level) { app.showScoresTab(level) }

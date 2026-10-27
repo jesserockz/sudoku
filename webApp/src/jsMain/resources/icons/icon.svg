@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <!-- The Android launcher icon: a 3x3 grid on blue. -->
+  <rect x="4" y="4" width="40" height="40" rx="4" fill="#2f6fdb"/>
+  <path fill="#fff" d="M18 10h2v28h-2zM28 10h2v28h-2zM10 18h28v2H10zM10 28h28v2H10z"/>
+</svg>

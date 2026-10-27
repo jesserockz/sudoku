@@ -175,6 +175,22 @@ class SudokuRepository(
         refresh()
     }
 
+    /**
+     * Where to send the browser to end the identity provider's session too, or
+     * `null` (dev auth, no `end_session_endpoint`, or the provider is unreachable).
+     * Call before [signOut], which forgets the ID token.
+     */
+    suspend fun endSessionUrl(postLogoutRedirectUri: String): String? {
+        val oidc = settings().oidc ?: return null
+        return try {
+            oidcClient(oidc).endSessionUrl(storage.tokens.read()?.idToken, postLogoutRedirectUri)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     suspend fun signOut() {
         storage.clearUserData()
         api = null
