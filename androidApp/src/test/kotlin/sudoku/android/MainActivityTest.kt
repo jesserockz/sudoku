@@ -1,6 +1,8 @@
 package sudoku.android
 
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
@@ -24,6 +26,7 @@ import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import sudoku.api.Me
+import sudoku.api.OidcConfig
 import sudoku.api.WeekResponse
 import sudoku.game.GameCalendar
 import sudoku.generator.WeekSeed
@@ -151,6 +154,33 @@ class MainActivityTest {
         compose.waitForIdle()
         compose.onRoot().captureRoboImage("build/outputs/roborazzi/restored.png")
         compose.onNode(hasContentDescription("column ${i % 9 + 1}, ${puzzle.solution[i]}", substring = true)).assertIsDisplayed()
+    }
+
+    @Test
+    fun oidcRedirectOpensTheApp() {
+        val redirect = Intent(Intent.ACTION_VIEW, Uri.parse(SudokuRepository.REDIRECT_URI + "?code=c&state=s"))
+            .addCategory(Intent.CATEGORY_BROWSABLE)
+        val resolved = context.packageManager.resolveActivity(redirect, 0)
+        assertEquals(MainActivity::class.java.name, resolved?.activityInfo?.name)
+
+        // A redirect this app didn't ask for is rejected with a message.
+        scenario = ActivityScenario.launch(redirect.setClass(context, MainActivity::class.java))
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("didn't match", substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    @Test
+    fun expiredOidcSessionStillPlaysAndOffersSignIn() {
+        signedInWithCachedWeek()
+        storage.settings.write(
+            Settings("http://127.0.0.1:9", oidc = OidcConfig("https://auth.example.com/o/sudoku/", "sudoku-android")),
+        )
+        launch()
+        compose.onNodeWithText("Your sign-in has expired.").assertIsDisplayed()
+        compose.onNodeWithText("Sign in again").assertIsDisplayed()
+        compose.onAllNodesWithText("Play").onFirst().assertIsDisplayed()
+        compose.onRoot().captureRoboImage("build/outputs/roborazzi/expired.png")
     }
 
     private fun cell(i: Int) =

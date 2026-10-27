@@ -9,8 +9,11 @@ import kotlinx.serialization.builtins.serializer
 import sudoku.api.DayResult
 import sudoku.api.GameResult
 import sudoku.api.Me
+import sudoku.api.OidcConfig
 import sudoku.api.SudokuApi
 import sudoku.api.WeekResponse
+import sudoku.auth.StoredTokens
+import sudoku.auth.TokenStore
 import sudoku.game.SavedGame
 import sudoku.sync.PendingResultStore
 import java.io.File
@@ -52,6 +55,19 @@ data class Settings(
     val serverUrl: String = "",
     /** Set when signed in through the server's dev auth mode. */
     val devUser: DevUser? = null,
+    /** Set when signed in with OIDC: the provider from the server's `/config`. */
+    val oidc: OidcConfig? = null,
+)
+
+/** An OIDC sign-in waiting for the browser to redirect back. */
+@Serializable
+data class PendingAuth(
+    val serverUrl: String,
+    val oidc: OidcConfig,
+    val state: String,
+    val verifier: String,
+    val nonce: String,
+    val createdAtEpochMs: Long,
 )
 
 @Serializable
@@ -65,6 +81,11 @@ class AppStorage(dir: File) {
     val week = JsonFile(File(dir, "week.json"), WeekResponse.serializer())
 
     val me = JsonFile(File(dir, "me.json"), Me.serializer())
+
+    /** OIDC tokens (app-private storage). */
+    val tokens = JsonFile(File(dir, "tokens.json"), StoredTokens.serializer())
+
+    val pendingAuth = JsonFile(File(dir, "auth-pending.json"), PendingAuth.serializer())
 
     /** Games in progress or finished, keyed by [gameKey]. Only the cached week's are kept. */
     val games = JsonFile(File(dir, "games.json"), MapSerializer(String.serializer(), SavedGame.serializer()))
@@ -80,7 +101,13 @@ class AppStorage(dir: File) {
 
     /** Forgets everything tied to the signed-in user, keeping the server URL. */
     fun clearUserData() {
-        settings.update { it?.copy(devUser = null) }
+        settings.update { it?.copy(devUser = null, oidc = null) }
+        tokens.write(null)
+        clearProgress()
+    }
+
+    /** Forgets the user's games and results (e.g. when a different account signs in). */
+    fun clearProgress() {
         me.write(null)
         games.write(null)
         serverResults.write(null)
@@ -90,6 +117,12 @@ class AppStorage(dir: File) {
     companion object {
         fun gameKey(date: LocalDate, level: Int) = "$date/$level"
     }
+}
+
+class FileTokenStore(private val file: JsonFile<StoredTokens>) : TokenStore {
+    override suspend fun load(): StoredTokens? = file.read()
+
+    override suspend fun save(tokens: StoredTokens?) = file.write(tokens)
 }
 
 class FilePendingResultStore(val file: JsonFile<List<GameResult>>) : PendingResultStore {

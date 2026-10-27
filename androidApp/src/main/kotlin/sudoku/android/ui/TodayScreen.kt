@@ -36,7 +36,17 @@ fun TodayScreen(vm: AppViewModel) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             if (vm.syncing) LinearProgressIndicator(Modifier.fillMaxWidth())
-            vm.syncProblem?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
+            if (vm.needsSignIn) {
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Your sign-in has expired.", fontWeight = FontWeight.SemiBold)
+                        Text("You can keep playing; sign in again to upload results and see the leaderboard.")
+                        Button(onClick = { vm.signInAgain() }) { Text("Sign in again") }
+                    }
+                }
+            } else {
+                vm.syncProblem?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
+            }
             val day = vm.date.dayOfWeek.name.lowercase().replaceFirstChar { it.uppercase() }
             Text(
                 "$day ${vm.date}" + (vm.displayName?.let { " · $it" } ?: ""),

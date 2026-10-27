@@ -1,6 +1,8 @@
 package sudoku.android
 
 import io.ktor.client.engine.HttpClientEngine
+import io.ktor.http.parseQueryString
+import kotlinx.coroutines.CancellationException
 import kotlinx.datetime.LocalDate
 import sudoku.api.AppConfig
 import sudoku.api.DayResult
@@ -8,9 +10,14 @@ import sudoku.api.DevAuth
 import sudoku.api.GameResult
 import sudoku.api.Leaderboard
 import sudoku.api.Me
+import sudoku.api.OidcConfig
 import sudoku.api.SudokuApi
 import sudoku.api.TokenProvider
 import sudoku.api.WeekResponse
+import sudoku.auth.OidcClient
+import sudoku.auth.Pkce
+import sudoku.auth.TokenSession
+import sudoku.auth.randomToken
 import sudoku.game.DailyPuzzles
 import sudoku.game.Game
 import sudoku.game.GameCalendar
@@ -39,13 +46,39 @@ class SudokuRepository(
     private var api: Pair<String, SudokuApi>? = null
     private var puzzleCache: Pair<Pair<Long, LocalDate>, List<Puzzle>>? = null
 
-    val tokens = TokenProvider { settings().devUser?.let { DevAuth.token(it.sub, it.name) } }
+    private var oidcClient: Pair<OidcConfig, OidcClient>? = null
+
+    private val tokenSession = TokenSession(
+        FileTokenStore(storage.tokens),
+        refresh = { refreshToken ->
+            val oidc = checkNotNull(settings().oidc) { "not signed in with OIDC" }
+            oidcClient(oidc).refresh(refreshToken)
+        },
+        clock = clock,
+    )
+
+    val tokens = TokenProvider {
+        val s = settings()
+        when {
+            s.devUser != null -> DevAuth.token(s.devUser.sub, s.devUser.name)
+            s.oidc != null -> tokenSession.token()
+            else -> null
+        }
+    }
 
     val sync = ResultSync(storage.pending) { api().submitResult(it) }
 
     fun settings(): Settings = storage.settings.read() ?: Settings(serverUrl = defaultServerUrl)
 
-    val isSignedIn: Boolean get() = settings().let { it.serverUrl.isNotBlank() && it.devUser != null }
+    /**
+     * Whether the app has an identity to play as. With OIDC this stays true when
+     * the tokens expire or are revoked, so offline play and the result queue keep
+     * working; [needsSignIn] then asks for a fresh sign-in.
+     */
+    val isSignedIn: Boolean get() = settings().let { it.serverUrl.isNotBlank() && (it.devUser != null || it.oidc != null) }
+
+    /** Signed in with OIDC but without usable tokens: the user should sign in again. */
+    val needsSignIn: Boolean get() = settings().oidc != null && storage.tokens.read() == null
 
     fun today(): LocalDate = GameCalendar.today(clock.now())
 
@@ -82,6 +115,63 @@ class SudokuRepository(
             api = null
             throw e
         }
+    }
+
+    /**
+     * Starts an OIDC sign-in (Authorization Code + PKCE): stores the PKCE
+     * verifier and state, and returns the URL to open in the system browser.
+     * The browser comes back to [REDIRECT_URI]; pass that to [completeOidcSignIn].
+     */
+    suspend fun beginOidcSignIn(serverUrl: String, oidc: OidcConfig): String {
+        require(oidc.issuer.isNotBlank() && oidc.clientId.isNotBlank()) { "the server's OIDC settings are incomplete" }
+        val pkce = Pkce.create()
+        val pending = PendingAuth(
+            serverUrl = normalizeUrl(serverUrl),
+            oidc = oidc,
+            state = randomToken(),
+            verifier = pkce.verifier,
+            nonce = randomToken(),
+            createdAtEpochMs = clock.now().toEpochMilliseconds(),
+        )
+        storage.pendingAuth.write(pending)
+        return oidcClient(oidc).authorizationUrl(pkce, pending.state, pending.nonce)
+    }
+
+    /**
+     * Finishes an OIDC sign-in from the redirect URI the browser opened: checks
+     * `state`, exchanges the code, saves the tokens, then syncs. If a different
+     * account than before signs in, the previous account's games and queued
+     * results are discarded. Throws [SignInException] when sign-in fails; a sync
+     * failure after a successful sign-in propagates as is.
+     */
+    suspend fun completeOidcSignIn(redirectUri: String) {
+        val params = parseQueryString(redirectUri.substringAfter('?', ""))
+        val pending = storage.pendingAuth.read()
+        storage.pendingAuth.write(null)
+        params["error"]?.let { throw SignInException("Sign-in failed: ${params["error_description"] ?: it}") }
+        val code = params["code"] ?: throw SignInException("Sign-in failed: no authorization code returned.")
+        if (pending == null || pending.state != params["state"]) {
+            throw SignInException("Sign-in failed: the response didn't match this app's request. Please try again.")
+        }
+        if (clock.now().toEpochMilliseconds() - pending.createdAtEpochMs > PENDING_TTL_MS) {
+            throw SignInException("Sign-in took too long. Please try again.")
+        }
+        val response = try {
+            oidcClient(pending.oidc).exchangeCode(code, pending.verifier)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            throw SignInException("Sign-in failed: couldn't get tokens from the identity provider.", e)
+        }
+
+        val previousUser = storage.me.read()
+        storage.settings.write(Settings(pending.serverUrl, devUser = null, oidc = pending.oidc))
+        tokenSession.signedIn(response)
+        api = null
+        val me = api().me()
+        if (previousUser != null && previousUser.id != me.id) storage.clearProgress()
+        storage.me.write(me)
+        refresh()
     }
 
     suspend fun signOut() {
@@ -154,13 +244,32 @@ class SudokuRepository(
         return newApi(url, tokens).also { api = url to it }
     }
 
+    private fun oidcClient(oidc: OidcConfig): OidcClient {
+        oidcClient?.let { (c, client) -> if (c == oidc) return client }
+        val client = if (engine != null) {
+            OidcClient(oidc.issuer, oidc.clientId, oidc.scopes, REDIRECT_URI, engine)
+        } else {
+            OidcClient(oidc.issuer, oidc.clientId, oidc.scopes, REDIRECT_URI)
+        }
+        return client.also { oidcClient = oidc to it }
+    }
+
     private fun newApi(url: String, tokens: TokenProvider) =
         if (engine != null) SudokuApi(url, tokens, engine) else SudokuApi(url, tokens)
 
     companion object {
+        /**
+         * The OIDC redirect: a private-use URI scheme from the application id
+         * (RFC 8252 section 7.1). Register it in Authentik and in the manifest.
+         */
+        const val REDIRECT_URI = "io.github.jesserockz.sudoku:/oauth2redirect"
+        private const val PENDING_TTL_MS = 15 * 60 * 1000L
+
         fun normalizeUrl(url: String): String {
             val trimmed = url.trim().trimEnd('/')
             return if ("://" in trimmed) trimmed else "https://$trimmed"
         }
     }
 }
+
+class SignInException(message: String, cause: Throwable? = null) : Exception(message, cause)

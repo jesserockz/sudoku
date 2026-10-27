@@ -117,7 +117,7 @@ address on the first-run screen. From the emulator, a dev server on the host is
 How it works:
 
 - **First run** asks for the server address, reads `/api/v1/config` and signs
-  in (dev auth for now).
+  in: dev auth asks for an id and name; OIDC opens the system browser (below).
 - **Offline play**: the app keeps exactly one week's seed (`week.json` in the
   app's private files). Every day of that week plays with no network; "today"
   is the device clock in Pacific/Auckland. A new week needs one connection.
@@ -133,3 +133,25 @@ How it works:
   until the player taps Resume. Games are saved on every move.
 - **Leaderboard** needs a connection; it shows today and the previous 8 days.
 
+
+### Android sign-in (OIDC)
+
+Authorization Code + PKCE in the **system browser** (a Custom Tab, never a web
+view, per RFC 8252), reusing the shared `sudoku.auth` code the web client uses:
+
+- Redirect URI: **`io.github.jesserockz.sudoku:/oauth2redirect`** (a private-use
+  scheme from the application id). `MainActivity` handles it (`singleTask`).
+- `state` and the PKCE verifier are stored until the browser returns, are
+  single-use, and expire after 15 minutes.
+- Tokens are kept in app-private storage. Access tokens refresh automatically
+  with the refresh token (`offline_access` scope), so a session lasts as long as
+  Authentik keeps the refresh token valid.
+- If the refresh token stops working, the app **keeps the identity**: puzzles
+  still play offline and results stay queued, and a "Sign in again" card
+  appears. If a *different* account signs in, the previous account's games and
+  queued results are discarded rather than uploaded under the new account.
+
+Authentik: the app uses the issuer and client id from `/api/v1/config` (the
+same Public client as the web app), so add
+`io.github.jesserockz.sudoku:/oauth2redirect` as a second redirect URI on that
+provider. No server changes are needed.

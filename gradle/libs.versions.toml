@@ -15,6 +15,7 @@ androidx-activity = "1.13.0"
 androidx-lifecycle = "2.11.0"
 androidx-work = "2.12.0"
 androidx-core = "1.19.1"
+androidx-browser = "1.10.0"
 robolectric = "4.17"
 roborazzi = "1.77.0"
 androidx-test-ext = "1.3.0"
@@ -42,6 +43,7 @@ androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-
 androidx-lifecycle-process = { module = "androidx.lifecycle:lifecycle-process", version.ref = "androidx-lifecycle" }
 androidx-work-runtime = { module = "androidx.work:work-runtime-ktx", version.ref = "androidx-work" }
 androidx-core = { module = "androidx.core:core-ktx", version.ref = "androidx-core" }
+androidx-browser = { module = "androidx.browser:browser", version.ref = "androidx-browser" }
 androidx-compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
 androidx-compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
 androidx-work-testing = { module = "androidx.work:work-testing", version.ref = "androidx-work" }
