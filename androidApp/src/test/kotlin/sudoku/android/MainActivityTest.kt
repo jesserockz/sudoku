@@ -28,6 +28,8 @@ import org.robolectric.annotation.GraphicsMode
 import sudoku.api.Me
 import sudoku.api.OidcConfig
 import sudoku.api.WeekResponse
+import sudoku.data.DevUser
+import sudoku.data.Settings
 import sudoku.game.GameCalendar
 import sudoku.generator.WeekSeed
 import kotlin.test.assertEquals
@@ -158,7 +160,7 @@ class MainActivityTest {
 
     @Test
     fun oidcRedirectOpensTheApp() {
-        val redirect = Intent(Intent.ACTION_VIEW, Uri.parse(SudokuRepository.REDIRECT_URI + "?code=c&state=s"))
+        val redirect = Intent(Intent.ACTION_VIEW, Uri.parse(SudokuApp.OIDC_REDIRECT_URI + "?code=c&state=s"))
             .addCategory(Intent.CATEGORY_BROWSABLE)
         val resolved = context.packageManager.resolveActivity(redirect, 0)
         assertEquals(MainActivity::class.java.name, resolved?.activityInfo?.name)

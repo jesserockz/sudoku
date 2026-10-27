@@ -1,4 +1,4 @@
-package sudoku.android
+package sudoku.data
 
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.http.parseQueryString
@@ -26,9 +26,9 @@ import sudoku.sync.ResultSync
 import kotlin.time.Clock
 
 /**
- * The Android app's data layer: settings, the cached week, games, the offline
- * result queue and the API. Plain Kotlin over [AppStorage], so it's unit tested
- * on the JVM.
+ * The clients' offline-first data layer: settings, the cached week, games, the
+ * offline result queue and the API. Plain Kotlin over [AppStorage], shared by
+ * the Android app (files) and the web app (`localStorage`).
  *
  * Offline rules (PROJECT_PLAN.md): the device keeps exactly one week's seed. With
  * it, every day of that week plays offline; "today" comes from the device clock
@@ -37,6 +37,8 @@ import kotlin.time.Clock
  */
 class SudokuRepository(
     private val storage: AppStorage,
+    /** Where the identity provider sends the browser back to after sign-in. */
+    private val redirectUri: String,
     private val defaultServerUrl: String = "",
     private val clock: Clock = Clock.System,
     /** Overrides the HTTP engine (tests use a mock). */
@@ -48,7 +50,7 @@ class SudokuRepository(
     private var oidcClient: Pair<OidcConfig, OidcClient>? = null
 
     private val tokenSession = TokenSession(
-        FileTokenStore(storage.tokens),
+        StoredTokenStore(storage.tokens),
         refresh = { refreshToken ->
             val oidc = checkNotNull(settings().oidc) { "not signed in with OIDC" }
             oidcClient(oidc).refresh(refreshToken)
@@ -119,7 +121,7 @@ class SudokuRepository(
     /**
      * Starts an OIDC sign-in (Authorization Code + PKCE): stores the PKCE
      * verifier and state, and returns the URL to open in the system browser.
-     * The browser comes back to [REDIRECT_URI]; pass that to [completeOidcSignIn].
+     * The browser comes back to [redirectUri]; pass that to [completeOidcSignIn].
      */
     suspend fun beginOidcSignIn(serverUrl: String, oidc: OidcConfig): String {
         require(oidc.issuer.isNotBlank() && oidc.clientId.isNotBlank()) { "the server's OIDC settings are incomplete" }
@@ -246,9 +248,9 @@ class SudokuRepository(
     private fun oidcClient(oidc: OidcConfig): OidcClient {
         oidcClient?.let { (c, client) -> if (c == oidc) return client }
         val client = if (engine != null) {
-            OidcClient(oidc.issuer, oidc.clientId, oidc.scopes, REDIRECT_URI, engine)
+            OidcClient(oidc.issuer, oidc.clientId, oidc.scopes, redirectUri, engine)
         } else {
-            OidcClient(oidc.issuer, oidc.clientId, oidc.scopes, REDIRECT_URI)
+            OidcClient(oidc.issuer, oidc.clientId, oidc.scopes, redirectUri)
         }
         return client.also { oidcClient = oidc to it }
     }
@@ -257,11 +259,6 @@ class SudokuRepository(
         if (engine != null) SudokuApi(url, tokens, engine) else SudokuApi(url, tokens)
 
     companion object {
-        /**
-         * The OIDC redirect: a private-use URI scheme from the application id
-         * (RFC 8252 section 7.1). Register it in Authentik and in the manifest.
-         */
-        const val REDIRECT_URI = "io.github.jesserockz.sudoku:/oauth2redirect"
         private const val PENDING_TTL_MS = 15 * 60 * 1000L
 
         fun normalizeUrl(url: String): String {

@@ -4,6 +4,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.LocalDate
 import org.junit.Rule
 import org.junit.rules.TemporaryFolder
+import sudoku.data.SudokuRepository
 import sudoku.game.Game
 import sudoku.generator.Generator
 import sudoku.generator.WeekSeed
@@ -29,7 +30,7 @@ class SudokuRepositoryTest {
     private val clock = FakeClock(Instant.parse("2026-10-25T20:00:00Z"))
     private val server = FakeServer(clock)
 
-    private fun repo() = SudokuRepository(AppStorage(tmp.root), clock = clock, engine = server.engine)
+    private fun repo() = SudokuRepository(AppStorage(tmp.root), SudokuApp.OIDC_REDIRECT_URI, clock = clock, engine = server.engine)
 
     private fun advanceDays(days: Int) {
         clock.now = Instant.fromEpochMilliseconds(clock.now.toEpochMilliseconds() + days * 86_400_000L)

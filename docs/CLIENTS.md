@@ -5,7 +5,7 @@ the repository root. The Go server in `server/` is built separately.
 
 | Module   | What it is                                                         |
 | -------- | ------------------------------------------------------------------ |
-| `shared` | Pure Kotlin: board model, validation, generator, game logic, API client. Targets JVM, Android and JS. |
+| `shared` | Pure Kotlin: board model, validation, generator, game logic, API client and the offline-first repository. Targets JVM, Android and JS. |
 | `webApp` | Browser client: Compose HTML on Kotlin/JS.                         |
 | `androidApp` | Android app: Jetpack Compose, offline-first.                   |
 
@@ -31,6 +31,26 @@ CI (`.github/workflows/clients.yml`) runs all three on every change outside
 `kotlin-js-store/yarn.lock` pins the JS test dependencies. If a dependency
 change makes the build complain that it is out of date, run
 `./gradlew kotlinUpgradeYarnLock` and commit the result.
+
+## Offline data (shared)
+
+Both apps keep their state through `sudoku.data.SudokuRepository` in `shared`:
+settings and identity, the cached week (seed and games per day), `me`, games
+in progress, the server's results for today and the offline result queue
+(`ResultSync`). It stores JSON documents in a small `KeyValueStore`: one file
+per key on Android (`FileKeyValueStore`, e.g. `week.json`) and `localStorage`
+keys prefixed `sudoku.` in the browser (`WebStorageKeyValueStore`). The rules:
+
+- Exactly one week is kept. "Today" is the device clock in Pacific/Auckland;
+  if the cached week covers it, the day's games come from its seed with no
+  network. Saving a different week drops games from other weeks.
+- `refresh()` syncs identity, the week, queued results and today's results;
+  failures leave everything cached and queued.
+- If a different account signs in with OIDC, the previous account's games and
+  queued results are discarded rather than uploaded under the new account.
+
+`SudokuRepositoryTest` in `shared/src/commonTest` covers this on every target
+against an in-memory store and a fake server (Ktor `MockEngine`).
 
 ## Web app
 
