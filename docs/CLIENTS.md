@@ -63,6 +63,29 @@ That serves the app on <http://localhost:8081> with live reload and proxies
 In dev auth mode the app asks for a user id and display name and sends
 `Authorization: Bearer dev:<id>:<name>`.
 
+### Sign-in (OIDC)
+
+When the server's `authMode` is `oidc`, the web client signs in with
+Authorization Code + PKCE (S256), using the issuer, client id and scopes from
+`GET /api/v1/config`:
+
+1. **Sign in** fetches the provider's discovery document, stores a random
+   `state`, `nonce` and PKCE verifier, and redirects to the authorization endpoint.
+2. The provider redirects back to **`<origin>/auth/callback`**. The app checks
+   `state`, exchanges the code (sending the verifier) at the token endpoint,
+   stores the tokens in `localStorage` and replaces the URL with `/`.
+3. Access tokens are refreshed with the refresh token shortly before they
+   expire. If the refresh token is rejected, the user is asked to sign in again.
+4. **Sign out** forgets the tokens and, if the provider has an
+   `end_session_endpoint`, ends the provider session too.
+
+Authentik setup for the web client: an **OAuth2/OpenID Provider** with
+client type **Public**, redirect URI `https://<your host>/auth/callback`, an
+RS256 signing key, and the `openid`, `profile` and `offline_access` scopes
+(the last one is what issues refresh tokens). The server's `oidc.client_id`
+must be this provider's client id. The protocol code (`sudoku.auth` in
+`shared`) is platform-neutral and covered by tests on every target.
+
 ### What it does
 
 - **Today**: the day's five puzzles (generated locally from the week's seed),
