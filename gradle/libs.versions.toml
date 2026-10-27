@@ -1,0 +1,14 @@
+[versions]
+kotlin = "2.4.21"
+agp = "9.4.1"
+android-compileSdk = "37"
+android-minSdk = "26"
+android-targetSdk = "37"
+
+[libraries]
+kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
+
+[plugins]
+kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+androidKmpLibrary = { id = "com.android.kotlin.multiplatform.library", version.ref = "agp" }
+androidApplication = { id = "com.android.application", version.ref = "agp" }
