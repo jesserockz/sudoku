@@ -7,6 +7,7 @@ the repository root. The Go server in `server/` is built separately.
 | -------- | ------------------------------------------------------------------ |
 | `shared` | Pure Kotlin: board model, validation, generator, game logic, API client. Targets JVM, Android and JS. |
 | `webApp` | Browser client: Compose HTML on Kotlin/JS.                         |
+| `androidApp` | Android app: Jetpack Compose, offline-first.                   |
 
 ## Requirements
 
@@ -101,3 +102,34 @@ must be this provider's client id. The protocol code (`sudoku.auth` in
   player's progress (e.g. 3/5), for today and the previous 8 days.
 - In-progress games are saved per user and day in `localStorage`, so a reload
   or a closed tab resumes where you left off.
+
+## Android app
+
+```sh
+./gradlew :androidApp:assembleDebug        # androidApp/build/outputs/apk/debug/
+./gradlew :androidApp:testDebugUnitTest    # JVM tests, including Robolectric UI tests
+```
+
+Pass `-PsudokuServerUrl=https://sudoku.example.com` to prefill the server
+address on the first-run screen. From the emulator, a dev server on the host is
+`http://10.0.2.2:8080` (plain HTTP is allowed only for `10.0.2.2` and `localhost`).
+
+How it works:
+
+- **First run** asks for the server address, reads `/api/v1/config` and signs
+  in (dev auth for now).
+- **Offline play**: the app keeps exactly one week's seed (`week.json` in the
+  app's private files). Every day of that week plays with no network; "today"
+  is the device clock in Pacific/Auckland. A new week needs one connection.
+- **Sync** runs at launch and whenever the app comes to the foreground:
+  identity, the current week, queued uploads and today's results. Failures just
+  show an "Offline" note.
+- **Results** are queued on disk (`pending.json`) the moment a puzzle is solved
+  and uploaded by a WorkManager job that waits for a network and retries with
+  backoff; `400` responses are dropped (API contract). A result keeps the date
+  it was played even if it uploads days later.
+- **Timer** runs only while the puzzle is on screen. Backgrounding the app
+  (`ON_STOP`) pauses it and saves the game; coming back shows a "Paused" cover
+  until the player taps Resume. Games are saved on every move.
+- **Leaderboard** needs a connection; it shows today and the previous 8 days.
+
