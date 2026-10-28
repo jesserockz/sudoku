@@ -10,6 +10,7 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import sudoku.data.SudokuRepository
 import java.util.concurrent.TimeUnit
 
 class SudokuApp : Application() {
@@ -18,7 +19,7 @@ class SudokuApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        repository = SudokuRepository(AppStorage(filesDir), BuildConfig.DEFAULT_SERVER_URL)
+        repository = SudokuRepository(AppStorage(filesDir), OIDC_REDIRECT_URI, BuildConfig.DEFAULT_SERVER_URL)
     }
 
     /**
@@ -34,6 +35,12 @@ class SudokuApp : Application() {
     }
 
     companion object {
+        /**
+         * The OIDC redirect: a private-use URI scheme from the application id
+         * (RFC 8252 section 7.1). Register it in Authentik and in the manifest.
+         */
+        const val OIDC_REDIRECT_URI = "io.github.jesserockz.sudoku:/oauth2redirect"
+
         fun from(context: Context) = context.applicationContext as SudokuApp
     }
 }

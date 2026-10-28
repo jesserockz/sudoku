@@ -56,7 +56,7 @@ class MainActivity : ComponentActivity() {
 
     private fun handleIntent(intent: Intent?) {
         val uri = intent?.data ?: return
-        if (uri.toString().startsWith(SudokuRepository.REDIRECT_URI)) {
+        if (uri.toString().startsWith(SudokuApp.OIDC_REDIRECT_URI)) {
             vm.handleRedirect(uri.toString())
             intent.data = null // don't replay on recreation
         }

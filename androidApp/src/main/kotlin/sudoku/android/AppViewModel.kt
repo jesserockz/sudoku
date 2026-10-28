@@ -18,6 +18,7 @@ import sudoku.api.ApiException
 import sudoku.api.AppConfig
 import sudoku.api.AuthMode
 import sudoku.api.Leaderboard
+import sudoku.data.SignInException
 import sudoku.game.Game
 import sudoku.game.Ticker
 import sudoku.generator.Puzzle
