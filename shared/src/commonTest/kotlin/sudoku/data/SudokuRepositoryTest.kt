@@ -268,6 +268,20 @@ class SudokuRepositoryTest {
     }
 
     @Test
+    fun endSessionUrlCarriesTheIdToken() = runTest {
+        assertNull(repo().endSessionUrl("https://sudoku.test/"))
+        server = FakeServer(clock, authMode = "oidc")
+        val repo = repo()
+        signInOidc(repo)
+        val q = Url(repo.endSessionUrl("https://sudoku.test/")!!).parameters
+        assertTrue(q["id_token_hint"]!!.startsWith("id"))
+        assertEquals("https://sudoku.test/", q["post_logout_redirect_uri"])
+        repo.signOut()
+        assertFalse(repo.isSignedIn)
+        assertFalse(repo.needsSignIn)
+    }
+
+    @Test
     fun aDifferentAccountStartsFresh() = runTest {
         server = FakeServer(clock, authMode = "oidc")
         val repo = repo()
