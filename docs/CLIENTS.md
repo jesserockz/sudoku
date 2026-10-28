@@ -5,7 +5,7 @@ the repository root. The Go server in `server/` is built separately.
 
 | Module   | What it is                                                         |
 | -------- | ------------------------------------------------------------------ |
-| `shared` | Pure Kotlin: board model, validation, generator, game logic, API client. Targets JVM, Android and JS. |
+| `shared` | Pure Kotlin: board model, validation, generator, game logic, API client and the offline-first repository. Targets JVM, Android and JS. |
 | `webApp` | Browser client: Compose HTML on Kotlin/JS.                         |
 | `androidApp` | Android app: Jetpack Compose, offline-first.                   |
 
@@ -32,6 +32,26 @@ CI (`.github/workflows/clients.yml`) runs all three on every change outside
 change makes the build complain that it is out of date, run
 `./gradlew kotlinUpgradeYarnLock` and commit the result.
 
+## Offline data (shared)
+
+Both apps keep their state through `sudoku.data.SudokuRepository` in `shared`:
+settings and identity, the cached week (seed and games per day), `me`, games
+in progress, the server's results for today and the offline result queue
+(`ResultSync`). It stores JSON documents in a small `KeyValueStore`: one file
+per key on Android (`FileKeyValueStore`, e.g. `week.json`) and `localStorage`
+keys prefixed `sudoku.` in the browser (`WebStorageKeyValueStore`). The rules:
+
+- Exactly one week is kept. "Today" is the device clock in Pacific/Auckland;
+  if the cached week covers it, the day's games come from its seed with no
+  network. Saving a different week drops games from other weeks.
+- `refresh()` syncs identity, the week, queued results and today's results;
+  failures leave everything cached and queued.
+- If a different account signs in with OIDC, the previous account's games and
+  queued results are discarded rather than uploaded under the new account.
+
+`SudokuRepositoryTest` in `shared/src/commonTest` covers this on every target
+against an in-memory store and a fake server (Ktor `MockEngine`).
+
 ## Web app
 
 The web client is [Compose HTML](https://github.com/JetBrains/compose-multiplatform#compose-html)
@@ -47,7 +67,7 @@ the web client is how iPhone users play.
 
 This writes the static site to **`build/web/`** at the repository root:
 `index.html`, `styles.css`, `sudoku.js` (plus source maps and a lazily loaded
-chunk). Point the server's `web_dir` (`SUDOKU_WEB_DIR`) at that directory. The
+chunk), the PWA files (`manifest.webmanifest`, `sw.js`, `icons/`). Point the server's `web_dir` (`SUDOKU_WEB_DIR`) at that directory. The
 server falls back to `index.html` for unknown paths, so `index.html` loads its
 assets by absolute path: serve the client at the site root.
 
@@ -64,6 +84,81 @@ That serves the app on <http://localhost:8081> with live reload and proxies
 In dev auth mode the app asks for a user id and display name and sends
 `Authorization: Bearer dev:<id>:<name>`.
 
+### Installable and offline (PWA)
+
+The web client is an installable, offline-first Progressive Web App, and plays
+offline the way the Android app does.
+
+**Installing.** On iPhone/iPad: open the site in Safari, tap **Share → Add to
+Home Screen**. On Android/desktop Chrome or Edge: use **Install app** in the
+browser menu (or the install icon in the address bar). The app then opens
+full-screen from its own icon.
+
+**What works offline.** After one sign-in online, the app keeps the current
+week's seed, the identity, games in progress and the result queue in
+`localStorage` (via the shared repository, see above), and a service worker
+keeps the app itself. Offline it opens normally, generates every day of that
+week's puzzles, and plays, times and finishes them; finished puzzles queue
+their results. It syncs in the background at start, when the browser reports
+it's back online, when the page becomes visible again, and every 30 seconds
+while the last sync failed. A new week needs one connection: until then the
+app shows "Connect to the internet once this week". The leaderboard and
+signing in need the server.
+
+**iOS caveats.**
+
+- No Background Sync on iOS: queued results upload the next time the app is
+  opened (or brought back to the foreground) with a connection, not while
+  it's closed. They keep the date they were played, as on Android.
+- Home Screen apps keep their own storage, so the cached week, games and
+  queued results survive. Safari may clear the storage of an ordinary tab
+  that hasn't been used for a while (about 7 days), so iPhone users should
+  play from the Home Screen icon. A Home Screen app also has its own sign-in,
+  separate from Safari's.
+
+**Service worker (`sw.js`).** Hand-written, in `webApp/src/jsMain/resources`.
+It caches the app shell (`index.html`, `sudoku.js` and its chunk,
+`styles.css`, the manifest and icons) in a cache named after a hash of those
+files, which `webDist` writes into `sw.js` along with the file list. So every
+build installs a fresh cache and deletes the old one. Requests go to the
+network first and fall back to the cache when offline or after 4 seconds
+without an answer. Navigations to any path (`/auth/callback?...` included)
+fall back to the cached `index.html`. `/api/` and `/healthz` are never cached.
+A service worker needs a secure context: HTTPS, or `http://localhost`.
+
+Reverse proxy: serve `sw.js` with `Cache-Control: no-cache` so browsers pick
+up new builds promptly (they already bypass the HTTP cache for it by default,
+so this is a safeguard). Optionally serve `manifest.webmanifest` as
+`application/manifest+json` (the Go server sends `text/plain`, which browsers
+accept). With Caddy:
+
+```caddyfile
+@sw path /sw.js
+header @sw Cache-Control "no-cache"
+@manifest path /manifest.webmanifest
+header @manifest Content-Type "application/manifest+json"
+```
+
+**Upgrading from earlier versions.** The first start of this version moves the
+old `localStorage` keys (`devUser`, `oidc.tokens`, `pending.<id>`,
+`game.<id>.*`) into the new documents, so players stay signed in and keep their
+queued results and this week's games.
+
+**Checking offline play** end to end (Playwright with Chromium) against the
+Go server in dev mode serving `build/web`:
+
+```sh
+./gradlew :webApp:webDist
+(cd server && go build ./cmd/sudoku-server)
+SUDOKU_AUTH_MODE=dev SUDOKU_SERVER_SECRET=dev-secret-change-me SUDOKU_TIMEZONE=Pacific/Auckland \
+  SUDOKU_WEB_DIR=$PWD/build/web server/sudoku-server &
+node webApp/e2e/offline.js http://localhost:8080
+```
+
+It signs in, goes offline and reloads, solves a puzzle offline, checks the
+result reaches `GET /api/v1/me/results` once back online, and covers the
+stale-week message and the storage migration.
+
 ### Sign-in (OIDC)
 
 When the server's `authMode` is `oidc`, the web client signs in with
@@ -74,9 +169,12 @@ Authorization Code + PKCE (S256), using the issuer, client id and scopes from
    `state`, `nonce` and PKCE verifier, and redirects to the authorization endpoint.
 2. The provider redirects back to **`<origin>/auth/callback`**. The app checks
    `state`, exchanges the code (sending the verifier) at the token endpoint,
-   stores the tokens in `localStorage` and replaces the URL with `/`.
+   stores the tokens in `localStorage` and replaces the URL with `/`. If a
+   different account signs in, the previous account's games and queued
+   results are discarded rather than uploaded under the new account.
 3. Access tokens are refreshed with the refresh token shortly before they
-   expire. If the refresh token is rejected, the user is asked to sign in again.
+   expire. If the refresh token is rejected, the app keeps playing offline
+   with results queued, and shows "Sign in again".
 4. **Sign out** forgets the tokens and, if the provider has an
    `end_session_endpoint`, ends the provider session too.
 
@@ -89,18 +187,20 @@ must be this provider's client id. The protocol code (`sudoku.auth` in
 
 ### What it does
 
-- **Today**: the day's games (generated locally from the week's seed),
-  each New, In progress (with time so far) or Solved.
+- **Today**: the day's games (generated locally from the cached week's seed;
+  "today" is the device clock in Pacific/Auckland), each New, In progress
+  (with time so far) or Solved.
 - **Play**: tap or arrow-key to select; digits by keypad or keyboard;
   notes mode (`N`), erase (`Backspace`), undo (`Ctrl/Cmd+Z`). Conflicts are highlighted.
   The timer runs only while the puzzle is on screen and the tab is visible;
   switching away pauses it behind a "Paused" cover.
 - **Results**: a solved puzzle is queued in `localStorage` and uploaded; failed
-  uploads retry on the next load or when the browser comes back online
-  (`400` responses are dropped, per the API contract).
+  uploads retry with the background sync above (`400` responses are dropped,
+  per the API contract).
 - **Leaderboard**: total and per-puzzle boards with shared ranks, plus each
-  player's progress (e.g. 3/5), for today and the previous 8 days.
-- In-progress games are saved per user and day in `localStorage`, so a reload
+  player's progress (e.g. 3/5), for today and the previous 8 days. Online
+  only; offline it says so, and it loads once the connection is back.
+- In-progress games are saved on every move in `localStorage`, so a reload
   or a closed tab resumes where you left off.
 
 ## Android app

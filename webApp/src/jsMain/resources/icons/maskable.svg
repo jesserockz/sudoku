@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <!-- Full-bleed for maskable icons: the grid stays inside the 80% safe zone. -->
+  <rect width="48" height="48" fill="#2f6fdb"/>
+  <path fill="#fff" d="M19.5 13h1.6v22h-1.6zM26.9 13h1.6v22h-1.6zM13 19.5h22v1.6H13zM13 26.9h22v1.6H13z"/>
+</svg>

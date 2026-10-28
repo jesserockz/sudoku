@@ -8,7 +8,7 @@ A self-hosted daily Sudoku game for family. Everyone gets the **same 5 puzzles e
 - Everyone sees the identical five puzzles for a given date.
 - Each person may play each of the day's puzzles once. After finishing (or the day rolling over) they wait for the next day.
 - Per-day leaderboard: a board per puzzle ranked by solve time, plus a daily-total board summing all five.
-- Android app plays fully offline once synchronised; results sync back when a connection returns.
+- Android app and the installed web app (PWA) play fully offline once synchronised; results sync back when a connection returns.
 - A self-hosted web client for iOS users and anyone on a browser (no Apple developer account needed).
 - Authentication via OIDC against self-hosted Authentik.
 
@@ -87,7 +87,7 @@ This splits the system cleanly:
 - "The day" and "the week" are defined in a single fixed timezone, **Pacific/Auckland**, for everyone, regardless of device locale - so date boundaries and the weekly seed rollover are consistent for all players.
 - The day-of-week and week-number used by the generator are computed in that timezone.
 
-### Offline and sync (Android)
+### Offline and sync (Android and web PWA)
 
 - The device holds **exactly one week's seed at a time** - the current week's. It does not pre-fetch or cache future weeks.
 - Because of this, the device **must come online at the start of each week** (on or after Monday, Pacific/Auckland) to fetch that week's seed. Until it does, the new week's puzzles are unavailable; a device that stays offline across the week boundary cannot play the new week until it reconnects.

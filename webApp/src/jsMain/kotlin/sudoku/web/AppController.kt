@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import kotlinx.browser.document
 import kotlinx.browser.window
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -16,20 +17,14 @@ import kotlinx.datetime.minus
 import kotlinx.datetime.plus
 import sudoku.api.ApiException
 import sudoku.api.AppConfig
-import sudoku.api.DayResult
-import sudoku.api.GameResult
 import sudoku.api.Leaderboard
 import sudoku.api.Me
-import sudoku.api.SudokuApi
-import sudoku.api.TokenProvider
-import sudoku.api.WeekResponse
+import sudoku.data.AppStorage
+import sudoku.data.SignInException
+import sudoku.data.SudokuRepository
 import sudoku.game.Game
-import sudoku.game.GameCalendar
-import sudoku.game.SavedGame
 import sudoku.game.Ticker
 import sudoku.generator.Puzzle
-import sudoku.sync.ResultSync
-import kotlin.time.Clock
 
 sealed interface Screen {
     data object Today : Screen
@@ -42,7 +37,7 @@ sealed interface Screen {
 sealed interface Phase {
     data object Loading : Phase
 
-    /** Couldn't reach the server or load the day. */
+    /** Couldn't sign in, or reach the server while signed out. */
     data class Failed(val message: String) : Phase
 
     data class SignIn(val config: AppConfig) : Phase
@@ -62,9 +57,18 @@ sealed interface PuzzleStatus {
 
 /**
  * All web client state and logic. Screens read the Compose state here and call
- * its methods; nothing else talks to the API or storage.
+ * its methods; nothing else talks to the repository.
+ *
+ * Offline-first, like the Android app: once signed in, the app starts from the
+ * cached week in `localStorage` with no network, and syncs in the background
+ * (at start, when the browser comes back online and when the page becomes
+ * visible). Only signing in and the leaderboard need the server.
  */
-class AppController(private val scope: CoroutineScope, private val authFactory: (AppConfig) -> WebAuth) {
+class AppController(
+    private val scope: CoroutineScope,
+    private val storage: AppStorage,
+    private val repo: SudokuRepository,
+) {
     val ticker: Ticker = Ticker.monotonic()
 
     var phase by mutableStateOf<Phase>(Phase.Loading)
@@ -72,40 +76,43 @@ class AppController(private val scope: CoroutineScope, private val authFactory: 
     var screen by mutableStateOf<Screen>(Screen.Today)
         private set
 
-    var config by mutableStateOf<AppConfig?>(null)
-        private set
-    var auth: WebAuth? = null
-        private set
     var me by mutableStateOf<Me?>(null)
         private set
-    var week by mutableStateOf<WeekResponse?>(null)
-        private set
-    var puzzles by mutableStateOf<List<Puzzle>>(emptyList())
+
+    /** The day being shown; follows the device clock in Auckland time. */
+    var today by mutableStateOf(repo.today())
         private set
 
-    /** Today's results the server already has, by level. */
-    val serverResults = mutableStateMapOf<Int, DayResult>()
+    /** The day's games, or `null` when the cached week doesn't cover today (connect once this week). */
+    var puzzles by mutableStateOf<List<Puzzle>?>(null)
+        private set
 
     /** Today's games started on this device, by level. */
     val games = mutableStateMapOf<Int, Game>()
+    private val serverDone = mutableStateMapOf<Int, Long>()
+    private val queued = mutableStateMapOf<Int, Long>()
 
-    /** Levels with a result still waiting to upload. */
-    val unsynced = mutableStateMapOf<Int, Long>()
+    var syncing by mutableStateOf(false)
+        private set
+
+    /** The last sync couldn't reach the server: retried periodically, as `online` events aren't reliable. */
+    private var offline = false
+
+    /** Signed in with OIDC but the session has expired or been revoked: offer "Sign in again". */
+    var needsSignIn by mutableStateOf(false)
+        private set
 
     var leaderboard by mutableStateOf<Leaderboard?>(null)
         private set
     var leaderboardError by mutableStateOf<String?>(null)
         private set
+    private var leaderboardJob: Job? = null
 
-    /** A transient problem worth showing (e.g. results not uploaded yet). */
+    /** A transient problem worth showing (e.g. offline, results not uploaded yet). */
     var notice by mutableStateOf<String?>(null)
         private set
 
-    private val api = SudokuApi(window.location.origin, TokenProvider { auth?.tokens?.token() })
-    private var sync: ResultSync? = null
-    private var leaderboardJob: Job? = null
-
-    val today: LocalDate? get() = week?.today
+    private val origin = window.location.origin
 
     init {
         start()
@@ -113,121 +120,171 @@ class AppController(private val scope: CoroutineScope, private val authFactory: 
     }
 
     fun start() {
+        if (window.location.pathname == CALLBACK_PATH) {
+            finishOidcSignIn()
+            return
+        }
+        LegacyStorage.migrateIdentity(storage, origin)
+        if (repo.isSignedIn) {
+            showReady()
+            sync()
+            return
+        }
         phase = Phase.Loading
         scope.launch {
             try {
-                val cfg = config ?: api.config().also { config = it }
-                val a = auth ?: authFactory(cfg).also {
-                    auth = it
-                    it.initialize()
+                val config = repo.fetchConfig(origin)
+                if (LegacyStorage.migrateOidcTokens(storage, origin, config)) {
+                    showReady()
+                    sync()
+                } else {
+                    phase = Phase.SignIn(config)
                 }
-                if (!a.isSignedIn()) {
-                    phase = Phase.SignIn(cfg)
-                    return@launch
-                }
-                loadDay()
-                phase = Phase.Ready
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: ApiException) {
-                if (e.isUnauthorized) signOut(everywhere = false) else phase = Phase.Failed(describe(e))
             } catch (e: Throwable) {
                 phase = Phase.Failed(describe(e))
             }
         }
     }
 
-    /** Starts the sign-in for the server's auth mode (OIDC redirects away). */
-    fun signIn() {
-        val a = auth as? OidcWebAuth ?: return
+    private fun showReady() {
+        loadLocal()
+        needsSignIn = repo.needsSignIn
+        phase = Phase.Ready
+    }
+
+    /** Reloads the day from local state (no network). */
+    private fun loadLocal() {
+        me = repo.me()
+        today = repo.today()
+        val list = repo.puzzles(today)
+        puzzles = list
+        games.clear()
+        list?.forEach { p -> repo.loadGame(today, p)?.let { games[p.level] = it } }
+        serverDone.clear()
+        repo.serverResults(today).forEach { (level, r) -> serverDone[level] = r.elapsedMs }
+        scope.launch { refreshQueued() }
+    }
+
+    private suspend fun refreshQueued() {
+        val pending = repo.pending().filter { it.date == today }
+        queued.clear()
+        pending.forEach { queued[it.level] = it.elapsedMs }
+    }
+
+    /** Syncs with the server in the background; offline is fine and just noted. */
+    fun sync() {
+        if (syncing || phase != Phase.Ready || !repo.isSignedIn) return
+        syncing = true
         scope.launch {
             try {
-                a.signIn()
+                val report = repo.refresh()
+                offline = false
+                // Results queued by the web app before it kept one queue for everyone.
+                if (LegacyStorage.migrateProgress(storage, repo)) repo.flush()
+                notice = when {
+                    report.failure != null -> "Some results haven't uploaded yet. They'll retry automatically."
+                    report.rejected.isNotEmpty() -> "The server rejected ${report.rejected.size} result(s)."
+                    else -> null
+                }
             } catch (e: CancellationException) {
                 throw e
+            } catch (e: ApiException) {
+                notice = if (e.isUnauthorized) "The server didn't accept your sign-in." else describe(e)
             } catch (e: Throwable) {
-                phase = Phase.Failed("Couldn't reach the identity provider. Check your connection and try again.")
+                offline = true
+                notice = "Offline. Puzzles still work; results upload when you're back online."
+            } finally {
+                syncing = false
+                needsSignIn = repo.needsSignIn
+                // Keep an open game as it is; otherwise pick up the new week, results and day.
+                if (screen !is Screen.Play) loadLocal() else refreshQueued()
+                // A leaderboard that failed (e.g. offline) tries again.
+                (screen as? Screen.Scores)?.let { if (leaderboardError != null) loadLeaderboard(it.date) }
             }
         }
     }
 
-    /**
-     * Signs out. [everywhere] (the Sign out button) also ends the identity
-     * provider session; otherwise (e.g. after a `401`) only local tokens go.
-     */
-    fun signOut(everywhere: Boolean = true) {
-        scope.launch { auth?.signOut(everywhere) }
-        me = null
-        week = null
-        sync = null
-        games.clear()
-        serverResults.clear()
-        unsynced.clear()
-        screen = Screen.Today
-        config?.let { phase = Phase.SignIn(it) } ?: start()
-    }
-
-    private suspend fun loadDay() {
-        val user = api.me()
-        val w = api.week()
-        me = user
-        week = w
-        puzzles = w.puzzles(w.today)
-
-        val s = ResultSync(LocalPendingResultStore(user.id)) { api.submitResult(it) }
-        sync = s
-
-        games.clear()
-        for (p in puzzles) {
-            Storage.get(gameKey(user.id, w.today, p.level), SavedGame.serializer())
-                ?.takeIf { it.givens == p.givens }
-                ?.let { games[p.level] = Game.restore(it) }
-        }
-        forgetOtherDays(user.id, w.today)
-
-        flushResults()
-        refreshServerResults()
-    }
-
-    private suspend fun refreshServerResults() {
-        val date = today ?: return
-        val results = api.myResults(date)
-        serverResults.clear()
-        if (results.date == date) results.results.forEach { serverResults[it.level] = it }
-        unsynced.clear()
-        sync?.pending()?.filter { it.date == date }?.forEach { unsynced[it.level] = it.elapsedMs }
-    }
-
-    /** Uploads queued results; failures leave them queued and show a notice. */
-    private suspend fun flushResults() {
-        val s = sync ?: return
-        val report = s.flush()
-        when {
-            report.isUnauthorized -> signOut(everywhere = false)
-            report.failure != null -> notice = "Couldn't upload ${report.remaining.size} result(s) yet; they'll be retried."
-            else -> notice = null
-        }
-        if (report.rejected.isNotEmpty()) {
-            notice = "The server rejected ${report.rejected.size} result(s)."
-        }
-    }
-
     fun statusOf(level: Int): PuzzleStatus {
-        serverResults[level]?.let { return PuzzleStatus.Done(it.elapsedMs, synced = true) }
-        unsynced[level]?.let { return PuzzleStatus.Done(it, synced = false) }
+        serverDone[level]?.let { return PuzzleStatus.Done(it, synced = true) }
+        queued[level]?.let { return PuzzleStatus.Done(it, synced = false) }
         val game = games[level] ?: return PuzzleStatus.New
         game.completedElapsedMs?.let { return PuzzleStatus.Done(it, synced = false) }
         return PuzzleStatus.InProgress(game.elapsedMs(ticker.nowMs()))
     }
 
-    fun puzzle(level: Int): Puzzle? = puzzles.firstOrNull { it.level == level }
+    fun puzzle(level: Int): Puzzle? = puzzles?.firstOrNull { it.level == level }
+
+    // Sign-in
+
+    /** Dev auth mode: signs in as [sub] / [name]. Throws [IllegalArgumentException] for an invalid id or name. */
+    suspend fun signInDev(sub: String, name: String) {
+        repo.signInDev(origin, sub, name)
+        showReady()
+    }
+
+    /** Starts OIDC sign-in (or signs in again after the session expired): redirects to the provider. */
+    fun signIn() {
+        val oidc = (phase as? Phase.SignIn)?.config?.oidc ?: repo.settings().oidc ?: return
+        scope.launch {
+            try {
+                window.location.href = repo.beginOidcSignIn(origin, oidc)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                val message = "Couldn't reach the identity provider. Check your connection and try again."
+                if (phase == Phase.Ready) notice = message else phase = Phase.Failed(message)
+            }
+        }
+    }
+
+    /** The provider redirected back to [CALLBACK_PATH]. */
+    private fun finishOidcSignIn() {
+        val redirect = window.location.href
+        // Leave the callback URL whatever happens, so a reload doesn't replay it.
+        window.history.replaceState(null, "", "/")
+        phase = Phase.Loading
+        scope.launch {
+            try {
+                repo.completeOidcSignIn(redirect)
+                notice = null
+                showReady()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                if (repo.isSignedIn) {
+                    // Signing in again failed, or the first sync did: the cached state still plays.
+                    showReady()
+                    notice = if (e is SignInException) e.message else "Signed in, but couldn't sync yet."
+                } else {
+                    phase = Phase.Failed(describe(e))
+                }
+            }
+        }
+    }
+
+    /** Signs out here and, with OIDC, at the identity provider too (which navigates away). */
+    fun signOut() {
+        scope.launch {
+            val endSession = repo.endSessionUrl("$origin/")
+            repo.signOut()
+            games.clear()
+            puzzles = null
+            me = null
+            notice = null
+            needsSignIn = false
+            screen = Screen.Today
+            if (endSession != null) window.location.href = endSession else start()
+        }
+    }
 
     // Navigation
 
     fun openToday() {
         screen = Screen.Today
         // The day may have rolled over while a puzzle was open.
-        if (week != null && GameCalendar.today() != today) reload()
+        if (repo.today() != today) loadLocal()
     }
 
     fun openPuzzle(level: Int) {
@@ -241,10 +298,9 @@ class AppController(private val scope: CoroutineScope, private val authFactory: 
         screen = Screen.Play(level)
     }
 
-    fun openScores(tab: Int = 0, date: LocalDate? = null) {
-        val d = date ?: today ?: return
-        screen = Screen.Scores(d, tab)
-        loadLeaderboard(d)
+    fun openScores(tab: Int = 0, date: LocalDate = today) {
+        screen = Screen.Scores(date, tab)
+        loadLeaderboard(date)
     }
 
     fun showScoresTab(tab: Int) {
@@ -254,9 +310,8 @@ class AppController(private val scope: CoroutineScope, private val authFactory: 
     /** Moves the leaderboard by [days], within the server's 8-day result window. */
     fun shiftScoresDate(days: Int) {
         val current = screen as? Screen.Scores ?: return
-        val t = today ?: return
         val next = if (days >= 0) current.date.plus(DatePeriod(days = days)) else current.date.minus(DatePeriod(days = -days))
-        if (next > t || next < t.minus(DatePeriod(days = 8))) return
+        if (next > today || next < today.minus(DatePeriod(days = 8))) return
         openScores(current.tab, next)
     }
 
@@ -266,13 +321,13 @@ class AppController(private val scope: CoroutineScope, private val authFactory: 
         leaderboardError = null
         leaderboardJob = scope.launch {
             try {
-                leaderboard = api.leaderboard(date)
+                leaderboard = repo.leaderboard(date)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ApiException) {
-                if (e.isUnauthorized) signOut(everywhere = false) else leaderboardError = describe(e)
-            } catch (e: Throwable) {
                 leaderboardError = describe(e)
+            } catch (e: Throwable) {
+                leaderboardError = "You're offline. The leaderboard needs a connection to the server."
             }
         }
     }
@@ -285,74 +340,50 @@ class AppController(private val scope: CoroutineScope, private val authFactory: 
         val after = change(before)
         if (after === before) return
         games[level] = after
-        save(level, after)
-        if (after.isComplete && !before.isComplete) complete(level, after)
-    }
-
-    fun save(level: Int, game: Game) {
-        val user = me ?: return
-        val date = today ?: return
-        Storage.set(gameKey(user.id, date, level), SavedGame.serializer(), game.save(ticker.nowMs()))
-    }
-
-    private fun complete(level: Int, game: Game) {
-        val date = today ?: return
-        val result = GameResult(
-            date = date,
-            level = level,
-            elapsedMs = game.completedElapsedMs ?: return,
-            completedAt = GameCalendar.formatTimestamp(Clock.System.now()),
-        )
-        unsynced[level] = result.elapsedMs
-        scope.launch {
-            sync?.enqueue(result)
-            runCatching {
-                flushResults()
-                refreshServerResults()
-            }.onFailure { if (it is CancellationException) throw it }
+        repo.saveGame(today, level, after, ticker.nowMs())
+        if (after.isComplete && !before.isComplete) {
+            queued[level] = after.completedElapsedMs ?: 0
+            val day = today
+            scope.launch {
+                repo.complete(day, level, after)
+                sync()
+            }
         }
     }
 
     // Lifecycle
 
+    /** Starts over, e.g. "Try again" after a failure. */
     fun reload() {
         screen = Screen.Today
         start()
     }
 
-    /** Retries queued uploads, e.g. when the browser comes back online. */
-    fun retryUploads() {
-        if (phase != Phase.Ready) return
-        scope.launch {
-            runCatching {
-                flushResults()
-                refreshServerResults()
-            }.onFailure { if (it is CancellationException) throw it }
-        }
-    }
-
+    /** Every 30 s: catches the day rolling over, and retries a sync that failed while the page is visible. */
     private fun watchDayRollover() {
         scope.launch {
             while (true) {
                 delay(30_000)
-                val t = today ?: continue
+                if (phase != Phase.Ready) continue
                 // Don't pull the board out from under someone mid-puzzle; openToday() catches up.
-                if (phase == Phase.Ready && screen !is Screen.Play && GameCalendar.today() != t) reload()
+                if (screen !is Screen.Play && repo.today() != today) {
+                    loadLocal()
+                    sync()
+                } else if (offline && document.asDynamic().hidden != true) {
+                    sync()
+                }
             }
         }
-    }
-
-    private fun gameKey(userId: String, date: LocalDate, level: Int) = "game.$userId.$date.$level"
-
-    /** Drops saved games from earlier days: they can't be finished any more. */
-    private fun forgetOtherDays(userId: String, date: LocalDate) {
-        val keep = "game.$userId.$date."
-        Storage.keys("game.$userId.").filterNot { it.startsWith(keep) }.forEach { Storage.setString(it, null) }
     }
 
     private fun describe(e: Throwable): String = when (e) {
         is SignInException -> e.message ?: "Sign-in failed."
         is ApiException -> e.error?.message?.takeIf { it.isNotBlank() } ?: "Server error (HTTP ${e.status})"
         else -> "Can't reach the server. Check your connection and try again."
+    }
+
+    companion object {
+        /** Register `<origin>/auth/callback` as the redirect URI in Authentik. */
+        const val CALLBACK_PATH = "/auth/callback"
     }
 }

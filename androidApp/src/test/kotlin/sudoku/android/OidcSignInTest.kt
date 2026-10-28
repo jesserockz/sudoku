@@ -5,6 +5,8 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Rule
 import org.junit.rules.TemporaryFolder
 import sudoku.api.OidcConfig
+import sudoku.data.SignInException
+import sudoku.data.SudokuRepository
 import sudoku.game.Game
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -26,7 +28,7 @@ class OidcSignInTest {
 
     private val clock = FakeClock(Instant.parse("2026-10-25T20:00:00Z"))
     private val server = FakeServer(clock, authMode = "oidc")
-    private val repo by lazy { SudokuRepository(AppStorage(tmp.root), clock = clock, engine = server.engine) }
+    private val repo by lazy { SudokuRepository(AppStorage(tmp.root), SudokuApp.OIDC_REDIRECT_URI, clock = clock, engine = server.engine) }
     private val url = "http://localhost:8080"
 
     private suspend fun oidc(): OidcConfig = repo.fetchConfig(url).oidc!!
@@ -45,7 +47,7 @@ class OidcSignInTest {
         val q = Url(repo.beginOidcSignIn(url, oidc())).parameters
         assertEquals("code", q["response_type"])
         assertEquals("sudoku-android", q["client_id"])
-        assertEquals(SudokuRepository.REDIRECT_URI, q["redirect_uri"])
+        assertEquals(SudokuApp.OIDC_REDIRECT_URI, q["redirect_uri"])
         assertEquals("S256", q["code_challenge_method"])
         assertEquals("openid profile offline_access", q["scope"])
         assertNotNull(q["state"])
@@ -77,7 +79,7 @@ class OidcSignInTest {
         assertFailsWith<SignInException> { repo.completeOidcSignIn(redirect) }
 
         assertFailsWith<SignInException> {
-            repo.completeOidcSignIn("${SudokuRepository.REDIRECT_URI}?error=access_denied&error_description=Denied")
+            repo.completeOidcSignIn("${SudokuApp.OIDC_REDIRECT_URI}?error=access_denied&error_description=Denied")
         }
         assertFalse(repo.isSignedIn)
     }

@@ -1,45 +1,32 @@
 package sudoku.android
 
-import kotlinx.datetime.LocalDate
-import kotlinx.serialization.KSerializer
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.builtins.ListSerializer
-import kotlinx.serialization.builtins.MapSerializer
-import kotlinx.serialization.builtins.serializer
-import sudoku.api.DayResult
-import sudoku.api.GameResult
-import sudoku.api.Me
-import sudoku.api.OidcConfig
-import sudoku.api.SudokuApi
-import sudoku.api.WeekResponse
-import sudoku.auth.StoredTokens
-import sudoku.auth.TokenStore
-import sudoku.game.SavedGame
-import sudoku.sync.PendingResultStore
+import sudoku.data.AppStorage
+import sudoku.data.KeyValueStore
 import java.io.File
 
 /**
- * One JSON document in a file. Writes go to a temporary file that's then
- * renamed over the original, so a crash mid-write never leaves a torn file.
- * Unreadable files read as `null`.
+ * One file per key, `<key>.json` under [dir] (the app's private files
+ * directory). Writes go to a temporary file that's then renamed over the
+ * original, so a crash mid-write never leaves a torn file.
  */
-class JsonFile<T>(private val file: File, private val serializer: KSerializer<T>) {
+class FileKeyValueStore(private val dir: File) : KeyValueStore {
     @Synchronized
-    fun read(): T? = try {
-        if (file.exists()) SudokuApi.json.decodeFromString(serializer, file.readText()) else null
+    override fun get(key: String): String? = try {
+        file(key).takeIf { it.exists() }?.readText()
     } catch (e: Exception) {
         null
     }
 
     @Synchronized
-    fun write(value: T?) {
+    override fun set(key: String, value: String?) {
+        val file = file(key)
         if (value == null) {
             file.delete()
             return
         }
-        file.parentFile?.mkdirs()
-        val tmp = File(file.parentFile, file.name + ".tmp")
-        tmp.writeText(SudokuApi.json.encodeToString(serializer, value))
+        dir.mkdirs()
+        val tmp = File(dir, file.name + ".tmp")
+        tmp.writeText(value)
         if (!tmp.renameTo(file)) {
             file.delete()
             check(tmp.renameTo(file)) { "couldn't write $file" }
@@ -47,86 +34,10 @@ class JsonFile<T>(private val file: File, private val serializer: KSerializer<T>
     }
 
     @Synchronized
-    fun update(change: (T?) -> T?) = write(change(read()))
+    override fun update(key: String, change: (String?) -> String?) = set(key, change(get(key)))
+
+    private fun file(key: String) = File(dir, "$key.json")
 }
 
-@Serializable
-data class Settings(
-    val serverUrl: String = "",
-    /** Set when signed in through the server's dev auth mode. */
-    val devUser: DevUser? = null,
-    /** Set when signed in with OIDC: the provider from the server's `/config`. */
-    val oidc: OidcConfig? = null,
-)
-
-/** An OIDC sign-in waiting for the browser to redirect back. */
-@Serializable
-data class PendingAuth(
-    val serverUrl: String,
-    val oidc: OidcConfig,
-    val state: String,
-    val verifier: String,
-    val nonce: String,
-    val createdAtEpochMs: Long,
-)
-
-@Serializable
-data class DevUser(val sub: String, val name: String)
-
-/** Everything the app keeps on disk, under [dir] (the app's private files directory). */
-class AppStorage(dir: File) {
-    val settings = JsonFile(File(dir, "settings.json"), Settings.serializer())
-
-    /** The current week's seed: exactly one week is kept. */
-    val week = JsonFile(File(dir, "week.json"), WeekResponse.serializer())
-
-    val me = JsonFile(File(dir, "me.json"), Me.serializer())
-
-    /** OIDC tokens (app-private storage). */
-    val tokens = JsonFile(File(dir, "tokens.json"), StoredTokens.serializer())
-
-    val pendingAuth = JsonFile(File(dir, "auth-pending.json"), PendingAuth.serializer())
-
-    /** Games in progress or finished, keyed by [gameKey]. Only the cached week's are kept. */
-    val games = JsonFile(File(dir, "games.json"), MapSerializer(String.serializer(), SavedGame.serializer()))
-
-    /** The server's record of the user's results, by date (only recent dates are kept). */
-    val serverResults = JsonFile(
-        File(dir, "results.json"),
-        MapSerializer(LocalDate.serializer(), ListSerializer(DayResult.serializer())),
-    )
-
-    /** The offline result queue. */
-    val pending = FilePendingResultStore(JsonFile(File(dir, "pending.json"), ListSerializer(GameResult.serializer())))
-
-    /** Forgets everything tied to the signed-in user, keeping the server URL. */
-    fun clearUserData() {
-        settings.update { it?.copy(devUser = null, oidc = null) }
-        tokens.write(null)
-        clearProgress()
-    }
-
-    /** Forgets the user's games and results (e.g. when a different account signs in). */
-    fun clearProgress() {
-        me.write(null)
-        games.write(null)
-        serverResults.write(null)
-        pending.file.write(null)
-    }
-
-    companion object {
-        fun gameKey(date: LocalDate, level: Int) = "$date/$level"
-    }
-}
-
-class FileTokenStore(private val file: JsonFile<StoredTokens>) : TokenStore {
-    override suspend fun load(): StoredTokens? = file.read()
-
-    override suspend fun save(tokens: StoredTokens?) = file.write(tokens)
-}
-
-class FilePendingResultStore(val file: JsonFile<List<GameResult>>) : PendingResultStore {
-    override suspend fun load(): List<GameResult> = file.read().orEmpty()
-
-    override suspend fun save(results: List<GameResult>) = file.write(results.ifEmpty { null })
-}
+/** The app's storage in [dir]. The file names are those of earlier versions, so existing installs keep their data. */
+fun AppStorage(dir: File): AppStorage = AppStorage(FileKeyValueStore(dir))

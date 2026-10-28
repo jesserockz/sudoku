@@ -2,15 +2,12 @@ package sudoku.web
 
 import kotlinx.browser.localStorage
 import kotlinx.serialization.KSerializer
-import kotlinx.serialization.builtins.ListSerializer
-import sudoku.api.GameResult
 import sudoku.api.SudokuApi
-import sudoku.sync.PendingResultStore
 
 /**
- * Small typed wrapper over `localStorage`. Everything the web client keeps is
- * a convenience or a retry queue: if storage is unavailable (private mode, quota)
- * reads come back empty and writes are dropped, and the app still works online.
+ * Small typed wrapper over `localStorage`, for the keys earlier versions kept
+ * ([LegacyStorage]). The app's state lives in the shared repository's documents
+ * (`WebStorageKeyValueStore`, same `sudoku.` prefix).
  */
 object Storage {
     private const val PREFIX = "sudoku."
@@ -35,14 +32,4 @@ object Storage {
             .filter { it.startsWith(PREFIX + prefix) }
             .map { it.removePrefix(PREFIX) }
     }.getOrDefault(emptyList())
-}
-
-/** The offline result queue for one user, in `localStorage`. */
-class LocalPendingResultStore(userId: String) : PendingResultStore {
-    private val key = "pending.$userId"
-    private val serializer = ListSerializer(GameResult.serializer())
-
-    override suspend fun load(): List<GameResult> = Storage.get(key, serializer) ?: emptyList()
-
-    override suspend fun save(results: List<GameResult>) = Storage.set(key, serializer, results.ifEmpty { null })
 }
