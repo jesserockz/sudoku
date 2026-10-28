@@ -67,9 +67,9 @@ function solve(grid) {
   await page.getByText("Offline.", { exact: false }).waitFor();
   check(true, "offline notice is shown");
 
-  // A deep link (e.g. the OIDC callback path) falls back to the cached index.html.
+  // A deep link (the OIDC callback path, the app's one client-side route) falls back to the cached index.html.
   const deep = await context.newPage();
-  await deep.goto(base + "/some/client/route");
+  await deep.goto(base + "/auth/callback?code=x&state=y");
   await deep.getByText("Easy", { exact: true }).waitFor({ timeout: 15000 });
   check(true, "navigations to other paths serve the cached app offline");
   await deep.close();

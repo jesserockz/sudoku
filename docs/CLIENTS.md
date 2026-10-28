@@ -68,8 +68,11 @@ the web client is how iPhone users play.
 This writes the static site to **`build/web/`** at the repository root:
 `index.html`, `styles.css`, `sudoku.js` (plus source maps and a lazily loaded
 chunk), the PWA files (`manifest.webmanifest`, `sw.js`, `icons/`). Point the server's `web_dir` (`SUDOKU_WEB_DIR`) at that directory. The
-server falls back to `index.html` for unknown paths, so `index.html` loads its
-assets by absolute path: serve the client at the site root.
+server falls back to `index.html` for unknown paths. Assets load relative to
+the app's directory: a small script in `index.html` sets `<base>` to the page's
+directory (treating `/auth/callback` as the root), so the same build works at
+the server's root and from any static host, including under a sub-path (see
+[Hosting without a server](#hosting-without-a-server)).
 
 ### Development
 
@@ -301,3 +304,61 @@ is in `sudoku.serverless`.
   unknown zone makes the link invalid.
 - **Share results** copies a summary of the day to paste into a message, tagged
   with a short fingerprint of the seed (e.g. `#287caf`) instead of the seed.
+
+`SeedRepository` (also in `sudoku.serverless`) is seed mode's data layer for
+both apps, in the same `KeyValueStore` as the server mode's documents: the
+active seed (`seed`), and per seed (keyed by its fingerprint) games in progress
+(`seed-games-<fp>`, current week only) and the history of solve times
+(`seed-history-<fp>`). Switching seeds and back resumes where you were.
+
+### Seed play on the web
+
+- **When**: if `GET /api/v1/config` fails or isn't a Sudoku server's (e.g. a
+  static host), the app goes straight to "Play with a seed". On a real server
+  the sign-in screen also offers "Play with a seed instead". Opening a
+  `#seed=` link always plays that seed.
+- **Setup**: type any seed or press **Generate**, pick games per day and the
+  timezone, or paste a share link into the seed field. The seed is kept in
+  `localStorage`.
+- **Share links** are adopted on open, or when pasted into the address bar of
+  an open tab (`hashchange`), and the fragment is then removed from the
+  address bar. A link for a different seed, or one opened while signed in to
+  the server, asks before switching; **Leave seed** goes back to setup (or to
+  the signed-in server).
+- **Today** works as with a server (offline, timer, notes) but with no sign-in,
+  uploads or leaderboard. Under the games: **Share results**, **History**
+  (every solved game, newest day first), and the seed's card with the share
+  link, **Copy link**, **Share…** (the system share sheet, where the browser
+  has one), **Copy seed** and **Leave seed**.
+
+### Hosting without a server
+
+`build/web` is a plain static site, so seed play needs nothing but a static
+host. Serve the directory as is, at a domain's root or under a path; the app's
+URL must end in `/` (most hosts redirect `/sudoku` to `/sudoku/`). HTTPS (or
+`localhost`) is needed for the service worker, the clipboard and WebCrypto.
+
+**GitHub Pages**: in the repository's **Settings → Pages**, set the source to
+**GitHub Actions**, then run the **Web (GitHub Pages)** workflow from the
+Actions tab. It builds `build/web` and publishes it to
+`https://<owner>.github.io/<repo>/`. It only runs when started by hand, so
+nothing is published unless you choose to. Any other static host works the
+same way: upload the contents of `build/web`.
+
+**Checking it** end to end (Playwright with Chromium), at the root and under a
+sub-path of plain static servers with no `/api`:
+
+```sh
+./gradlew :webApp:webDist
+(cd build/web && python3 -m http.server 8090) &
+mkdir -p /tmp/sub && ln -sfn "$PWD/build/web" /tmp/sub/sudoku && (cd /tmp/sub && python3 -m http.server 8091) &
+node webApp/e2e/serverless.js http://localhost:8090/
+node webApp/e2e/serverless.js http://localhost:8091/sudoku/
+```
+
+It generates a seed and solves a puzzle, opens the share link in a fresh
+browser and checks the puzzles are identical, switches seeds and back, round
+trips a Unicode seed, and starts offline. With the Go server from "Checking
+offline play" running, `node webApp/e2e/serverless-on-server.js
+http://localhost:8080 dev-secret-change-me` checks "Play with a seed instead"
+and that the server's secret as a seed gives the server's puzzles.

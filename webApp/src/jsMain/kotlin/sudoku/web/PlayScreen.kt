@@ -139,7 +139,11 @@ fun PlayScreen(app: AppController, level: Int) {
         Div({ classes("solved") }) {
             P({ classes("big") }) { Text("Solved in ${formatDuration(game.completedElapsedMs ?: 0)}") }
             Div({ classes("actions") }) {
-                Button({ classes("primary"); onClick { app.openScores(level) } }) { Text("See scores") }
+                if (app.seed != null) {
+                    ShareResultsButton(app, primary = true)
+                } else {
+                    Button({ classes("primary"); onClick { app.openScores(level) } }) { Text("See scores") }
+                }
                 Button({ onClick { app.openToday() } }) { Text("Today's puzzles") }
             }
         }

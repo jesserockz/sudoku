@@ -174,3 +174,17 @@ table.board-table tr.me td { font-weight: 700; }
 .card > :first-child { margin-top: 0; }
 .card > :last-child { margin-bottom: 0; }
 .card h2 { font-size: 1.05rem; margin: 0 0 8px; }
+
+/* Serverless play */
+form.login .inline { display: flex; gap: 8px; }
+form.login .inline input { flex: 1; min-width: 0; }
+form.login .inline button { margin-top: 0; width: auto; }
+form.login select {
+  width: 100%; font: inherit; padding: 10px; border-radius: var(--radius);
+  border: 1px solid var(--line); background: var(--bg); color: var(--text);
+}
+.share-link {
+  width: 100%; font: inherit; font-size: 0.85rem; padding: 8px; margin: 4px 0 12px;
+  border-radius: var(--radius); border: 1px solid var(--line); background: var(--bg); color: var(--muted);
+}
+.share-message { flex-basis: 100%; margin: 4px 0 0; }
