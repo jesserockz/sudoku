@@ -151,12 +151,13 @@ class SeedPlayTest {
     @Test
     fun aSharedLinkAsksBeforeReplacingTheSeed() {
         runBlocking { seeds.use(SeedSettings("first-group")) }
-        val share = Intent(Intent.ACTION_SEND).setType("text/plain")
+        // A new intent each time: the activity clears a handled intent's action so it isn't replayed.
+        fun share() = Intent(Intent.ACTION_SEND).setType("text/plain")
             .putExtra(Intent.EXTRA_TEXT, "Play with us! https://example.com/#seed=second-group&levels=5 see you")
-        val resolved = context.packageManager.resolveActivity(Intent(share), 0)
+        val resolved = context.packageManager.resolveActivity(share(), 0)
         assertEquals(MainActivity::class.java.name, resolved?.activityInfo?.name)
 
-        launch(share)
+        launch(share())
         waitForText("Switch to this seed?")
         compose.onRoot().captureRoboImage("build/outputs/roborazzi/seed-confirm.png")
         compose.onNodeWithText("Keep current").performClick()
@@ -166,7 +167,7 @@ class SeedPlayTest {
 
         scenario!!.moveToState(Lifecycle.State.DESTROYED)
         scenario!!.close()
-        launch(Intent(share))
+        launch(share())
         waitForText("Switch to this seed?")
         compose.onNodeWithText("Switch").performClick()
         compose.waitUntil(5_000) { seeds.profile()?.settings?.seed == "second-group" }
