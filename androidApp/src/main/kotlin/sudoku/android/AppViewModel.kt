@@ -20,11 +20,23 @@ import sudoku.api.AuthMode
 import sudoku.api.Leaderboard
 import sudoku.data.SignInException
 import sudoku.game.Game
+import sudoku.game.GameCalendar
 import sudoku.game.Ticker
 import sudoku.generator.Puzzle
+import sudoku.serverless.PlaySeed
+import sudoku.serverless.SeedProfile
+import sudoku.serverless.SeedResult
+import sudoku.serverless.SeedSettings
+import sudoku.serverless.ShareLink
 
 sealed interface Screen {
     data object Setup : Screen
+
+    /** Enter, paste or generate a seed for serverless play. */
+    data object SeedSetup : Screen
+
+    /** Serverless play's local history of solve times. */
+    data object History : Screen
 
     data object Today : Screen
 
@@ -45,9 +57,22 @@ sealed interface PuzzleStatus {
 class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val app = SudokuApp.from(application)
     private val repo = app.repository
+    private val seeds = app.seeds
     val ticker: Ticker = Ticker.monotonic()
 
-    var screen by mutableStateOf<Screen>(if (repo.isSignedIn) Screen.Today else Screen.Setup)
+    /** The seed being played in serverless mode, or `null` when playing with a server. */
+    var seed by mutableStateOf<SeedProfile?>(seeds.profile())
+        private set
+
+    var screen by mutableStateOf<Screen>(if (seed != null || repo.isSignedIn) Screen.Today else Screen.Setup)
+        private set
+
+    /** A share link for another seed, waiting for the player to confirm the switch. */
+    var pendingSeed by mutableStateOf<Pair<SeedSettings, String>?>(null)
+        private set
+
+    /** Text the activity should hand to the system share sheet, then clear with [shared]. */
+    var shareText by mutableStateOf<String?>(null)
         private set
 
     /** The day being shown; follows the device clock in Auckland time. */
@@ -93,7 +118,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val myId: String? get() = repo.me()?.id
 
     init {
-        if (repo.isSignedIn) {
+        if (seed != null) {
+            loadLocal()
+        } else if (repo.isSignedIn) {
             loadLocal()
             sync()
         }
@@ -101,6 +128,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Reloads the day from local state (no network). */
     private fun loadLocal() {
+        if (seed != null) {
+            viewModelScope.launch { loadSeedDay() }
+            return
+        }
         date = repo.today()
         val list = repo.puzzles(date)
         puzzles = list
@@ -118,6 +149,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Syncs with the server in the background; offline is fine and just noted. */
     fun sync() {
+        if (seed != null) {
+            // Nothing to sync without a server; just catch up with the date (e.g. the next morning).
+            if (screen !is Screen.Play && currentDay() != date) loadLocal()
+            return
+        }
         if (syncing || !repo.isSignedIn) return
         syncing = true
         viewModelScope.launch {
@@ -159,7 +195,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openToday() {
         screen = Screen.Today
-        if (repo.today() != date) loadLocal()
+        if (currentDay() != date) loadLocal()
     }
 
     fun openPuzzle(level: Int) {
@@ -173,6 +209,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openScores(tab: Int = 0, day: LocalDate = date) {
+        // No leaderboard without a server: serverless play has its own history instead.
+        if (seed != null) {
+            openHistory()
+            return
+        }
         screen = Screen.Scores(day, tab)
         leaderboardJob?.cancel()
         leaderboard = null
@@ -201,8 +242,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Back navigation; returns false when the system should handle it (exit). */
     fun back(): Boolean = when (screen) {
-        is Screen.Play, is Screen.Scores -> {
+        is Screen.Play, is Screen.Scores, Screen.History -> {
             openToday()
+            true
+        }
+        Screen.SeedSetup -> {
+            screen = if (seed != null || repo.isSignedIn) Screen.Today else Screen.Setup
             true
         }
         else -> false
@@ -215,6 +260,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val after = change(before)
         if (after === before) return
         games[level] = after
+        if (seed != null) {
+            seeds.saveGame(date, level, after, ticker.nowMs())
+            if (after.isComplete && !before.isComplete) serverDone[level] = seeds.complete(date, level, after).elapsedMs
+            return
+        }
         repo.saveGame(date, level, after, ticker.nowMs())
         if (after.isComplete && !before.isComplete) {
             queued[level] = after.completedElapsedMs ?: 0
@@ -226,6 +276,136 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+
+    // Serverless play
+
+    /** "Play with a seed" from the first-run screen. */
+    fun openSeedSetup() {
+        setupError = null
+        screen = Screen.SeedSetup
+    }
+
+    /**
+     * Starts playing with what the player entered: a share link (its settings
+     * win), or a seed with the chosen games per day and timezone.
+     */
+    fun startSeed(text: String, levels: Int, timezone: String) {
+        val settings = ShareLink.parse(text) ?: run {
+            val seedText = PlaySeed.normalize(text)
+            val zone = timezone.trim().ifEmpty { GameCalendar.TIMEZONE_ID }
+            if (seedText.isEmpty() || runCatching { GameCalendar.zone(zone) }.isFailure) {
+                setupError = "Enter a seed (or a share link), and a timezone like Pacific/Auckland."
+                return
+            }
+            SeedSettings(seedText, levels, zone)
+        }
+        useSeed(settings)
+    }
+
+    /**
+     * A share link pasted or opened elsewhere: adopts it, or asks first
+     * ([pendingSeed]) if it would replace another seed or a server sign-in.
+     * Returns false if [text] isn't a valid share link.
+     */
+    fun openLink(text: String): Boolean {
+        val settings = ShareLink.parse(text) ?: return false
+        val current = seed
+        if (current?.settings == settings || (current == null && !repo.isSignedIn)) {
+            useSeed(settings)
+        } else {
+            viewModelScope.launch { pendingSeed = settings to PlaySeed.fingerprint(settings.seed) }
+        }
+        return true
+    }
+
+    fun confirmPendingSeed() {
+        pendingSeed?.let { useSeed(it.first) }
+        pendingSeed = null
+    }
+
+    fun dismissPendingSeed() {
+        pendingSeed = null
+    }
+
+    private fun useSeed(settings: SeedSettings) {
+        setupBusy = true
+        setupError = null
+        viewModelScope.launch {
+            try {
+                seed = seeds.use(settings)
+                syncProblem = null
+                needsSignIn = false
+                loadSeedDay()
+                screen = Screen.Today
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                setupError = "Couldn't start that seed: ${e.message}"
+            } finally {
+                setupBusy = false
+            }
+        }
+    }
+
+    /** Stops playing with the seed (its games and history are kept), back to the server or first-run screen. */
+    fun leaveSeed() {
+        seeds.leave()
+        seed = null
+        games.clear()
+        puzzles = null
+        needsSignIn = repo.needsSignIn
+        if (repo.isSignedIn) {
+            screen = Screen.Today
+            loadLocal()
+            sync()
+        } else {
+            screen = Screen.Setup
+        }
+    }
+
+    private suspend fun loadSeedDay() {
+        val day = seeds.today()
+        val list = seeds.puzzles(day)
+        date = day
+        puzzles = list
+        games.clear()
+        list.forEach { p -> seeds.loadGame(day, p)?.let { games[p.level] = it } }
+        queued.clear()
+        serverDone.clear()
+        seeds.results(day).forEach { (level, r) -> serverDone[level] = r.elapsedMs }
+    }
+
+    /**
+     * The link that gives others this seed: a web copy of the app if the build
+     * names one, else the server's address, else just the `#seed=...` fragment
+     * (which both apps accept when pasted).
+     */
+    fun shareLink(): String? {
+        val settings = seed?.settings ?: return null
+        val base = BuildConfig.SHARE_BASE_URL.ifBlank { repo.settings().serverUrl }
+        return if (base.isBlank()) "#" + ShareLink.fragment(settings) else ShareLink.build(base.trimEnd('/') + "/", settings)
+    }
+
+    fun shareSeedLink() {
+        shareText = shareLink()
+    }
+
+    /** Shares the day's results as text through the share sheet. */
+    fun shareResults() {
+        viewModelScope.launch { shareText = seeds.summary(date) }
+    }
+
+    fun shared() {
+        shareText = null
+    }
+
+    fun history(): List<SeedResult> = seeds.history()
+
+    fun openHistory() {
+        if (seed != null) screen = Screen.History
+    }
+
+    private fun currentDay(): LocalDate = if (seed != null) seeds.today() else repo.today()
 
     // Setup
 

@@ -22,6 +22,14 @@ android {
             "DEFAULT_SERVER_URL",
             "\"${providers.gradleProperty("sudokuServerUrl").getOrElse("")}\"",
         )
+        // Where share links for seed play point: a copy of the web client (e.g. GitHub
+        // Pages). Without one, links use the server address if there is one, or are
+        // just the `#seed=...` part, which the apps accept when pasted.
+        buildConfigField(
+            "String",
+            "SHARE_BASE_URL",
+            "\"${providers.gradleProperty("sudokuShareUrl").getOrElse("")}\"",
+        )
     }
 
     buildFeatures {

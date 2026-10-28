@@ -3,6 +3,7 @@ package sudoku.android
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -14,8 +15,11 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import sudoku.android.ui.ConfirmSeedDialog
+import sudoku.android.ui.HistoryScreen
 import sudoku.android.ui.PlayScreen
 import sudoku.android.ui.ScoresScreen
+import sudoku.android.ui.SeedSetupScreen
 import sudoku.android.ui.SetupScreen
 import sudoku.android.ui.SudokuTheme
 import sudoku.android.ui.TodayScreen
@@ -43,18 +47,36 @@ class MainActivity : ComponentActivity() {
                 LifecycleEventEffect(Lifecycle.Event.ON_START) {
                     if (vm.screen !is Screen.Setup) vm.sync()
                 }
-                BackHandler(enabled = vm.screen is Screen.Play || vm.screen is Screen.Scores) { vm.back() }
+                vm.shareText?.let { text ->
+                    LaunchedEffect(text) {
+                        val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
+                        startActivity(Intent.createChooser(send, null))
+                        vm.shared()
+                    }
+                }
+                BackHandler(enabled = vm.screen !is Screen.Setup && vm.screen !is Screen.Today) { vm.back() }
                 when (val screen = vm.screen) {
                     Screen.Setup -> SetupScreen(vm)
+                    Screen.SeedSetup -> SeedSetupScreen(vm)
                     Screen.Today -> TodayScreen(vm)
                     is Screen.Play -> PlayScreen(vm, screen.level)
                     is Screen.Scores -> ScoresScreen(vm, screen)
+                    Screen.History -> HistoryScreen(vm)
                 }
+                ConfirmSeedDialog(vm)
             }
         }
     }
 
     private fun handleIntent(intent: Intent?) {
+        if (intent != null && intent.action == Intent.ACTION_SEND) {
+            // A seed share link shared to the app; asks first if it would replace something.
+            intent.getStringExtra(Intent.EXTRA_TEXT)?.let { text ->
+                if (!vm.openLink(text)) Toast.makeText(this, "That doesn't contain a Sudoku seed link.", Toast.LENGTH_LONG).show()
+            }
+            intent.action = null // don't replay on recreation
+            return
+        }
         val uri = intent?.data ?: return
         if (uri.toString().startsWith(SudokuApp.OIDC_REDIRECT_URI)) {
             vm.handleRedirect(uri.toString())

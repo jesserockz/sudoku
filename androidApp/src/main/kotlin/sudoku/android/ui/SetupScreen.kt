@@ -10,7 +10,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -62,6 +64,9 @@ fun SetupScreen(vm: AppViewModel) {
             }
             if (vm.setupBusy) CircularProgressIndicator()
             vm.setupError?.let { Text(it, color = ConflictColor) }
+            HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            Text("No server? Play with a seed: everyone who enters the same seed gets the same puzzles.", style = MaterialTheme.typography.bodyMedium)
+            OutlinedButton(onClick = { vm.openSeedSetup() }) { Text("Play with a seed") }
         }
     }
 }

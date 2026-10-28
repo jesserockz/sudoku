@@ -133,7 +133,11 @@ fun PlayScreen(vm: AppViewModel, level: Int) {
                             fontWeight = FontWeight.Bold,
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 12.dp)) {
-                            Button(onClick = { vm.openScores(level) }) { Text("See scores") }
+                            if (vm.seed != null) {
+                                Button(onClick = { vm.shareResults() }) { Text("Share results") }
+                            } else {
+                                Button(onClick = { vm.openScores(level) }) { Text("See scores") }
+                            }
                             OutlinedButton(onClick = { vm.openToday() }) { Text("Today's puzzles") }
                         }
                     }

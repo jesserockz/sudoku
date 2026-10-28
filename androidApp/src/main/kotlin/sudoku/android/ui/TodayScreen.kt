@@ -28,8 +28,15 @@ import sudoku.game.formatDuration
 
 @Composable
 fun TodayScreen(vm: AppViewModel) {
+    val serverless = vm.seed != null
     Scaffold(topBar = {
-        Bar("Sudoku") { TextButton(onClick = { vm.signOut() }) { Text("Sign out") } }
+        Bar("Sudoku") {
+            if (serverless) {
+                TextButton(onClick = { vm.openHistory() }) { Text("History") }
+            } else {
+                TextButton(onClick = { vm.signOut() }) { Text("Sign out") }
+            }
+        }
     }) { padding ->
         Column(
             Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
@@ -72,8 +79,16 @@ fun TodayScreen(vm: AppViewModel) {
                     }
                 }
             }
-            OutlinedButton(onClick = { vm.openScores() }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
-                Text("Leaderboard")
+            if (serverless) {
+                Row(Modifier.align(Alignment.CenterHorizontally), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { vm.shareResults() }) { Text("Share results") }
+                    OutlinedButton(onClick = { vm.openHistory() }) { Text("History") }
+                }
+                SeedCard(vm)
+            } else {
+                OutlinedButton(onClick = { vm.openScores() }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                    Text("Leaderboard")
+                }
             }
         }
     }
@@ -99,7 +114,7 @@ private fun PuzzleRow(vm: AppViewModel, level: Int, name: String, givens: Int) {
         when (status) {
             PuzzleStatus.New -> Button(onClick = { vm.openPuzzle(level) }) { Text("Play") }
             is PuzzleStatus.InProgress -> Button(onClick = { vm.openPuzzle(level) }) { Text("Resume") }
-            is PuzzleStatus.Done -> OutlinedButton(onClick = { vm.openScores(level) }) { Text("Scores") }
+            is PuzzleStatus.Done -> if (vm.seed == null) OutlinedButton(onClick = { vm.openScores(level) }) { Text("Scores") }
         }
     }
 }

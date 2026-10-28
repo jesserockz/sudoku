@@ -59,6 +59,16 @@ class ShareLinkTest {
     }
 
     @Test
+    fun findsALinkInsideAMessage() {
+        assertEquals(
+            SeedSettings("abc", 3),
+            ShareLink.parse("Play with us! https://h.example/sudoku/#seed=abc&levels=3 see you tomorrow"),
+        )
+        assertEquals(SeedSettings("a b"), ShareLink.parse("Join:\nhttps://h/#seed=a%20b&levels=5\n"))
+        assertNull(ShareLink.parse("the seed= is missing"))
+    }
+
+    @Test
     fun trimsTheSeedAndDefaultsTheRest() {
         assertEquals(SeedSettings("abc", 5, "Pacific/Auckland"), ShareLink.parse("#seed=%20abc%0A"))
         assertEquals(SeedSettings("abc", 5, "Pacific/Auckland"), ShareLink.parse("#seed=abc&tz="))
