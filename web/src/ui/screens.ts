@@ -173,6 +173,13 @@ export class TodayScreen extends Screen {
     const profile = app.seed;
     const link = app.shareLink();
     if (!profile || !link) return null;
+    // One message line under all the buttons, e.g. "Link copied.".
+    const message = h("p", { class: "muted center", hidden: !this.#seedMessage }, this.#seedMessage);
+    const show = (text: string) => {
+      this.#seedMessage = text;
+      message.textContent = text;
+      message.hidden = false;
+    };
     return h("div", { class: "card" },
       h("h2", null, `Seed ${profile.fingerprint}`),
       h("p", { class: "muted" }, `${describeSettings(profile.settings)}. Anyone with this link plays the same puzzles.`),
@@ -181,16 +188,22 @@ export class TodayScreen extends Screen {
         onfocus: (e: Event) => (e.target as HTMLInputElement).select(),
       }),
       h("div", { class: "actions" },
-        actionButton("Copy link", async () => ((await copyText(link)) ? "Link copied." : "Couldn't copy: select the link above and copy it.")),
-        canShare() && actionButton("Share…", async () => {
-          await share({ title: "Sudoku", text: "Play today's Sudoku with us", url: link });
-          return null;
-        }),
-        actionButton("Copy seed", async () => ((await copyText(profile.settings.seed)) ? "Seed copied." : "Couldn't copy the seed.")),
+        h("button", {
+          onclick: async () => show((await copyText(link)) ? "Link copied." : "Couldn't copy: select the link above and copy it."),
+        }, "Copy link"),
+        canShare() && h("button", {
+          onclick: () => void share({ title: "Sudoku", text: "Play today's Sudoku with us", url: link }),
+        }, "Share…"),
+        h("button", {
+          onclick: async () => show((await copyText(profile.settings.seed)) ? "Seed copied." : "Couldn't copy the seed."),
+        }, "Copy seed"),
         h("button", { class: "link", onclick: () => app.leaveSeed() }, "Leave seed"),
       ),
+      message,
     );
   }
+
+  #seedMessage = "";
 }
 
 /** `<sudoku-scores>`: the leaderboard for a day, by game and in total. */
