@@ -47,9 +47,13 @@ object ShareLink {
      * The settings in a share link, or in just its fragment (with or without
      * the `#`). Null when there is no `seed` or anything in it is invalid: a
      * malformed escape, an empty seed, `levels` outside 1..10 or an unknown
-     * timezone. Unknown parameters are ignored.
+     * timezone. Unknown parameters are ignored. A link inside a longer message
+     * (e.g. text shared from a chat) is found too.
      */
-    fun parse(text: String): SeedSettings? {
+    fun parse(text: String): SeedSettings? =
+        parseLink(text) ?: text.split(Regex("\\s+")).filter { "$SEED=" in it }.firstNotNullOfOrNull(::parseLink)
+
+    private fun parseLink(text: String): SeedSettings? {
         val trimmed = text.trim()
         val fragment = when {
             '#' in trimmed -> trimmed.substringAfter('#')

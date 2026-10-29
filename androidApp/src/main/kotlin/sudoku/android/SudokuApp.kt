@@ -10,16 +10,24 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import sudoku.data.AppStorage
 import sudoku.data.SudokuRepository
+import sudoku.serverless.SeedRepository
 import java.util.concurrent.TimeUnit
 
 class SudokuApp : Application() {
     lateinit var repository: SudokuRepository
         private set
 
+    /** Serverless play with a shared seed, in the same files as [repository]. */
+    lateinit var seeds: SeedRepository
+        private set
+
     override fun onCreate() {
         super.onCreate()
-        repository = SudokuRepository(AppStorage(filesDir), OIDC_REDIRECT_URI, BuildConfig.DEFAULT_SERVER_URL)
+        val store = FileKeyValueStore(filesDir)
+        repository = SudokuRepository(AppStorage(store), OIDC_REDIRECT_URI, BuildConfig.DEFAULT_SERVER_URL)
+        seeds = SeedRepository(store)
     }
 
     /**

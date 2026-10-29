@@ -35,6 +35,12 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="io.github.jesserockz.sudoku" android:path="/oauth2redirect" />
             </intent-filter>
+            <!-- "Share" a seed link from another app (e.g. a message) to play it. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
         </activity>
     </application>
 </manifest>

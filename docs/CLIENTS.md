@@ -331,6 +331,25 @@ active seed (`seed`), and per seed (keyed by its fingerprint) games in progress
   link, **Copy link**, **Share…** (the system share sheet, where the browser
   has one), **Copy seed** and **Leave seed**.
 
+### Seed play on Android
+
+- The first-run screen has **Play with a seed** under the server address:
+  enter a seed, **Generate** one, or **Paste link**; pick games per day and the
+  timezone. A pasted share link's settings win. The seed is kept in the app's
+  private files (`seed.json`, with `seed-games-<fp>.json` and
+  `seed-history-<fp>.json` per seed).
+- A share link can also be **shared to the app** from another app (Android's
+  share sheet, e.g. from a message: the link is found inside the text). If it
+  would replace another seed or a server sign-in, the app asks first.
+- Today has **Share results** and **History** instead of the leaderboard, and
+  the seed's card has **Share link** (the share sheet), **Copy link**, **Copy
+  seed** and **Leave seed**. Leaving goes back to the signed-in server, or to
+  the first-run screen; the seed's games and times are kept.
+- Share links point at `-PsudokuShareUrl=https://<owner>.github.io/<repo>/`
+  (a copy of the web client) when the build sets it, else at the server's
+  address if the app has one, else they're just the `#seed=...&levels=...`
+  part, which both apps accept when pasted.
+
 ### Hosting without a server
 
 `build/web` is a plain static site, so seed play needs nothing but a static
