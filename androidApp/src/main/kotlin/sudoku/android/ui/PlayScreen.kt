@@ -149,6 +149,8 @@ fun PlayScreen(vm: AppViewModel, level: Int) {
                         OutlinedButton({ if (selected >= 0) vm.update(level) { it.erase(selected) } }, Modifier.weight(1f), enabled = !paused) {
                             Text("Erase")
                         }
+                    }
+                    Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton({ vm.update(level) { it.clearAll() } }, Modifier.weight(1f), enabled = game.canClearAll && !paused) {
                             Text("Clear")
                         }
