@@ -49,6 +49,16 @@ class Game private constructor(
         }
     }
 
+    /** Whether there is anything for [clearAll] to remove: a player-entered digit or a note. */
+    val canClearAll: Boolean
+        get() = !isComplete && (board != board.givensOnly() || notes != Notes.Empty)
+
+    /** Clears every player-entered digit and note as a single undoable step. */
+    fun clearAll(): Game {
+        if (!canClearAll) return this
+        return record(board.givensOnly(), Notes.Empty, nowMs = null)
+    }
+
     /** Toggles a pencil mark. Only empty cells take notes. */
     fun toggleNote(index: Int, digit: Int): Game {
         if (isComplete || board[index] != Board.EMPTY) return this

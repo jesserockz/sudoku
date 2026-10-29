@@ -85,6 +85,22 @@ class GameTest {
     }
 
     @Test
+    fun clearAllRemovesEntriesAndNotesAndUndoesInOneStep() {
+        val start = Game.new(puzzle)
+        assertFalse(start.canClearAll)
+        assertSame(start, start.clearAll())
+        val played = start.toggleNote(3, 4).place(2, 4, 0).place(5, 8, 0).toggleNote(6, 1)
+        assertTrue(played.canClearAll)
+        val cleared = played.clearAll()
+        assertEquals(start.board, cleared.board)
+        assertEquals(start.notes, cleared.notes)
+        assertFalse(cleared.canClearAll)
+        val undone = cleared.undo()
+        assertEquals(played.board, undone.board)
+        assertEquals(played.notes, undone.notes)
+    }
+
+    @Test
     fun undoKeepsTheTimerRunning() {
         val g = Game.new(puzzle).resume(0).place(2, 4, 1_000).undo()
         assertTrue(g.timer.isRunning)
