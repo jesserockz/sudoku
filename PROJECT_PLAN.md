@@ -8,14 +8,14 @@ A self-hosted daily Sudoku game for family. Everyone gets the **same 5 puzzles e
 - Everyone sees the identical five puzzles for a given date.
 - Each person may play each of the day's puzzles once. After finishing (or the day rolling over) they wait for the next day.
 - Per-day leaderboard: a board per puzzle ranked by solve time, plus a daily-total board summing all five.
-- Android app and the installed web app (PWA) play fully offline once synchronised; results sync back when a connection returns.
-- A self-hosted web client for iOS users and anyone on a browser (no Apple developer account needed).
+- One self-hosted web app for every device: installable (PWA) on Android, iOS and desktops, with no app store or Apple developer account needed.
+- It plays fully offline once synchronised; results sync back when a connection returns.
 - Authentication via OIDC against self-hosted Authentik.
 
 ## Non-goals (for now)
 
 - No live multiplayer or real-time race.
-- No native iOS app (the web client covers iOS).
+- No native apps (the installable web app covers Android and iOS).
 - No puzzle archive / replaying past days (candidate for later).
 - No public/internet-scale hardening - small trusted family deployment.
 - No heavy anti-cheat. Times are self-reported by the client and trusted (see Trust model).
@@ -27,9 +27,7 @@ A self-hosted daily Sudoku game for family. Everyone gets the **same 5 puzzles e
 | Puzzle generation | Deterministic from a weekly seed; generated **client-side**   |
 | Weekly seed       | Derived from a server secret + ISO week (nothing stored)      |
 | Backend           | Go, single static binary (no JVM/runtime to install)          |
-| Mobile            | Kotlin Multiplatform (shared logic, Android target now)       |
-| Web client        | Kotlin Multiplatform (Compose for Web / Kotlin-JS)            |
-| Shared logic      | KMP module: board model, generator, validation                |
+| Client            | One installable web app (PWA): TypeScript + web components, no framework |
 | Database          | SQLite (native in the LXC)                                    |
 | Auth              | OIDC via self-hosted Authentik                                |
 | Trust model       | Minimal - trust the family; sanity caps only                  |
@@ -47,7 +45,7 @@ The key design choice: **puzzle generation is deterministic and runs on the clie
 
 This splits the system cleanly:
 
-1. **Shared KMP module** - pure Kotlin, compiled to Android and to JS for web:
+1. **Client logic** (`web/src`) - plain TypeScript, unit-tested on Node:
    - Sudoku board model and validation.
    - Deterministic generator: `generate(weekSeed, dayOfWeek, level) -> puzzle`.
    - Difficulty tiers (target given-counts), with a uniqueness guarantee.
@@ -61,9 +59,7 @@ This splits the system cleanly:
    - Serves the compiled web client's static assets.
    - No puzzle logic. (Server-side verification would require porting the generator to Go; out of scope under the minimal trust model.)
 
-3. **Clients**
-   - **Android** (KMP + Compose): fetches the weekly seed, generates all puzzles locally, plays fully offline, uploads results when online.
-   - **Web** (KMP Compose for Web / Kotlin-JS): same gameplay for iOS/browser users.
+3. **Client** - an installable web app (PWA) for every device: fetches the weekly seed, generates all puzzles locally, plays fully offline, uploads results when online.
 
 ### Puzzle generation - weekly seed
 
@@ -87,7 +83,7 @@ This splits the system cleanly:
 - "The day" and "the week" are defined in a single fixed timezone, **Pacific/Auckland**, for everyone, regardless of device locale - so date boundaries and the weekly seed rollover are consistent for all players.
 - The day-of-week and week-number used by the generator are computed in that timezone.
 
-### Offline and sync (Android and web PWA)
+### Offline and sync
 
 - The device holds **exactly one week's seed at a time** - the current week's. It does not pre-fetch or cache future weeks.
 - Because of this, the device **must come online at the start of each week** (on or after Monday, Pacific/Auckland) to fetch that week's seed. Until it does, the new week's puzzles are unavailable; a device that stays offline across the week boundary cannot play the new week until it reconnects.
@@ -115,9 +111,7 @@ This splits the system cleanly:
 
 ## Authentication (OIDC / Authentik)
 
-- Both clients authenticate against Authentik via OIDC.
-- Web: Authorization Code + PKCE browser flow.
-- Android: Authorization Code + PKCE via the system browser (AppAuth-style), with refresh tokens for offline-friendly sessions.
+- The web app authenticates against Authentik via OIDC: Authorization Code + PKCE, with refresh tokens for offline-friendly sessions.
 - The Go server validates access tokens (JWT signature + issuer/audience) on API calls.
 - Stable OIDC subject claim maps to a local user record used for the leaderboard; display name from Authentik claims.
 - OIDC endpoints, client IDs, and secrets are configurable (not hard-coded) so the deployment points at the user's Authentik instance.
@@ -142,22 +136,21 @@ Note: neither puzzles nor seeds are stored - puzzles are reproducible from the s
 
 ## Build and tooling
 
-- **KMP (Gradle)**: `shared` module + `androidApp` + `webApp` (Compose for Web / Kotlin-JS). Produces the Android app and the compiled web bundle.
+- **Web (`web/`)**: TypeScript compiled by `tsc` (its only dependency), no bundler or framework; tests on Node's built-in runner. Produces the static site the server serves.
 - **Go**: the server module, built to a static binary for the LXC's architecture.
 - Web bundle output is embedded in or served alongside the Go binary.
 
 ## Milestones (suggested order)
 
-1. **Shared core (KMP)** - board model, validation, deterministic `generate(seed, day, level)`, five difficulty tiers with uniqueness guarantee. Unit-test determinism across targets.
+1. **Shared core** - board model, validation, deterministic `generate(seed, day, level)`, five difficulty tiers with uniqueness guarantee. Golden tests pin determinism.
 2. **Server core (Go)** - SQLite schema, weekly-seed endpoint, OIDC validation, user records.
 3. **Results + leaderboard** - idempotent submission with sanity caps; per-puzzle and daily-total boards.
-4. **Android app** - play UI, local seed cache + offline generation, timing, sync.
-5. **Web client** - play UI + leaderboard for iOS/browser.
-6. **Deployment** - LXC setup, systemd units, backups, config, TLS decision.
-7. **Polish** - timer/pause rules, day/week rollover offline, duplicate submissions, ties, empty states.
+4. **Web app** - play UI, local seed cache + offline generation, timing, sync, leaderboard; installable for every device.
+5. **Deployment** - LXC setup, systemd units, backups, config, TLS decision.
+6. **Polish** - timer/pause rules, day/week rollover offline, duplicate submissions, ties, empty states.
 
 ## Open questions
 
-1. **Offline session length (Android)** - how long should a login stay valid offline before re-auth is required? (The device must come online weekly for the seed anyway, which is a natural point to refresh auth.)
+1. **Offline session length** - how long should a login stay valid offline before re-auth is required? (The device must come online weekly for the seed anyway, which is a natural point to refresh auth.)
 2. **Difficulty tuning** - confirm the given-count targets for levels 1-5 after playtesting (and whether to later revisit with a technique-based rating).
 3. **Timer pause rules** - exact behaviour when the app is backgrounded mid-puzzle.

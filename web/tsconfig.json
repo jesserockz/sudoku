@@ -1,0 +1,25 @@
+{
+  // Source runs as-is on Node (tests, scripts: Node strips the types) and is
+  // compiled by tsc for the browser (`npm run build`). So: erasable syntax only,
+  // and imports name the .ts file, rewritten to .js in the output. tsc only
+  // strips types ("esnext"); `lib` keeps the code to ES2022 (Safari 15.4+).
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "lib": ["es2022", "dom", "dom.iterable"],
+    "types": [],
+    "strict": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "rootDir": "src",
+    "outDir": "dist/app"
+  },
+  "include": ["src"]
+}

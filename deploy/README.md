@@ -23,8 +23,8 @@ cd server
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o sudoku-server ./cmd/sudoku-server
 ```
 
-Use `GOARCH=arm64` for an ARM host. Build the web client with Gradle and
-copy its output directory (the one containing `index.html`).
+Use `GOARCH=arm64` for an ARM host. Build the web client (`cd web && npm ci &&
+npm run build`) and copy `web/dist` (the directory containing `index.html`).
 
 ## 2. Install in the LXC
 
@@ -67,8 +67,6 @@ Create an OAuth2/OpenID provider and application (slug e.g. `sudoku`):
 
 - Web client: public client, Authorization Code + PKCE, redirect URI on the
   sudoku host. Its client id goes in `client_id`.
-- Android: a second public client if you want a separate id; add it to
-  `audience`.
 - Scopes: `openid`, `profile`, `offline_access`. The server reads `name` /
   `preferred_username` from the **access token** for display names.
 - Signing key: pick one so access tokens are signed JWTs (RS256 or ES256).

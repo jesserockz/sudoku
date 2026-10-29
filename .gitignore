@@ -1,22 +1,10 @@
-# Gradle / Kotlin
-.gradle/
-build/
-**/build/
-
 # IDE
 .idea/
-*.iml
-.kotlin/
+.vscode/
 
 # Local config / secrets
 *.local
 .env
-local.properties
-
-# Android
-*.apk
-*.keystore
-*.jks
 
 # OS
 .DS_Store
