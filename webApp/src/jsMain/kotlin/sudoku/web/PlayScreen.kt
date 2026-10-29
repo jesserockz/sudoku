@@ -152,6 +152,11 @@ fun PlayScreen(app: AppController, level: Int) {
             Button({ if (!game.canUndo || paused) disabled(); onClick { undo() } }) { Text("Undo") }
             Button({ if (paused) disabled(); onClick { erase() } }) { Text("Erase") }
             Button({
+                if (!game.canClearAll || paused) disabled()
+                attr("aria-label", "Clear board")
+                onClick { app.update(level) { it.clearAll() } }
+            }) { Text("Clear") }
+            Button({
                 if (notesMode) classes("active")
                 attr("aria-pressed", notesMode.toString())
                 onClick { notesMode = !notesMode }
