@@ -39,10 +39,13 @@ fun App(app: AppController) {
             Phase.Loading -> P({ classes("boot") }) { Text("Loading…") }
             is Phase.Failed -> FailedScreen(phase.message) { app.reload() }
             is Phase.SignIn -> SignInScreen(app, phase.config)
+            is Phase.SeedSetup -> SeedSetupScreen(app, phase)
+            is Phase.ConfirmSeed -> ConfirmSeedScreen(app, phase)
             Phase.Ready -> when (val screen = app.screen) {
                 Screen.Today -> TodayScreen(app)
                 is Screen.Play -> PlayScreen(app, screen.level)
                 is Screen.Scores -> ScoresScreen(app, screen)
+                Screen.History -> HistoryScreen(app)
             }
         }
     }
@@ -77,6 +80,9 @@ private fun SignInScreen(app: AppController, config: AppConfig) {
             P { Text("Sign in to play today's puzzles and see the leaderboard.") }
             Button({ classes("primary"); onClick { app.signIn() } }) { Text("Sign in") }
         }
+    }
+    Div({ classes("actions") }) {
+        Button({ classes("link"); onClick { app.chooseSeed() } }) { Text("Play with a seed instead") }
     }
 }
 
@@ -135,8 +141,13 @@ private fun DevSignIn(app: AppController) {
 @Composable
 private fun TodayScreen(app: AppController) {
     val today = app.today
+    val serverless = app.seed != null
     TopBar("Sudoku") {
-        Button({ classes("link"); onClick { app.signOut() } }) { Text("Sign out") }
+        if (serverless) {
+            Button({ classes("link"); onClick { app.openHistory() } }) { Text("History") }
+        } else {
+            Button({ classes("link"); onClick { app.signOut() } }) { Text("Sign out") }
+        }
     }
     if (app.needsSignIn) {
         Div({ classes("notice") }) {
@@ -184,11 +195,19 @@ private fun TodayScreen(app: AppController) {
                     when (status) {
                         PuzzleStatus.New -> Button({ classes("primary"); onClick { app.openPuzzle(level) } }) { Text("Play") }
                         is PuzzleStatus.InProgress -> Button({ classes("primary"); onClick { app.openPuzzle(level) } }) { Text("Resume") }
-                        is PuzzleStatus.Done -> Button({ onClick { app.openScores(level) } }) { Text("Scores") }
+                        is PuzzleStatus.Done -> if (!serverless) Button({ onClick { app.openScores(level) } }) { Text("Scores") }
                     }
                 }
             }
         }
+    }
+    if (serverless) {
+        Div({ classes("actions") }) {
+            ShareResultsButton(app, primary = true)
+            Button({ onClick { app.openHistory() } }) { Text("History") }
+        }
+        SeedGroupCard(app)
+        return
     }
     Div({ classes("actions") }) {
         Button({ onClick { app.openScores(0) } }) { Text("Leaderboard") }

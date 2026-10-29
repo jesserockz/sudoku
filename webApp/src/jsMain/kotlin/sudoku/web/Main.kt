@@ -8,21 +8,28 @@ import org.jetbrains.compose.web.renderComposable
 import sudoku.data.AppStorage
 import sudoku.data.SudokuRepository
 import sudoku.data.WebStorageKeyValueStore
+import sudoku.serverless.SeedRepository
 
 fun main() {
-    val storage = AppStorage(WebStorageKeyValueStore({ localStorage }))
+    val store = WebStorageKeyValueStore({ localStorage })
+    val storage = AppStorage(store)
     val repo = SudokuRepository(storage, window.location.origin + AppController.CALLBACK_PATH, window.location.origin)
-    val app = AppController(MainScope(), storage, repo)
+    val app = AppController(MainScope(), storage, repo, SeedRepository(store))
     // Background sync: no Background Sync API on iOS, so sync whenever the app could have a connection again.
     window.addEventListener("online", { app.sync() })
     document.addEventListener("visibilitychange", { if (document.asDynamic().hidden != true) app.sync() })
+    // A share link opened in a tab that already shows the app only changes the fragment.
+    window.addEventListener("hashchange", { app.onHashChange() })
     registerServiceWorker()
     document.getElementById("root")?.innerHTML = ""
     renderComposable(rootElementId = "root") { App(app) }
 }
 
-/** Caches the app shell for offline starts (`sw.js`). Needs a secure context (HTTPS or localhost). */
+/**
+ * Caches the app shell for offline starts (`sw.js`). Needs a secure context (HTTPS or localhost).
+ * The path is relative to the page's `<base>`, so a copy hosted under a sub-path gets its own worker.
+ */
 private fun registerServiceWorker() {
     val serviceWorker = window.navigator.asDynamic().serviceWorker ?: return
-    serviceWorker.register("/sw.js").catch { e: dynamic -> console.warn("Service worker registration failed", e) }
+    serviceWorker.register("sw.js").catch { e: dynamic -> console.warn("Service worker registration failed", e) }
 }

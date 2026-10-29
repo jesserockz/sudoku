@@ -1,10 +1,10 @@
 package sudoku.serverless
 
-import kotlinx.datetime.TimeZone
 import sudoku.api.WeekResponse
 import sudoku.auth.hmacSha256
 import sudoku.auth.secureRandomBytes
 import sudoku.game.GameCalendar
+import sudoku.game.WeekInfo
 import kotlin.time.Clock
 import kotlin.time.Instant
 
@@ -40,19 +40,20 @@ object PlaySeed {
      * server's `GET /api/v1/week`, so the clients play it the same way.
      */
     suspend fun week(settings: SeedSettings, now: Instant = Clock.System.now()): WeekResponse {
-        val zone: TimeZone = GameCalendar.zone(settings.timezone)
-        val info = GameCalendar.weekAt(now, zone)
-        return WeekResponse(
-            isoWeek = info.isoWeek,
-            seed = weekSeed(settings.seed, info.isoWeek),
-            weekStart = info.weekStart,
-            weekEnd = info.weekEnd,
-            today = info.today,
-            dayOfWeek = info.dayOfWeek,
-            timezone = settings.timezone,
-            levels = settings.levels,
-        )
+        val info = GameCalendar.weekAt(now, GameCalendar.zone(settings.timezone))
+        return weekResponse(settings, info, weekSeed(settings.seed, info.isoWeek))
     }
+
+    internal fun weekResponse(settings: SeedSettings, info: WeekInfo, seed: Long) = WeekResponse(
+        isoWeek = info.isoWeek,
+        seed = seed,
+        weekStart = info.weekStart,
+        weekEnd = info.weekEnd,
+        today = info.today,
+        dayOfWeek = info.dayOfWeek,
+        timezone = settings.timezone,
+        levels = settings.levels,
+    )
 
     /**
      * A new random seed such as `k7mq4-xzp2a-9d3fe-b6wnh`: 20 characters from a

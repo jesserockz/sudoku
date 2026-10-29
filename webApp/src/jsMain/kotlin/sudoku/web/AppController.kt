@@ -25,6 +25,11 @@ import sudoku.data.SudokuRepository
 import sudoku.game.Game
 import sudoku.game.Ticker
 import sudoku.generator.Puzzle
+import sudoku.serverless.PlaySeed
+import sudoku.serverless.SeedProfile
+import sudoku.serverless.SeedRepository
+import sudoku.serverless.SeedSettings
+import sudoku.serverless.ShareLink
 
 sealed interface Screen {
     data object Today : Screen
@@ -32,6 +37,9 @@ sealed interface Screen {
     data class Play(val level: Int) : Screen
 
     data class Scores(val date: LocalDate, val tab: Int) : Screen
+
+    /** Serverless play's local history of solve times. */
+    data object History : Screen
 }
 
 sealed interface Phase {
@@ -41,6 +49,16 @@ sealed interface Phase {
     data class Failed(val message: String) : Phase
 
     data class SignIn(val config: AppConfig) : Phase
+
+    /**
+     * Enter or generate a seed. [server] is the server's config when there is
+     * one (the player chose "Play with a seed" over signing in), or `null` when
+     * there's no Sudoku server here (e.g. static hosting).
+     */
+    data class SeedSetup(val server: AppConfig?) : Phase
+
+    /** A share link for [incoming] was opened while playing with a different seed (or signed in). */
+    data class ConfirmSeed(val incoming: SeedSettings, val incomingFingerprint: String, val current: SeedProfile?) : Phase
 
     data object Ready : Phase
 }
@@ -63,11 +81,17 @@ sealed interface PuzzleStatus {
  * cached week in `localStorage` with no network, and syncs in the background
  * (at start, when the browser comes back online and when the page becomes
  * visible). Only signing in and the leaderboard need the server.
+ *
+ * Serverless mode ([seed] set) plays from a shared seed instead: no server,
+ * sign-in or leaderboard; puzzles, games and a history of times are all local
+ * ([SeedRepository]). It's chosen when there's no Sudoku server here, when a
+ * share link (`#seed=...`) is opened, or with "Play with a seed".
  */
 class AppController(
     private val scope: CoroutineScope,
     private val storage: AppStorage,
     private val repo: SudokuRepository,
+    private val seeds: SeedRepository,
 ) {
     val ticker: Ticker = Ticker.monotonic()
 
@@ -77,6 +101,10 @@ class AppController(
         private set
 
     var me by mutableStateOf<Me?>(null)
+        private set
+
+    /** The seed being played in serverless mode, or `null` when playing with a server. */
+    var seed by mutableStateOf<SeedProfile?>(null)
         private set
 
     /** The day being shown; follows the device clock in Auckland time. */
@@ -124,6 +152,15 @@ class AppController(
             finishOidcSignIn()
             return
         }
+        takeShareLink()?.let {
+            offerSeed(it)
+            return
+        }
+        seeds.profile()?.let {
+            startSeed(it)
+            return
+        }
+        seed = null
         LegacyStorage.migrateIdentity(storage, origin)
         if (repo.isSignedIn) {
             showReady()
@@ -132,23 +169,27 @@ class AppController(
         }
         phase = Phase.Loading
         scope.launch {
-            try {
-                val config = repo.fetchConfig(origin)
-                if (LegacyStorage.migrateOidcTokens(storage, origin, config)) {
-                    showReady()
-                    sync()
-                } else {
-                    phase = Phase.SignIn(config)
-                }
+            val config = try {
+                repo.fetchConfig(origin)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                phase = Phase.Failed(describe(e))
+                // Unreachable, or not a Sudoku server (e.g. a static host): play with a seed.
+                null
+            }
+            when {
+                config == null -> phase = Phase.SeedSetup(server = null)
+                LegacyStorage.migrateOidcTokens(storage, origin, config) -> {
+                    showReady()
+                    sync()
+                }
+                else -> phase = Phase.SignIn(config)
             }
         }
     }
 
     private fun showReady() {
+        seed = null
         loadLocal()
         needsSignIn = repo.needsSignIn
         phase = Phase.Ready
@@ -156,6 +197,10 @@ class AppController(
 
     /** Reloads the day from local state (no network). */
     private fun loadLocal() {
+        if (seed != null) {
+            scope.launch { loadSeedDay() }
+            return
+        }
         me = repo.me()
         today = repo.today()
         val list = repo.puzzles(today)
@@ -175,7 +220,7 @@ class AppController(
 
     /** Syncs with the server in the background; offline is fine and just noted. */
     fun sync() {
-        if (syncing || phase != Phase.Ready || !repo.isSignedIn) return
+        if (syncing || phase != Phase.Ready || seed != null || !repo.isSignedIn) return
         syncing = true
         scope.launch {
             try {
@@ -215,6 +260,111 @@ class AppController(
     }
 
     fun puzzle(level: Int): Puzzle? = puzzles?.firstOrNull { it.level == level }
+
+    // Serverless play
+
+    /** The settings in the URL's `#seed=...` fragment, if any; the fragment is removed either way. */
+    private fun takeShareLink(): SeedSettings? {
+        val hash = window.location.hash
+        if (hash.length <= 1) return null
+        // Keep the seed out of the address bar, history and anything copied from it.
+        window.history.replaceState(null, "", window.location.pathname + window.location.search)
+        return ShareLink.parse(hash).also { if (it == null) notice = "That link doesn't contain a valid seed." }
+    }
+
+    /** A share link was opened: adopt it, after asking if it would replace another seed or a sign-in. */
+    private fun offerSeed(incoming: SeedSettings) {
+        val current = seeds.profile()
+        if (current?.settings == incoming || (current == null && !repo.isSignedIn)) {
+            useSeed(incoming)
+            return
+        }
+        phase = Phase.Loading
+        scope.launch { phase = Phase.ConfirmSeed(incoming, PlaySeed.fingerprint(incoming.seed), current) }
+    }
+
+    /** The URL's fragment changed while the app is open, e.g. a share link pasted into this tab. */
+    fun onHashChange() {
+        takeShareLink()?.let { offerSeed(it) }
+    }
+
+    /** Starts playing with [settings] (from the setup screen, or accepting a share link). */
+    fun useSeed(settings: SeedSettings) {
+        phase = Phase.Loading
+        scope.launch { startSeed(seeds.use(settings)) }
+    }
+
+    /** "Play with a seed" from the sign-in screen. */
+    fun chooseSeed() {
+        phase = Phase.SeedSetup((phase as? Phase.SignIn)?.config)
+    }
+
+    /** Back from seed setup or a declined share link to whatever was there before. */
+    fun cancelSeed() {
+        screen = Screen.Today
+        val setup = phase as? Phase.SeedSetup
+        if (setup?.server != null) phase = Phase.SignIn(setup.server) else start()
+    }
+
+    /** Stops playing with the seed. Its games and history are kept for if it's entered again. */
+    fun leaveSeed() {
+        seeds.leave()
+        seed = null
+        games.clear()
+        puzzles = null
+        notice = null
+        screen = Screen.Today
+        start()
+    }
+
+    private fun startSeed(profile: SeedProfile) {
+        seed = profile
+        phase = Phase.Loading
+        scope.launch {
+            try {
+                loadSeedDay()
+                phase = Phase.Ready
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                // E.g. a stored timezone this browser doesn't know: let the player pick again.
+                seeds.leave()
+                seed = null
+                phase = Phase.SeedSetup(server = null)
+                notice = "Couldn't start that seed: ${e.message}"
+            }
+        }
+    }
+
+    private suspend fun loadSeedDay() {
+        val day = seeds.today()
+        val list = seeds.puzzles(day)
+        today = day
+        puzzles = list
+        me = null
+        needsSignIn = false
+        games.clear()
+        list.forEach { p -> seeds.loadGame(day, p)?.let { games[p.level] = it } }
+        queued.clear()
+        serverDone.clear()
+        seeds.results(day).forEach { (level, r) -> serverDone[level] = r.elapsedMs }
+    }
+
+    /** The link that gives others this seed and settings: this page's address with them in the fragment. */
+    fun shareLink(): String? = seed?.let { ShareLink.build(appUrl(), it.settings) }
+
+    /** The "Share results" text for today. */
+    suspend fun resultsSummary(): String = seeds.summary(today)
+
+    /** Serverless play's history of solve times, newest day first. */
+    fun history() = seeds.history()
+
+    fun openHistory() {
+        if (seed != null) screen = Screen.History
+    }
+
+    /** Where this copy of the app lives, e.g. `https://example.github.io/sudoku/`. */
+    private fun appUrl(): String = document.baseURI.substringBefore('#').substringBefore('?')
 
     // Sign-in
 
@@ -284,7 +434,7 @@ class AppController(
     fun openToday() {
         screen = Screen.Today
         // The day may have rolled over while a puzzle was open.
-        if (repo.today() != today) loadLocal()
+        if (currentDay() != today) loadLocal()
     }
 
     fun openPuzzle(level: Int) {
@@ -299,6 +449,11 @@ class AppController(
     }
 
     fun openScores(tab: Int = 0, date: LocalDate = today) {
+        // No leaderboard without a server: serverless play has its own history instead.
+        if (seed != null) {
+            openHistory()
+            return
+        }
         screen = Screen.Scores(date, tab)
         loadLeaderboard(date)
     }
@@ -340,6 +495,11 @@ class AppController(
         val after = change(before)
         if (after === before) return
         games[level] = after
+        if (seed != null) {
+            seeds.saveGame(today, level, after, ticker.nowMs())
+            if (after.isComplete && !before.isComplete) serverDone[level] = seeds.complete(today, level, after).elapsedMs
+            return
+        }
         repo.saveGame(today, level, after, ticker.nowMs())
         if (after.isComplete && !before.isComplete) {
             queued[level] = after.completedElapsedMs ?: 0
@@ -366,7 +526,7 @@ class AppController(
                 delay(30_000)
                 if (phase != Phase.Ready) continue
                 // Don't pull the board out from under someone mid-puzzle; openToday() catches up.
-                if (screen !is Screen.Play && repo.today() != today) {
+                if (screen !is Screen.Play && currentDay() != today) {
                     loadLocal()
                     sync()
                 } else if (offline && document.asDynamic().hidden != true) {
@@ -375,6 +535,8 @@ class AppController(
             }
         }
     }
+
+    private fun currentDay(): LocalDate = if (seed != null) seeds.today() else repo.today()
 
     private fun describe(e: Throwable): String = when (e) {
         is SignInException -> e.message ?: "Sign-in failed."

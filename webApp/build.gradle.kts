@@ -54,12 +54,13 @@ tasks.register<Sync>("webDist") {
         val digest = MessageDigest.getInstance("SHA-256")
         shell.forEach { digest.update(it.toByteArray()); digest.update(dir.resolve(it).readBytes()) }
         val version = digest.digest().joinToString("") { "%02x".format(it) }.take(16)
-        val paths = (listOf("/") + shell.map { "/$it" }).joinToString(", ") { "\"$it\"" }
+        // Relative to the worker's scope, so the bundle can live under any path.
+        val paths = (listOf("./") + shell).joinToString(", ") { "\"$it\"" }
         val sw = dir.resolve("sw.js")
         val stamped = sw.readText()
             .replace(Regex("""const BUILD_VERSION = .*;"""), "const BUILD_VERSION = \"$version\";")
             .replace(Regex("""const SHELL = \[.*];"""), "const SHELL = [$paths];")
-        check("\"$version\"" in stamped && "\"/index.html\"" in stamped) { "couldn't stamp $sw" }
+        check("\"$version\"" in stamped && "\"index.html\"" in stamped) { "couldn't stamp $sw" }
         sw.writeText(stamped)
     }
 }
