@@ -276,3 +276,28 @@ Each game's puzzle seed mixes in its game number, so two games of the same tier
 are different puzzles. Five games produce exactly the original puzzles. Games
 of a repeated tier are titled "Medium 1", "Medium 2" and so on. The tier table
 and puzzles for several counts are pinned by golden tests on every target.
+
+## Serverless play (a shared seed)
+
+A group can play without a server: everyone enters the same **seed** (any
+passphrase, or a generated one) and gets the same daily games. The shared code
+is in `sudoku.serverless`.
+
+- **Week seed**: `HMAC-SHA256(key = UTF-8(seed), "sudoku-week:" + isoWeek)`,
+  first 8 bytes, big-endian. This is the server's own derivation
+  (`server/internal/seed/seed.go`) with the seed as its secret, so a seed equal
+  to a server's secret plays that server's puzzles. HMAC runs on the platform's
+  SHA-256 (`MessageDigest` on the JVM, WebCrypto on JS) and is checked against
+  RFC 4231 and the server's test vectors on every target.
+- **Seeds** are used exactly as typed, minus surrounding whitespace: case
+  matters. "Generate" makes 20 characters of Crockford base32 (100 random
+  bits), such as `k7mq4-xzp2a-9d3fe-b6wnh`.
+- **Settings** a group must share: the seed, games per day (`levels`, 1 to 10,
+  default 5) and the timezone the day turns over in (default Pacific/Auckland).
+- **Share links** carry them in the URL fragment, which browsers never send to
+  a server: `https://<host>/<path>/#seed=<percent-encoded>&levels=5`, plus
+  `&tz=<IANA zone>` when it isn't Pacific/Auckland. Anything else in the
+  fragment is ignored; a bad escape, empty seed, out-of-range `levels` or
+  unknown zone makes the link invalid.
+- **Share results** copies a summary of the day to paste into a message, tagged
+  with a short fingerprint of the seed (e.g. `#287caf`) instead of the seed.

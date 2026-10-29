@@ -37,7 +37,17 @@ object GameCalendar {
         TimeZone.of(TIMEZONE_ID)
     }
 
-    fun today(now: Instant = Clock.System.now()): LocalDate = now.toLocalDateTime(timeZone).date
+    /**
+     * The timezone [id] (an IANA name such as `Europe/London`), for groups that
+     * play with a seed in a zone of their own. Throws [IllegalArgumentException]
+     * for an unknown id.
+     */
+    fun zone(id: String): TimeZone {
+        loadTimeZoneDatabase()
+        return TimeZone.of(id)
+    }
+
+    fun today(now: Instant = Clock.System.now(), zone: TimeZone = timeZone): LocalDate = now.toLocalDateTime(zone).date
 
     fun dayOfWeek(date: LocalDate): Int = date.dayOfWeek.isoDayNumber
 
@@ -55,7 +65,7 @@ object GameCalendar {
         return WeekInfo(isoWeek(date), start, start.plus(DatePeriod(days = 6)), date, dayOfWeek(date))
     }
 
-    fun weekAt(now: Instant = Clock.System.now()): WeekInfo = weekOf(today(now))
+    fun weekAt(now: Instant = Clock.System.now(), zone: TimeZone = timeZone): WeekInfo = weekOf(today(now, zone))
 
     /** Midnight at the start of [date], Auckland time. */
     fun startOfDay(date: LocalDate): Instant = date.atStartOfDayIn(timeZone)
