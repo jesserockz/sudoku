@@ -39,27 +39,35 @@ jobs:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
       - name: Check formatting
+        id: fmt
         run: |
           unformatted="$(gofmt -l .)"
           if [ -n "$unformatted" ]; then
             echo "gofmt needed on:"; echo "$unformatted"; exit 1
           fi
       - name: Vet
+        id: vet
         run: go vet ./...
       - name: Unit tests
-        run: go test -race -count=1 ./...
+        id: test
+        run: |
+          set -o pipefail
+          go test -race -count=1 ./... 2>&1 | tee "$RUNNER_TEMP/test.txt"
       - name: Static build (linux/${{ matrix.arch }})
+        id: build
         run: |
           make dist PLATFORMS=linux/${{ matrix.arch }}
           file dist/*
       - name: Smoke test
+        id: smoke
         run: |
           SUDOKU_AUTH_MODE=dev SUDOKU_SERVER_SECRET=ci-secret-0123456789 \
             SUDOKU_DB_PATH="$RUNNER_TEMP/smoke.db" SUDOKU_BIND=127.0.0.1:18080 \
             dist/sudoku-server-linux-${{ matrix.arch }} &
           pid=$!
           for i in $(seq 30); do curl -sf localhost:18080/healthz && break; sleep 1; done
-          curl -sf -H 'Authorization: Bearer dev:ci:CI' localhost:18080/api/v1/week
+          curl -sf -H 'Authorization: Bearer dev:ci:CI' localhost:18080/api/v1/week \
+            | tee "$RUNNER_TEMP/week.json"
           kill $pid
       - name: Upload binary
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
@@ -68,3 +76,80 @@ jobs:
           path: server/dist/sudoku-server-linux-${{ matrix.arch }}
           archive: false
           if-no-files-found: error
+      - name: Summary
+        if: always()
+        env:
+          ARCH: ${{ matrix.arch }}
+          RUNNER_LABEL: ${{ matrix.runner }}
+          FMT: ${{ steps.fmt.outcome }}
+          VET: ${{ steps.vet.outcome }}
+          TEST: ${{ steps.test.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+          SMOKE: ${{ steps.smoke.outcome }}
+        run: |
+          result() {
+            case "$1" in
+              success) echo "✅ passed" ;;
+              failure) echo "❌ failed" ;;
+              cancelled) echo "🚫 cancelled" ;;
+              *) echo "⏭️ skipped" ;;
+            esac
+          }
+          bin="dist/sudoku-server-linux-$ARCH"
+          {
+            echo "## Server: linux/$ARCH"
+            echo
+            echo "Runner \`$RUNNER_LABEL\`, $(go version | cut -d' ' -f3)"
+            echo
+            echo "| Check | Result |"
+            echo "| --- | --- |"
+            echo "| Formatting | $(result "$FMT") |"
+            echo "| Vet | $(result "$VET") |"
+            echo "| Unit tests | $(result "$TEST") |"
+            echo "| Static build | $(result "$BUILD") |"
+            echo "| Smoke test | $(result "$SMOKE") |"
+
+            if [ -s "$RUNNER_TEMP/test.txt" ]; then
+              echo
+              echo "### Unit tests"
+              echo
+              echo "| Package | Result | Time |"
+              echo "| --- | --- | --- |"
+              mod="$(go list -m)/"
+              awk -F'\t' -v mod="$mod" '
+                $1 ~ /^(ok|FAIL|\?) *$/ && NF >= 3 {
+                  pkg = $2; sub(mod, "", pkg)
+                  st = $1; sub(/ +$/, "", st)
+                  if (st == "ok") r = "✅ ok"; else if (st == "FAIL") r = "❌ FAIL"; else { r = "no tests"; $3 = "" }
+                  printf "| `%s` | %s | %s |\n", pkg, r, $3
+                }' "$RUNNER_TEMP/test.txt"
+              if [ "$TEST" = failure ]; then
+                echo
+                echo "<details><summary>Test output (last 100 lines)</summary>"
+                echo
+                echo '```'
+                tail -n 100 "$RUNNER_TEMP/test.txt"
+                echo '```'
+                echo "</details>"
+              fi
+            fi
+
+            if [ -f "$bin" ]; then
+              echo
+              echo "### Binary"
+              echo
+              echo "| File | Size | SHA-256 |"
+              echo "| --- | --- | --- |"
+              echo "| \`$(basename "$bin")\` | $(numfmt --to=iec --suffix=B "$(stat -c %s "$bin")") | \`$(sha256sum "$bin" | cut -d' ' -f1)\` |"
+            fi
+
+            if [ -s "$RUNNER_TEMP/week.json" ]; then
+              echo
+              echo "<details><summary>Smoke test: <code>GET /api/v1/week</code></summary>"
+              echo
+              echo '```json'
+              jq . "$RUNNER_TEMP/week.json" 2>/dev/null || cat "$RUNNER_TEMP/week.json"
+              echo '```'
+              echo "</details>"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
