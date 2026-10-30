@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -187,6 +188,80 @@ func TestDev(t *testing.T) {
 		if _, err := (Dev{}).Verify(context.Background(), bad); !errors.Is(err, ErrInvalidToken) {
 			t.Errorf("Verify(%q) err = %v", bad, err)
 		}
+	}
+}
+
+func TestDevClaims(t *testing.T) {
+	tests := []struct {
+		token string
+		want  map[string]any
+	}{
+		{"dev:alice:Alice", map[string]any{"sub": "alice", "name": "Alice"}},
+		{"dev:bob", map[string]any{"sub": "bob", "name": ""}},
+	}
+	for _, tt := range tests {
+		id, err := Dev{}.Verify(context.Background(), tt.token)
+		if err != nil || !reflect.DeepEqual(id.Claims, tt.want) {
+			t.Errorf("Verify(%q) claims = %v, %v; want %v", tt.token, id.Claims, err, tt.want)
+		}
+	}
+}
+
+func TestOIDCClaims(t *testing.T) {
+	ti := newTestIssuer(t)
+	tok := sign(t, ti.key, "k1", ti.claims(map[string]any{
+		"groups":       []string{"sudoku-admins"},
+		"realm_access": map[string]any{"roles": []string{"a"}},
+	}))
+	id, err := ti.verifier().Verify(context.Background(), tok)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !HasClaimValue(id.Claims, "groups", []string{"sudoku-admins"}) ||
+		!HasClaimValue(id.Claims, "realm_access.roles", []string{"a"}) ||
+		id.Claims["sub"] != "abc123" {
+		t.Errorf("claims = %v", id.Claims)
+	}
+}
+
+func TestHasClaimValue(t *testing.T) {
+	claims := map[string]any{
+		"group":  "admins",
+		"groups": []any{"users", 7, "admins"},
+		"num":    3.0,
+		"realm_access": map[string]any{
+			"roles": []any{"x", "sudoku-admin"},
+			"flat":  "sudoku-admin",
+		},
+	}
+	tests := []struct {
+		name   string
+		claims map[string]any
+		path   string
+		values []string
+		want   bool
+	}{
+		{"string match", claims, "group", []string{"admins"}, true},
+		{"string no match", claims, "group", []string{"other"}, false},
+		{"list match", claims, "groups", []string{"nope", "admins"}, true},
+		{"list no match", claims, "groups", []string{"nope"}, false},
+		{"list non-string element", claims, "groups", []string{"7"}, false},
+		{"nested list", claims, "realm_access.roles", []string{"sudoku-admin"}, true},
+		{"nested string", claims, "realm_access.flat", []string{"sudoku-admin"}, true},
+		{"missing top", claims, "nothing", []string{"admins"}, false},
+		{"missing nested", claims, "realm_access.nothing", []string{"x"}, false},
+		{"path through non-map", claims, "group.sub", []string{"admins"}, false},
+		{"wrong type", claims, "num", []string{"3"}, false},
+		{"empty path", claims, "", []string{"admins"}, false},
+		{"no values", claims, "group", nil, false},
+		{"nil claims", nil, "group", []string{"admins"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := HasClaimValue(tt.claims, tt.path, tt.values); got != tt.want {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

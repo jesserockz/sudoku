@@ -17,6 +17,13 @@ const (
 	CodeNotFound         = "not_found"
 	CodeMethodNotAllowed = "method_not_allowed"
 	CodeInternal         = "internal"
+
+	CodeForbidden             = "forbidden"
+	CodeUpdateInProgress      = "update_in_progress"
+	CodeDowngradeNotConfirmed = "downgrade_not_confirmed"
+	CodeUpdateUnavailable     = "update_unavailable"
+	CodeReleaseNotFound       = "release_not_found"
+	CodeUpstreamError         = "upstream_error"
 )
 
 // WriteJSON writes v as a JSON response with the given status.

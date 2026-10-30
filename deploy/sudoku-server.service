@@ -8,9 +8,12 @@ Wants=network-online.target
 Type=simple
 User=sudoku
 Group=sudoku
-ExecStart=/usr/local/bin/sudoku-server -config /etc/sudoku/config.toml
+ExecStart=/opt/sudoku/bin/sudoku-server -config /etc/sudoku/config.toml
 # Secrets (SUDOKU_SERVER_SECRET) live here, readable only by root and sudoku.
 EnvironmentFile=-/etc/sudoku/env
+# Restart=on-failure also restarts the server after an admin self-update: the
+# server exits with status 75 (EX_TEMPFAIL), which counts as a failure, so
+# systemd starts the new binary. Do not change it to Restart=no.
 Restart=on-failure
 RestartSec=5
 
@@ -19,8 +22,15 @@ StateDirectory=sudoku
 StateDirectoryMode=0750
 WorkingDirectory=/var/lib/sudoku
 
-# Hardening. The server only needs its state dir and outbound HTTPS to
-# Authentik for the JWKS.
+# /opt/sudoku/bin must be owned by the service user: the admin self-update
+# writes the new binary next to the running one and keeps the old one as
+# sudoku-server.previous there. ProtectSystem=strict makes everything else
+# read-only, so the directory has to be listed here.
+ReadWritePaths=/opt/sudoku/bin
+
+# Hardening. The server only needs its state dir, its binary directory above,
+# and outbound HTTPS to Authentik for the JWKS plus, for self-update, to
+# api.github.com and GitHub's release asset storage.
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

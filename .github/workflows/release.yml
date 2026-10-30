@@ -152,6 +152,8 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.draft.outputs.tag_name }}
         run: |
+          # The server's self-update verifies its download against this file.
+          (cd dist && sha256sum * > SHA256SUMS)
           ls -l dist
           if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" != "true" ]; then
             echo "::error::$TAG is not a draft release; not touching its assets"

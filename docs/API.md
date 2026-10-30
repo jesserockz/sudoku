@@ -21,12 +21,19 @@ Non-2xx responses carry:
 { "error": { "code": "invalid_result", "message": "elapsedMs below minimum" } }
 ```
 
-| Status | `code` examples                         | When                              |
-| ------ | --------------------------------------- | --------------------------------- |
-| 400    | `bad_request`, `invalid_result`         | Malformed body or failed caps     |
-| 401    | `unauthorized`                          | Missing / invalid / expired token |
-| 404    | `not_found`                             | Unknown route                     |
-| 500    | `internal`                              | Server fault                      |
+| Status | `code` examples           | When                                           |
+| ------ | ------------------------- | ---------------------------------------------- |
+| 400    | `bad_request`             | Malformed body                                 |
+| 400    | `invalid_result`          | Failed caps                                    |
+| 401    | `unauthorized`            | Missing / invalid / expired token              |
+| 403    | `forbidden`               | Caller is not an admin                         |
+| 404    | `not_found`               | Unknown route                                  |
+| 404    | `release_not_found`       | Unknown release (admin endpoints)              |
+| 409    | `update_in_progress`      | An update or rollback is running (admin)       |
+| 409    | `update_unavailable`      | Update cannot run here (admin)                 |
+| 409    | `downgrade_not_confirmed` | Not an upgrade, `allowDowngrade` unset (admin) |
+| 500    | `internal`                | Server fault                                   |
+| 502    | `upstream_error`          | GitHub failed (admin endpoints)                |
 
 ## Authentication
 
@@ -42,7 +49,7 @@ For local development and client testing without Authentik, the server can be st
 Authorization: Bearer dev:<sub>:<display name>
 ```
 
-e.g. `Bearer dev:alice:Alice`. Dev mode must never be enabled in production; the server logs a prominent warning when it is.
+e.g. `Bearer dev:alice:Alice`. Dev tokens carry only the claims `sub` and `name`, so to try admin access in dev mode configure `[admin] claim = "sub"`, `values = ["ann"]` and use `Bearer dev:ann:Ann`. Dev mode must never be enabled in production; the server logs a prominent warning when it is.
 
 ## Weekly seed
 
@@ -96,10 +103,10 @@ Only the **current** week is served. There is no way to fetch a future week's se
 ### `GET /api/v1/me`
 
 ```json
-{ "id": "alice", "displayName": "Alice" }
+{ "id": "alice", "displayName": "Alice", "admin": false }
 ```
 
-`id` is an opaque stable user id (clients must not assume it equals the OIDC `sub`).
+`id` is an opaque stable user id (clients must not assume it equals the OIDC `sub`). `admin` is `true` when the caller may use the `/api/v1/admin/*` endpoints; clients treat a missing field (older servers) as `false`.
 
 ### `GET /api/v1/me/results?date=YYYY-MM-DD`
 
@@ -173,6 +180,90 @@ Defaults to today.
 - Entries are sorted by time ascending. **Ties share a rank** with no tiebreaker, using standard competition ranking (1, 2, 2, 4). Entries with equal time are ordered by `displayName` for stable display only.
 - `total` includes only users who completed **all five** levels that day.
 - `players` lists every user with at least one result that day, so clients can show partial progress (e.g. 3 of 5).
+
+## Admin endpoints
+
+Self-update of the server binary. Every `/api/v1/admin/*` endpoint needs a valid bearer token whose claims match the server's `[admin]` config (a claim, which may be a dot-separated path, equal to one of a list of values). Otherwise: `401 unauthorized` without a valid token, `403 forbidden` ("admin access required") for a valid non-admin token. With no `[admin]` config nobody is admin. If the server was built without the updater, every admin endpoint answers `409 update_unavailable`.
+
+Only the server binary is updated; the web client is deployed separately.
+
+### `GET /api/v1/admin/releases?prereleases=true`
+
+Up to the 30 most recent published (non-draft) GitHub releases, newest first. Prereleases are omitted unless `prereleases=true`. `502 upstream_error` if GitHub fails.
+
+```json
+{
+  "current": { "version": "0.2.0", "os": "linux", "arch": "amd64", "asset": "sudoku-server-linux-amd64" },
+  "releases": [
+    {
+      "tag": "v0.3.0",
+      "version": "0.3.0",
+      "name": "v0.3.0",
+      "publishedAt": "2026-10-30T01:02:03Z",
+      "prerelease": false,
+      "latest": true,
+      "current": false,
+      "comparison": "newer",
+      "installable": true,
+      "notInstallableReason": "",
+      "url": "https://github.com/jesserockz/sudoku/releases/tag/v0.3.0"
+    }
+  ],
+  "update": { "state": "idle", "action": "", "...": "same object as GET /api/v1/admin/update" }
+}
+```
+
+- `version` is the tag without a leading `v`. `current` is true when it equals the running version.
+- `comparison` is `newer`, `same`, `older` or `unknown` (either version is not semver) relative to the running version, by semver 2 precedence (a prerelease ranks below its release).
+- `latest` is true for the highest-semver non-prerelease release.
+- `installable` needs both this platform's asset (`sudoku-server-<os>-<arch>`) and a `SHA256SUMS` asset; otherwise `notInstallableReason` says what is missing.
+
+### `POST /api/v1/admin/update`
+
+```json
+{ "tag": "v0.3.0", "allowDowngrade": false }
+```
+
+`tag` must look like `v1.2.3` (optional `v`, optional `-prerelease` and `+build`), else `400 bad_request`. The request is checked synchronously, then the download, verification and install run in the background and the server restarts itself. Refusals:
+
+| Status | `code`                    | When                                                                                                       |
+| ------ | ------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| 409    | `update_in_progress`      | An update or rollback is already running                                                                   |
+| 409    | `update_unavailable`      | The binary's directory is not writable by the service user, or the release lacks the asset or `SHA256SUMS` |
+| 404    | `release_not_found`       | No such published release                                                                                  |
+| 502    | `upstream_error`          | GitHub failed                                                                                              |
+| 409    | `downgrade_not_confirmed` | `comparison` is `same`, `older` or `unknown` and `allowDowngrade` is not `true`                            |
+
+Otherwise `202 Accepted` with the status object below. The download is checked against the release's `SHA256SUMS`; the new binary replaces the old one atomically and the old one is kept as `<binary>.previous`.
+
+### `GET /api/v1/admin/update`
+
+Progress of the current or last job.
+
+```json
+{
+  "state": "downloading",
+  "action": "update",
+  "target": "v0.3.0",
+  "message": "Downloading sudoku-server-linux-amd64",
+  "error": "",
+  "bytesDone": 1234,
+  "bytesTotal": 9999999,
+  "startedAt": "2026-10-31T01:02:03Z",
+  "finishedAt": null,
+  "rollbackAvailable": true
+}
+```
+
+- `state` is `idle` (nothing ran since the server started), `downloading`, `verifying`, `installing`, `restarting` or `failed`. `error` is set when `failed`. `action` is `update`, `rollback` or `""` (idle).
+- `target` is the tag being installed; empty for a rollback.
+- `bytesTotal` is `0` when unknown. `finishedAt` is `null` while running.
+- `rollbackAvailable` is true when a `.previous` binary exists next to the running one.
+- In `restarting` the server is about to exit. Clients poll `GET /api/v1/config` until its `version` matches the target.
+
+### `POST /api/v1/admin/rollback`
+
+No body. Swaps the `.previous` binary back in (the replaced binary becomes the new `.previous`) and restarts. `409 update_in_progress` if a job is running, `409 update_unavailable` if there is no previous binary or the directory is not writable. Otherwise `202 Accepted` with the status object.
 
 ## Static web client
 

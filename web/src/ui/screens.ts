@@ -4,6 +4,7 @@ import { DEFAULT_LEVELS, MAX_LEVELS, puzzleTitle } from "../generator/generator.
 import { generateSeed, normalizeSeed, seedSettings, type SeedSettings } from "../serverless/seed.ts";
 import { parseShareLink } from "../serverless/share-link.ts";
 import { WEB_VERSION } from "../version.ts";
+import { type AdminModel, actionLabel, flavourOf, formatBytes, progressFraction } from "./admin.ts";
 import type { AppController, Phase, ServerInfo } from "./controller.ts";
 import { type Child, Component, h, topBar } from "./dom.ts";
 import { actionButton, canShare, copyText, share, shareResultsButton } from "./share.ts";
@@ -324,11 +325,125 @@ export class AboutScreen extends Screen {
           h("tr", null, h("td", null, "Server version"), h("td", { class: "time" }, describeServer(app.serverInfo))),
         )),
       ),
+      app.me?.admin && !app.seed && h("div", { class: "actions" },
+        h("button", { onclick: () => app.openAdmin() }, "Admin"),
+      ),
       h("div", { class: "actions" },
         h("a", { href: REPO_URL, target: "_blank", rel: "noopener" }, "GitHub"),
         h("a", { href: `${REPO_URL}/releases`, target: "_blank", rel: "noopener" }, "Releases"),
       ),
     ];
+  }
+}
+
+/** `<sudoku-admin>`: install a server release or roll back. All behaviour is in {@link AdminModel}. */
+export class AdminScreen extends Screen {
+  #model: AdminModel | null = null;
+  readonly #onChange = () => this.update();
+
+  override connectedCallback(): void {
+    this.#model = this.app.admin;
+    this.#model?.addEventListener("change", this.#onChange);
+    super.connectedCallback();
+  }
+
+  disconnectedCallback(): void {
+    this.#model?.removeEventListener("change", this.#onChange);
+    this.#model?.dispose();
+  }
+
+  protected render(): Child {
+    const m = this.#model;
+    const back = () => this.app.openAbout();
+    if (!m) return topBar("Server admin", back);
+    const list = m.list;
+    return [
+      topBar("Server admin", back),
+      m.loadError && h("div", { class: "notice" }, m.loadError),
+      m.error && h("div", { class: "notice" }, m.error),
+      list && h("div", { class: "card" },
+        h("table", { class: "board-table" }, h("tbody", null,
+          h("tr", null, h("td", null, "Server version"), h("td", { class: "time" }, list.current.version)),
+          h("tr", null, h("td", null, "Platform"), h("td", { class: "time" }, `${list.current.os}/${list.current.arch}`)),
+        )),
+        h("p", { class: "muted" }, "This updates the server binary only. The web client is updated separately."),
+      ),
+      this.#progress(m),
+      this.#confirm(m),
+      list && !m.confirm && h("div", { class: "card" },
+        h("h2", null, "Releases"),
+        h("label", { class: "check" },
+          h("input", { type: "checkbox", checked: m.includePrereleases, disabled: m.working || m.loading, onchange: (e: Event) => void m.setIncludePrereleases((e.target as HTMLInputElement).checked) }),
+          " Show prereleases"),
+        list.releases.length === 0 && h("p", { class: "muted" }, "No releases found."),
+        h("ul", { class: "releases" }, list.releases.map((r) => h("li", null,
+          h("div", { class: "release-info" },
+            h("span", { class: "name" }, r.tag),
+            r.latest && h("span", { class: "badge" }, "Latest"),
+            r.current && h("span", { class: "badge current" }, "Current"),
+            r.prerelease && h("span", { class: "badge" }, "Prerelease"),
+            r.publishedAt && h("div", { class: "muted small" }, r.publishedAt.slice(0, 10)),
+            !r.installable && h("div", { class: "muted small" }, r.notInstallableReason || "Not installable"),
+          ),
+          r.installable && h("button", { class: flavourOf(r) === "update" && "primary", disabled: m.working, onclick: () => m.choose(r.tag) }, actionLabel(r)),
+        ))),
+      ),
+      m.canRollback && !m.confirm && h("div", { class: "actions" },
+        h("button", { onclick: () => m.chooseRollback() }, "Roll back to previous binary"),
+      ),
+      m.loading && !list && h("p", { class: "boot" }, "Loading…"),
+    ];
+  }
+
+  #progress(m: AdminModel): Child {
+    const p = m.progress;
+    switch (p.kind) {
+      case "none": return null;
+      case "running": {
+        const fraction = progressFraction(p.status);
+        return h("div", { class: "card" },
+          h("p", null, p.status.message || p.status.state),
+          h("progress", { max: 1, ...(fraction === null ? {} : { value: fraction }) }),
+          p.status.bytesTotal > 0 && h("p", { class: "muted small" }, `${formatBytes(p.status.bytesDone)} of ${formatBytes(p.status.bytesTotal)}`),
+        );
+      }
+      case "restarting":
+        return h("div", { class: "card" },
+          h("p", null, `Restarting the server${p.target ? ` on ${p.target}` : ""}…`),
+          h("progress", { max: 1 }),
+          h("p", { class: "muted small" }, "This can take a minute. Don't close this page."),
+        );
+      case "done": return h("div", { class: "card" }, h("p", null, p.message));
+      case "failed": return h("div", { class: "notice" }, p.message);
+    }
+  }
+
+  #confirm(m: AdminModel): Child {
+    const c = m.confirm;
+    if (!c) return null;
+    const buttons = (label: string) => h("div", { class: "actions" },
+      h("button", { class: "primary", disabled: m.busy, onclick: () => void m.confirmAction() }, label),
+      h("button", { disabled: m.busy, onclick: () => m.cancel() }, "Cancel"),
+    );
+    if (c.kind === "rollback") {
+      return h("div", { class: "card" },
+        h("h2", null, "Roll back?"),
+        h("p", null, "The server will swap the previous binary back in and restart. Sudoku is unavailable for a moment."),
+        buttons("Roll back"),
+      );
+    }
+    const warning = {
+      update: null,
+      reinstall: "This is the version already running. It will be downloaded and installed again.",
+      downgrade: "This is an older version than the one running. Downgrading can break things if the database has changed. Only continue if you are sure.",
+      unknown: "This version can't be compared with the running one, so it may be older. Only continue if you are sure.",
+    }[c.flavour];
+    return h("div", { class: "card" },
+      h("h2", null, actionLabel(c.release)),
+      h("p", null, "The server will download it, check its checksum, install it and restart. Sudoku is unavailable for a moment."),
+      warning && h("p", { class: "error" }, warning),
+      buttons(actionLabel(c.release)),
+    );
   }
 }
 
@@ -424,5 +539,6 @@ customElements.define("sudoku-today", TodayScreen);
 customElements.define("sudoku-scores", ScoresScreen);
 customElements.define("sudoku-history", HistoryScreen);
 customElements.define("sudoku-about", AboutScreen);
+customElements.define("sudoku-admin", AdminScreen);
 customElements.define("sudoku-seed-setup", SeedSetupScreen);
 customElements.define("sudoku-confirm-seed", ConfirmSeedScreen);

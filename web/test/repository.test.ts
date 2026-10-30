@@ -47,7 +47,7 @@ test("sign-in fetches the week, and its puzzles play offline", async () => {
   assert.equal(r.puzzles(), null);
   await r.signInDev("sudoku.test", "alice", "Alice");
   assert.ok(r.isSignedIn);
-  assert.deepEqual(r.me(), { id: "alice", displayName: "Alice" });
+  assert.deepEqual(r.me(), { id: "alice", displayName: "Alice", admin: false });
   assert.equal(r.settings().serverUrl, "https://sudoku.test");
   const puzzles = r.puzzles()!;
   assert.equal(puzzles.length, 5);

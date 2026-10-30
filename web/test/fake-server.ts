@@ -11,6 +11,15 @@ export class FakeServer {
   online = true;
   rejectAll = false;
   levels = 5;
+  /** Whether `/me` reports the user as an admin; when false the admin endpoints answer 403. */
+  admin: boolean | undefined = undefined;
+  /** Answer to the admin endpoints, as the server would give them. */
+  adminReleases: unknown = {
+    current: { version: "1.2.3", os: "linux", arch: "amd64", asset: "sudoku-server-linux-amd64" },
+    releases: [],
+    update: { state: "idle", action: "", target: "", message: "", error: "", bytesDone: 0, bytesTotal: 0, startedAt: null, finishedAt: null, rollbackAvailable: false },
+  };
+  adminStatus: unknown = (this.adminReleases as { update: unknown }).update;
   readonly authMode: "dev" | "oidc";
   readonly now: () => number;
 
@@ -66,7 +75,16 @@ export class FakeServer {
     if (!user) return json({ error: { code: "unauthorized", message: "bad token" } }, 401);
     switch (r.url.pathname) {
       case "/api/v1/me":
-        return json(user);
+        return json(this.admin === undefined ? user : { ...user, admin: this.admin });
+      case "/api/v1/admin/releases":
+        if (!this.admin) return json({ error: { code: "forbidden", message: "admin access required" } }, 403);
+        return json(this.adminReleases);
+      case "/api/v1/admin/update":
+        if (!this.admin) return json({ error: { code: "forbidden", message: "admin access required" } }, 403);
+        return json(this.adminStatus, r.method === "POST" ? 202 : 200);
+      case "/api/v1/admin/rollback":
+        if (!this.admin) return json({ error: { code: "forbidden", message: "admin access required" } }, 403);
+        return json(this.adminStatus, 202);
       case "/api/v1/week": {
         const info = weekAt(this.now());
         return json({ ...info, seed: await weekSeed(SECRET, info.isoWeek), timezone: "Pacific/Auckland", levels: this.levels });

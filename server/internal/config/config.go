@@ -50,8 +50,21 @@ type Config struct {
 	// A change applies from the next ISO week; see store.ScheduleLevels.
 	Levels int `toml:"levels"`
 
-	Auth Auth `toml:"auth"`
-	OIDC OIDC `toml:"oidc"`
+	Auth  Auth  `toml:"auth"`
+	OIDC  OIDC  `toml:"oidc"`
+	Admin Admin `toml:"admin"`
+}
+
+// Admin decides which callers may use the /api/v1/admin endpoints. Both
+// fields empty (the default) means nobody is admin.
+type Admin struct {
+	// Claim names the access-token claim that grants admin. A dot-separated
+	// path reaches nested claims (e.g. "realm_access.roles"). The claim may
+	// be a string or a list of strings.
+	Claim string `toml:"claim"`
+	// Values lists the claim values that grant admin: a caller is admin if
+	// the claim (or any element of it) equals one of them.
+	Values []string `toml:"values"`
 }
 
 type Auth struct {
@@ -131,6 +144,8 @@ func applyEnv(cfg *Config, getenv func(string) string) error {
 	list("SUDOKU_OIDC_AUDIENCE", &cfg.OIDC.Audience)
 	str("SUDOKU_OIDC_CLIENT_ID", &cfg.OIDC.ClientID)
 	list("SUDOKU_OIDC_SCOPES", &cfg.OIDC.Scopes)
+	str("SUDOKU_ADMIN_CLAIM", &cfg.Admin.Claim)
+	list("SUDOKU_ADMIN_VALUES", &cfg.Admin.Values)
 	if v := getenv("SUDOKU_LEVELS"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil {
@@ -178,6 +193,9 @@ func (c Config) Validate() error {
 		}
 	default:
 		errs = append(errs, fmt.Errorf("auth.mode must be %q or %q, got %q", AuthModeOIDC, AuthModeDev, c.Auth.Mode))
+	}
+	if (c.Admin.Claim == "") != (len(c.Admin.Values) == 0) {
+		errs = append(errs, errors.New("admin.claim and admin.values must be set together"))
 	}
 	return errors.Join(errs...)
 }
