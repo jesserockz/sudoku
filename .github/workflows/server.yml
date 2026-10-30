@@ -28,8 +28,6 @@ jobs:
           - arch: amd64
             runner: ubuntu-latest
           - arch: arm64
-            # Native arm64 runner, so arm64-specific breakage (e.g. in the
-            # pure-Go SQLite driver) is caught on real hardware.
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
