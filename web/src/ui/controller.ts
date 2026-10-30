@@ -264,8 +264,10 @@ export class AppController extends EventTarget {
       return;
     }
     this.#set({ phase: { kind: "loading" } });
-    void fingerprint(incoming.seed).then((incomingFingerprint) =>
-      this.#set({ phase: { kind: "confirm-seed", incoming, incomingFingerprint, current } }));
+    void fingerprint(incoming.seed).then(
+      (incomingFingerprint) => this.#set({ phase: { kind: "confirm-seed", incoming, incomingFingerprint, current } }),
+      (e) => this.#seedFailed(e),
+    );
   }
 
   /** The URL's fragment changed while the app is open, e.g. a share link pasted into this tab. */
@@ -277,7 +279,7 @@ export class AppController extends EventTarget {
   /** Starts playing with `settings` (from the setup screen, or accepting a share link). */
   useSeed(settings: SeedSettings): void {
     this.#set({ phase: { kind: "loading" } });
-    void this.#seeds.use(settings).then((profile) => this.#startSeed(profile));
+    void this.#seeds.use(settings).then((profile) => this.#startSeed(profile), (e) => this.#seedFailed(e));
   }
 
   /** "Play with a seed" from the sign-in screen. */
@@ -308,8 +310,13 @@ export class AppController extends EventTarget {
     } catch (e) {
       // E.g. a stored timezone this browser doesn't know: let the player pick again.
       this.#seeds.leave();
-      this.#set({ seed: null, phase: { kind: "seed-setup", server: null }, notice: `Couldn't start that seed: ${(e as Error).message}` });
+      this.#seedFailed(e);
     }
+  }
+
+  /** Back to seed setup with the reason, rather than leaving the loading screen up. */
+  #seedFailed(e: unknown): void {
+    this.#set({ seed: null, phase: { kind: "seed-setup", server: null }, notice: `Couldn't start that seed: ${(e as Error).message}` });
   }
 
   async #loadSeedDay(): Promise<void> {
