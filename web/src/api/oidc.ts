@@ -127,6 +127,21 @@ export class OidcClient {
   }
 }
 
+/** Runs an async section exclusively. */
+export type Lock = <T>(section: () => Promise<T>) => Promise<T>;
+
+/**
+ * The default lock: serialized in this tab by a Mutex, and across tabs and
+ * windows sharing the same storage by the Web Locks API when it exists.
+ */
+export function defaultLock(name = "sudoku-token-refresh"): Lock {
+  const mutex = new Mutex();
+  return (section) => mutex.run(() => {
+    const locks = globalThis.navigator?.locks;
+    return locks ? locks.request(name, section) : section();
+  });
+}
+
 /**
  * Keeps a signed-in session's tokens fresh. `token()` returns a usable access
  * token, refreshing it first when it expires within `refreshMarginMs`. When
@@ -140,7 +155,7 @@ export class TokenSession {
   readonly #refresh: (refreshToken: string) => Promise<TokenResponse>;
   readonly #now: () => number;
   readonly #refreshMarginMs: number;
-  readonly #mutex = new Mutex();
+  readonly #lock: Lock;
 
   constructor(
     load: () => StoredTokens | null,
@@ -148,21 +163,23 @@ export class TokenSession {
     refresh: (refreshToken: string) => Promise<TokenResponse>,
     now: () => number = Date.now,
     refreshMarginMs = 60_000,
+    lock: Lock = defaultLock(),
   ) {
     this.#load = load;
     this.#save = save;
     this.#refresh = refresh;
     this.#now = now;
     this.#refreshMarginMs = refreshMarginMs;
+    this.#lock = lock;
   }
 
   /** Stores the result of a code exchange. */
   signedIn(response: TokenResponse): Promise<void> {
-    return this.#mutex.run(async () => this.#save(this.#stored(response, null)));
+    return this.#lock(async () => this.#save(this.#stored(response, null)));
   }
 
   token(): Promise<string | null> {
-    return this.#mutex.run(async () => {
+    return this.#lock(async () => {
       const tokens = this.#load();
       if (!tokens) return null;
       const expiresAt = tokens.expiresAtEpochMs;
@@ -179,6 +196,10 @@ export class TokenSession {
         return refreshed.accessToken;
       } catch (e) {
         if (e instanceof OidcException && (e.error === "invalid_grant" || (e.status >= 400 && e.status < 500))) {
+          // Another tab may have rotated the refresh token we sent (no Web Locks): keep its session
+          // and use its access token rather than logging everyone out.
+          const current = this.#load();
+          if (current && current.refreshToken !== tokens.refreshToken) return current.accessToken;
           this.#save(null);
           return null;
         }
