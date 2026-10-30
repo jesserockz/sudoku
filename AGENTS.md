@@ -17,7 +17,7 @@ Notes for coding agents working in this repository.
 
 Run these locally before pushing.
 
-`web/` (Node 22, see `web.yml`):
+`web/` (Node 26 in CI, see `web.yml`):
 
 ```sh
 npm ci
