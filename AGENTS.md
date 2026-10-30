@@ -37,7 +37,7 @@ make test-arm64   # tests as arm64 binaries on x86; needs qemu-aarch64-static
 ```
 
 CI runs these as a matrix on native amd64 and arm64 runners
-(`ubuntu-latest`, `ubuntu-24.04-arm`), each building and smoke-testing its own
+(`ubuntu-24.04`, `ubuntu-24.04-arm`), each building and smoke-testing its own
 binary; `make test-arm64` is the local way to test arm64 on x86.
 
 ## Conventions
