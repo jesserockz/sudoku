@@ -4,10 +4,12 @@ import { SudokuBoard, SudokuKeypad } from "./board.ts";
 import type { AppController } from "./controller.ts";
 import { type Child, Component, h, topBar } from "./dom.ts";
 import { shareResultsButton } from "./share.ts";
+import { ScreenWakeLock } from "./wake-lock.ts";
 
 /**
  * `<sudoku-play>`: one puzzle being played. The timer runs only while this
- * screen is open and the page is visible. Keyboard: digits, Backspace/Delete/0
+ * screen is open and the page is visible, and so does a screen wake lock (the
+ * phone stays awake while playing, not while paused or solved). Keyboard: digits, Backspace/Delete/0
  * to erase, arrows to move, N for notes, Escape to deselect, Ctrl/Cmd+Z to undo.
  */
 export class PlayScreen extends Component {
@@ -20,6 +22,7 @@ export class PlayScreen extends Component {
   readonly #keypad = document.createElement("sudoku-keypad") as SudokuKeypad;
   readonly #timer = h("span", { class: "timer" });
   #tick = 0;
+  readonly #wakeLock = new ScreenWakeLock();
 
   constructor() {
     super();
@@ -39,6 +42,7 @@ export class PlayScreen extends Component {
     document.removeEventListener("visibilitychange", this.#onVisibility);
     window.removeEventListener("keydown", this.#onKey);
     clearInterval(this.#tick);
+    this.#wakeLock.set(false);
     this.app.update(this.level, (g) => g.pause(this.app.nowMs()));
   }
 
@@ -127,6 +131,7 @@ export class PlayScreen extends Component {
     const game = this.#game;
     if (!puzzle || !game) return null;
     const paused = this.#paused && !game.isComplete;
+    this.#wakeLock.set(!paused && !game.isComplete);
     this.#board.game = game;
     this.#board.selected = this.#selected;
     this.#showTime();

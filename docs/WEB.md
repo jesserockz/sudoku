@@ -212,6 +212,8 @@ In dev auth mode the app instead asks for a user id and display name and sends
   mode (`N`), erase (`Backspace`), undo (`Ctrl/Cmd+Z`), clear the board.
   Conflicts are highlighted. The timer runs only while the puzzle is on screen
   and the tab is visible; switching away pauses it behind a "Paused" cover.
+  While a puzzle is being played (not paused or solved) the app holds a
+  screen wake lock, where supported, so the phone does not go to sleep.
   Games are saved on every move, so a reload or a closed tab resumes where you
   left off.
 - **Leaderboard**: total and per-puzzle boards with shared ranks, plus each
