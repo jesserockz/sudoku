@@ -146,20 +146,41 @@ type Result struct {
 	Level       int
 	ElapsedMs   int64
 	CompletedAt string // RFC 3339, as reported
+
+	// The fields below are used only by InsertResult.
+
+	// ReplayStatus is "valid", "invalid" or "missing"; empty stores NULL
+	// (no replay support), as for results from before replays.
+	ReplayStatus string
+	ReplayError  string
+	// Events is the replay's events as a JSON array, or empty for none.
+	Events string
+	// AutoFlag, when not empty, flags the new result as suspicious with
+	// this reason, on behalf of the server.
+	AutoFlag string
 }
 
 // InsertResult stores r unless the user already has a result for that date
 // and level. It returns the stored result and whether it was newly created;
-// on a duplicate the existing (first) result is returned unchanged.
+// on a duplicate the existing (first) result is returned unchanged, and its
+// replay and flag are left alone.
 func (s *Store) InsertResult(ctx context.Context, r Result) (Result, bool, error) {
 	var stored Result
 	var created bool
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		var status any // NULL when the submission carries no replay info
+		if r.ReplayStatus != "" {
+			status = r.ReplayStatus
+		}
+		// flagged_at is the insert's own "now", so it equals submitted_at.
 		res, err := tx.ExecContext(ctx, `
-			INSERT INTO results (user_id, date, level, elapsed_ms, completed_at)
-			VALUES (?, ?, ?, ?, ?)
+			INSERT INTO results (user_id, date, level, elapsed_ms, completed_at,
+				replay_status, replay_error, flagged_at, flag_reason, flag_auto)
+			VALUES (?, ?, ?, ?, ?, ?, ?,
+				CASE WHEN ?8 <> '' THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now') END, ?8, ?8 <> '')
 			ON CONFLICT (user_id, date, level) DO NOTHING`,
-			r.UserID, r.Date, r.Level, r.ElapsedMs, r.CompletedAt)
+			r.UserID, r.Date, r.Level, r.ElapsedMs, r.CompletedAt,
+			status, r.ReplayError, r.AutoFlag)
 		if err != nil {
 			return err
 		}
@@ -169,7 +190,13 @@ func (s *Store) InsertResult(ctx context.Context, r Result) (Result, bool, error
 		}
 		if n == 1 {
 			stored, created = r, true
-			return nil
+			if r.Events == "" {
+				return nil
+			}
+			_, err = tx.ExecContext(ctx, `
+				INSERT INTO replays (user_id, date, level, events) VALUES (?, ?, ?, ?)`,
+				r.UserID, r.Date, r.Level, r.Events)
+			return err
 		}
 		stored = Result{UserID: r.UserID, Date: r.Date, Level: r.Level}
 		return tx.QueryRowContext(ctx, `
@@ -209,12 +236,14 @@ type DayResult struct {
 	DisplayName string
 	Level       int
 	ElapsedMs   int64
+	// Flagged is set when the result is flagged as suspicious.
+	Flagged bool
 }
 
 // DayResults returns every result for date, ordered by level then time.
 func (s *Store) DayResults(ctx context.Context, date string) ([]DayResult, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT r.user_id, u.display_name, r.level, r.elapsed_ms
+		SELECT r.user_id, u.display_name, r.level, r.elapsed_ms, r.flagged_at IS NOT NULL
 		FROM results r JOIN users u ON u.id = r.user_id
 		WHERE r.date = ?
 		ORDER BY r.level, r.elapsed_ms, u.display_name, r.user_id`, date)
@@ -225,7 +254,7 @@ func (s *Store) DayResults(ctx context.Context, date string) ([]DayResult, error
 	out := []DayResult{}
 	for rows.Next() {
 		var r DayResult
-		if err := rows.Scan(&r.UserID, &r.DisplayName, &r.Level, &r.ElapsedMs); err != nil {
+		if err := rows.Scan(&r.UserID, &r.DisplayName, &r.Level, &r.ElapsedMs, &r.Flagged); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

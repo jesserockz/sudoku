@@ -17,6 +17,7 @@ const app = new AppController(
     baseUri: () => document.baseURI,
     isVisible: () => !document.hidden,
     nowMs: () => performance.now(),
+    wallMs: () => Date.now(),
   },
 );
 

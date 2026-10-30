@@ -1,5 +1,6 @@
 import type { AppController } from "./controller.ts";
 import "./play.ts";
+import "./replay-screens.ts";
 import "./screens.ts";
 
 type ScreenElement = HTMLElement & { app: AppController; level?: number; update(): void };

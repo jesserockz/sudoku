@@ -1,6 +1,8 @@
 import {
-  type ApiError, type AppConfig, type GameResult, type Leaderboard, type Me, type MyResults, type ReleaseList, type UpdateStatus, type Week,
-  decodeApiError, decodeAppConfig, decodeGameResult, decodeLeaderboard, decodeMe, decodeMyResults, decodeReleaseList, decodeUpdateStatus, decodeWeek,
+  type AdminResult, type AdminResults, type ApiError, type AppConfig, type GameResult, type Leaderboard, type Me, type MyResults,
+  type ReleaseList, type ReplayDetail, type UpdateStatus, type Week,
+  decodeAdminResult, decodeAdminResults, decodeApiError, decodeAppConfig, decodeGameResult, decodeLeaderboard, decodeMe, decodeMyResults,
+  decodeReleaseList, decodeReplayDetail, decodeUpdateStatus, decodeWeek,
 } from "./models.ts";
 
 /** A non-2xx API response. `error` is the parsed error envelope, when there was one. */
@@ -110,12 +112,36 @@ export class SudokuApi {
     return this.#post("admin/rollback");
   }
 
+  /** Admin only: every result for `date`, with replay checks and flags. */
+  async adminResults(date: string): Promise<AdminResults> {
+    return decodeAdminResults(await this.#get(`admin/results?date=${date}`));
+  }
+
+  /** Admin only: one result's replay, with the puzzle's givens. */
+  async adminReplay(date: string, level: number, userId: string): Promise<ReplayDetail> {
+    return decodeReplayDetail(await this.#get(`${resultPath(date, level, userId)}/replay`));
+  }
+
+  /** Admin only: flags a result as suspicious (shown on the leaderboard), replacing any earlier flag. */
+  async flagResult(date: string, level: number, userId: string, reason: string): Promise<AdminResult> {
+    return decodeAdminResult(await this.#send("PUT", `${resultPath(date, level, userId)}/flag`, { reason }));
+  }
+
+  /** Admin only: removes a result's flag. */
+  async unflagResult(date: string, level: number, userId: string): Promise<AdminResult> {
+    return decodeAdminResult(await this.#send("DELETE", `${resultPath(date, level, userId)}/flag`));
+  }
+
   async #post(path: string, body?: unknown): Promise<UpdateStatus> {
+    return decodeUpdateStatus(await this.#send("POST", path, body));
+  }
+
+  async #send(method: string, path: string, body?: unknown): Promise<unknown> {
     const headers = await this.#headers(true);
     if (body !== undefined) headers["Content-Type"] = "application/json";
-    const response = await this.#fetch(this.#base + path, { method: "POST", headers, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+    const response = await this.#fetch(this.#base + path, { method, headers, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
     if (!response.ok) throw new ApiException(response.status, await errorOf(response));
-    return decodeUpdateStatus(await response.json());
+    return response.json();
   }
 
   async #get(path: string, auth = true): Promise<unknown> {
@@ -129,6 +155,8 @@ export class SudokuApi {
     return token ? { Authorization: `Bearer ${token}` } : {};
   }
 }
+
+const resultPath = (date: string, level: number, userId: string) => `admin/results/${date}/${level}/${encodeURIComponent(userId)}`;
 
 async function errorOf(response: Response): Promise<ApiError | null> {
   try {

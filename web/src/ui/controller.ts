@@ -3,11 +3,13 @@ import type { AppConfig, Leaderboard, Me } from "../api/models.ts";
 import { SignInError, type SudokuRepository } from "../data/repository.ts";
 import { addDays } from "../game/calendar.ts";
 import { Game } from "../game/game.ts";
+import type { ReplayInput } from "../game/replay.ts";
 import type { Puzzle } from "../generator/generator.ts";
 import { fingerprint, sameSettings, type SeedSettings } from "../serverless/seed.ts";
 import type { SeedProfile, SeedRepository, SeedResult } from "../serverless/seed-repository.ts";
 import { buildShareLink, parseShareLink } from "../serverless/share-link.ts";
 import { AdminModel } from "./admin.ts";
+import { AdminResultsModel, type ResultKey } from "./admin-results.ts";
 
 /** Register `<origin>/auth/callback` as the redirect URI with the identity provider. */
 export const CALLBACK_PATH = "/auth/callback";
@@ -35,7 +37,11 @@ export type Screen =
   | { kind: "history" }
   | { kind: "about" }
   /** Server admin: update the server binary. Only for `me.admin`. */
-  | { kind: "admin" };
+  | { kind: "admin" }
+  /** Server admin: a day's results with their replay checks and flags. */
+  | { kind: "admin-results" }
+  /** Server admin: watching one result's replay. */
+  | { kind: "replay" };
 
 /** The server's side of the About screen. */
 export type ServerInfo =
@@ -63,6 +69,8 @@ export interface Host {
   isVisible: () => boolean;
   /** A monotonic clock in milliseconds, for game timers. */
   nowMs: () => number;
+  /** The wall clock in epoch milliseconds, for replays. */
+  wallMs: () => number;
 }
 
 /**
@@ -102,6 +110,8 @@ export class AppController extends EventTarget {
   serverInfo: ServerInfo = { kind: "none" };
   /** The Admin screen's state, while it is open. */
   admin: AdminModel | null = null;
+  /** The admin results and replay screens' state, kept while either is open. */
+  adminResults: AdminResultsModel | null = null;
 
   readonly #repo: SudokuRepository;
   readonly #seeds: SeedRepository;
@@ -386,6 +396,25 @@ export class AppController extends EventTarget {
     void model.load();
   }
 
+  /** The admin results screen for today (or back to it from a replay, keeping its date). */
+  openAdminResults(): void {
+    if (this.seed || !this.me?.admin) return;
+    if (this.screen.kind === "replay" && this.adminResults) {
+      this.adminResults.close();
+    } else {
+      this.adminResults = new AdminResultsModel(this.#repo.api(), this.today);
+      void this.adminResults.load();
+    }
+    this.#set({ screen: { kind: "admin-results" } });
+  }
+
+  /** Opens a result's replay, from the admin results screen. */
+  openReplay(key: ResultKey): void {
+    if (!this.adminResults) return;
+    void this.adminResults.open(key);
+    this.#set({ screen: { kind: "replay" } });
+  }
+
   // Sign-in
 
   /** Dev auth mode: signs in as `sub` / `name`. Throws `RangeError` for an invalid id or name. */
@@ -456,7 +485,7 @@ export class AppController extends EventTarget {
     }
     const p = this.puzzle(level);
     if (!p) return;
-    if (!this.games.has(level)) this.games.set(level, Game.create(p.givens));
+    if (!this.games.has(level)) this.games.set(level, this.#stamp(Game.create(p.givens), { a: "start" }));
     this.#set({ screen: { kind: "play", level } });
   }
 
@@ -500,14 +529,21 @@ export class AppController extends EventTarget {
 
   // Play
 
-  /** Applies `change` to the game for `level`, persists it, and handles completion. */
-  update(level: number, change: (game: Game) => Game): void {
+  /**
+   * Applies `change` to the game for `level`, records `action` in its replay
+   * if the change did something (for `pause` and `resume`: if the timer
+   * stopped or started), persists it, and handles completion.
+   */
+  update(level: number, change: (game: Game) => Game, action?: ReplayInput): void {
     const before = this.games.get(level);
     if (!before) return;
-    const after = change(before);
+    let after = change(before);
     if (after === before) return;
-    this.games.set(level, after);
     const finished = after.isComplete && !before.isComplete;
+    const timerOnly = action?.a === "pause" || action?.a === "resume";
+    if (action && !before.isComplete && (!timerOnly || after.timer.isRunning !== before.timer.isRunning)) after = this.#stamp(after, action);
+    if (finished) after = this.#stamp(after, { a: "finish" });
+    this.games.set(level, after);
     if (this.seed) {
       this.#seeds.saveGame(this.today, level, after, this.nowMs());
       if (finished) this.#serverDone.set(level, this.#seeds.complete(this.today, level, after).elapsedMs);
@@ -519,6 +555,15 @@ export class AppController extends EventTarget {
       }
     }
     this.#changed();
+  }
+
+  /** Records an action that changes nothing on the board (notes mode, the app hidden or shown). Not after the game is solved. */
+  log(level: number, action: ReplayInput): void {
+    if (this.games.get(level)?.isComplete === false) this.update(level, (g) => this.#stamp(g, action));
+  }
+
+  #stamp(game: Game, action: ReplayInput): Game {
+    return game.record({ t: Math.round(game.elapsedMs(this.nowMs())), w: this.#host.wallMs(), ...action });
   }
 
   // Lifecycle

@@ -254,3 +254,34 @@ form.login select {
 }
 .badge.current { border-color: var(--done); color: var(--done); }
 .releases button { flex: none; }
+
+/* Anti-cheat: suspicious results and the replay viewer */
+.badge.suspicious { border-color: var(--conflict); color: var(--conflict); margin-left: 6px; }
+.badge.warn { border-color: var(--conflict); color: var(--conflict); }
+table.board-table tr.clickable { cursor: pointer; }
+table.board-table tr.warn td { color: var(--conflict); }
+.warn-text { color: var(--conflict); }
+.card .flag { margin-top: 8px; }
+.card .flag.inline { display: flex; gap: 8px; }
+.card .flag.inline input {
+  flex: 1; min-width: 0; font: inherit; padding: 8px; border-radius: var(--radius);
+  border: 1px solid var(--line); background: var(--bg); color: var(--text);
+}
+.card .flag button { flex: none; }
+button.danger { color: var(--conflict); border-color: var(--conflict); }
+.replay-player { --board: min(100%, 420px); }
+.replay-player label.reveal { font-weight: 600; }
+.replay-board { width: var(--board); margin: 0 auto; }
+.replay-board .cell { cursor: default; }
+.replay-board .cell.note-text { font-size: 0.7rem; color: var(--muted); letter-spacing: 1px; }
+.replay-board .cell.changed { background: var(--selected); }
+.replay-board .board.solved { border-color: var(--done); }
+.clocks { display: flex; justify-content: space-between; margin: 8px 0 0; font-variant-numeric: tabular-nums; }
+.replay-player p.now { margin: 4px 0; min-height: 1.4em; }
+.replay-player input.scrub { width: 100%; accent-color: var(--accent); }
+.replay-controls { display: flex; gap: 8px; margin: 8px 0; }
+.replay-controls button { flex: 1; margin: 0; }
+.speeds { margin: 0; }
+table.replay-events tr.current td { background: var(--selected); }
+table.replay-events tr.long td:first-child, table.replay-events tr.stretch-paused td:first-child, table.replay-events tr.stretch-hidden td:first-child { border-left: 3px solid var(--conflict); }
+table.replay-events td.time { white-space: nowrap; }

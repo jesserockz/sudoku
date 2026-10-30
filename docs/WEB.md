@@ -96,6 +96,43 @@ server's message; a 403 reads "Your account isn't an admin".
 The logic is in `src/ui/admin.ts` (`AdminModel`, with an injected clock and
 sleep so tests don't wait); `AdminScreen` in `screens.ts` only renders it.
 
+### Results and replays
+
+**Results and replays** at the top of the Server admin page lists a day's
+results (today first, "Earlier" goes back any number of days) under each game,
+fastest first, with the player, time, how the server's [replay
+check](API.md#replay-checks) went ("Replay OK", "Replay failed", "No replay",
+or "Before replays" for results from before the server kept them) and whether
+the result is flagged as suspicious ("auto" when the server flagged it).
+Tapping one opens its replay:
+
+- The board as it was after each action, with the cell the last action changed
+  highlighted. **Digits are hidden by default**: an entered digit shows as `•`
+  and each pencil mark as `·`, and action descriptions say "Placed a digit in
+  R3C5" without the digit, because the admin is also a player and mustn't see
+  the solution by accident. The **Reveal digits (shows the solution)** box shows
+  them; it is unticked every time a replay opens and is never remembered.
+- Play and Pause, a scrubber, Prev and Next (one action at a time) and 1x, 2x,
+  4x and 8x speed. Playback follows the game timer, so paused time passes
+  instantly; the wall clock of the current action is shown next to the timer.
+- **Timing**: the timer, the wall-clock span, the wall-clock time with the
+  timer running (red when shorter than the timer), time paused or closed, time
+  hidden, the number of long gaps between moves (at least 30 s and 3x the
+  median gap), and the entry pace: the median gap between placements and how
+  much it varies, with a warning when it is steady enough to look
+  machine-like (under 35% variation over at least 10 placements).
+- **Actions**: every action with its timer and wall-clock time and the wall gap
+  before it. Long gaps and stretches spent paused or hidden are marked; tap a
+  row to jump there.
+- **Flag as suspicious**, with an optional reason, or **Remove flag**. Flagged
+  results show a "suspicious" marker on everyone's leaderboard but stay ranked.
+  Who flagged it, when and why is only shown here.
+
+The logic is in `src/ui/admin-results.ts` (`AdminResultsModel`) and
+`src/ui/replay-viewer.ts` (`ReplayViewer`, which rebuilds each frame with the
+same `Game` code the app plays with, and the timing analysis); the screens in
+`replay-screens.ts` only render them.
+
 ## Puzzles
 
 Puzzles are generated on the device, deterministically from the week's seed
@@ -217,6 +254,10 @@ node web/e2e/offline.cjs http://localhost:8080
 node web/e2e/serverless-on-server.cjs http://localhost:8080 dev-secret-change-me
 ```
 
+`web/e2e/replay.cjs` checks replays and the admin tools the same way, against
+a server started with `SUDOKU_ADMIN_CLAIM=sub SUDOKU_ADMIN_VALUES=ann` and an
+empty database: `node web/e2e/replay.cjs http://localhost:8080 [screenshot dir]`.
+
 The first signs in, goes offline and reloads, solves a puzzle offline, checks
 the result reaches `GET /api/v1/me/results` once back online, and covers the
 stale-week message. The second checks "Play with a seed instead" and that the
@@ -260,9 +301,18 @@ In dev auth mode the app instead asks for a user id and display name and sends
   screen wake lock, where supported, so the phone does not go to sleep.
   Games are saved on every move, so a reload or a closed tab resumes where you
   left off.
+- **Replays**: every game records each action (placing, erasing, notes, undo,
+  clear, notes mode, pause and resume, the app hidden or shown, reloads, start
+  and finish) with both the game timer and the wall clock, saved with the game
+  and sent with its result (see [Replays](API.md#replays)). The controller
+  records them (`AppController.update` with the action, `log` for actions that
+  don't change the board); `Game` only keeps the list. A replay over the
+  server's 10000-event cap is left out, and the result is then flagged.
 - **Leaderboard**: total and per-puzzle boards with shared ranks, plus each
   player's progress (e.g. 3/5), for today and the previous 8 days. Online
-  only; offline it says so, and it loads once the connection is back.
+  only; offline it says so, and it loads once the connection is back. Results
+  an admin (or the server's replay check) flagged carry a red "suspicious"
+  marker.
 
 ## Serverless play (a shared seed)
 

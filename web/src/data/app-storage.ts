@@ -3,6 +3,7 @@ import {
   decodeDayResult, decodeGameResult, decodeMe, decodeOidcConfig, decodeWeek,
 } from "../api/models.ts";
 import type { SavedGame } from "../game/game.ts";
+import { decodeReplayEvent } from "../game/replay.ts";
 import { type KeyValueStore, StoredValue, bool, list, num, obj, optional, record, str } from "./store.ts";
 
 export interface DevUser {
@@ -40,7 +41,11 @@ export const gameKey = (date: string, level: number): string => `${date}/${level
 
 export function decodeSavedGame(json: unknown): SavedGame {
   const o = obj(json);
-  return { givens: str(o.givens), entries: str(o.entries), notes: list(o.notes, num), elapsedMs: num(o.elapsedMs), completed: bool(o.completed) };
+  const replay = optional(o.replay, (r) => list(r, decodeReplayEvent));
+  return {
+    givens: str(o.givens), entries: str(o.entries), notes: list(o.notes, num), elapsedMs: num(o.elapsedMs), completed: bool(o.completed),
+    ...(replay ? { replay } : {}),
+  };
 }
 
 function decodeSettings(json: unknown): Settings {

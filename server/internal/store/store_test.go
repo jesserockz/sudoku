@@ -36,7 +36,7 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	if err := s2.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 2 {
+	if version != 3 {
 		t.Errorf("user_version = %d", version)
 	}
 	u, err := s2.UpsertUser(ctx, "alice", "Alice")
@@ -174,9 +174,9 @@ func TestUserAndDayResults(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []DayResult{
-		{bob.ID, "Bob", 1, 100},
-		{alice.ID, "Alice", 1, 200},
-		{alice.ID, "Alice", 2, 300},
+		{bob.ID, "Bob", 1, 100, false},
+		{alice.ID, "Alice", 1, 200, false},
+		{alice.ID, "Alice", 2, 300, false},
 	}
 	if !reflect.DeepEqual(day, want) {
 		t.Errorf("day results = %+v\nwant %+v", day, want)

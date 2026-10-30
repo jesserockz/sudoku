@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,9 @@ import (
 	"time"
 
 	"github.com/jesserockz/sudoku/server/internal/httpx"
+	"github.com/jesserockz/sudoku/server/internal/puzzle"
+	"github.com/jesserockz/sudoku/server/internal/replay"
+	"github.com/jesserockz/sudoku/server/internal/seed"
 	"github.com/jesserockz/sudoku/server/internal/store"
 	"github.com/jesserockz/sudoku/server/internal/week"
 )
@@ -19,6 +23,8 @@ const (
 	maxElapsedMs   = 86_400_000
 	maxDaysBack    = 8
 	maxRequestBody = 64 << 10
+	// maxResultBody is the cap for POST /results, which carries a replay.
+	maxResultBody = 1 << 20
 )
 
 type resultJSON struct {
@@ -38,12 +44,20 @@ type submitRequest struct {
 	Level       *int    `json:"level"`
 	ElapsedMs   *int64  `json:"elapsedMs"`
 	CompletedAt *string `json:"completedAt"`
+	// Replay is decoded separately so a bad one is invalid_result, not a
+	// malformed body.
+	Replay json.RawMessage `json:"replay"`
 }
 
 func (s *Server) postResult(w http.ResponseWriter, r *http.Request) {
 	var req submitRequest
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBody))
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxResultBody))
 	if err := dec.Decode(&req); err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			httpx.Error(w, http.StatusRequestEntityTooLarge, httpx.CodeTooLarge, "request body is too large")
+			return
+		}
 		httpx.Error(w, http.StatusBadRequest, httpx.CodeBadRequest, "malformed JSON body")
 		return
 	}
@@ -66,13 +80,41 @@ func (s *Server) postResult(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stored, created, err := s.deps.Store.InsertResult(r.Context(), store.Result{
+	rep, hasReplay, err := parseReplay(req.Replay)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, httpx.CodeInvalidResult, err.Error())
+		return
+	}
+
+	result := store.Result{
 		UserID:      currentUser(r).ID,
 		Date:        date.String(),
 		Level:       *req.Level,
 		ElapsedMs:   *req.ElapsedMs,
 		CompletedAt: *req.CompletedAt,
-	})
+	}
+	if !hasReplay {
+		result.ReplayStatus = replayMissing
+		result.AutoFlag = "No replay submitted"
+	} else {
+		p, err := s.puzzleFor(date, *req.Level, levels)
+		if err != nil {
+			httpx.Internal(w, r, err)
+			return
+		}
+		// Marshalling plain structs cannot fail. The result is never empty
+		// ("[]" at least), so the replay is stored even with no events.
+		events, _ := json.Marshal(append([]replay.Event{}, rep.Events...))
+		result.Events = string(events)
+		if err := replay.Check(rep, p.Givens, p.Solution, *req.ElapsedMs); err != nil {
+			result.ReplayStatus = replayInvalid
+			result.ReplayError = err.Error()
+			result.AutoFlag = "Replay check failed: " + err.Error()
+		} else {
+			result.ReplayStatus = replayValid
+		}
+	}
+	stored, created, err := s.deps.Store.InsertResult(r.Context(), result)
 	if err != nil {
 		httpx.Internal(w, r, err)
 		return
@@ -82,6 +124,38 @@ func (s *Server) postResult(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusCreated
 	}
 	httpx.WriteJSON(w, status, toResultJSON(stored))
+}
+
+// Replay statuses, as stored and served.
+const (
+	replayValid   = "valid"
+	replayInvalid = "invalid"
+	replayMissing = "missing"
+)
+
+// parseReplay decodes the optional replay of a submission and checks its
+// shape. ok is false when none was sent.
+func parseReplay(raw json.RawMessage) (rep replay.Replay, ok bool, err error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return replay.Replay{}, false, nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&rep); err != nil {
+		return replay.Replay{}, false, errors.New("replay is malformed")
+	}
+	if err := replay.Wellformed(rep); err != nil {
+		return replay.Replay{}, false, err
+	}
+	return rep, true, nil
+}
+
+// puzzleFor regenerates the puzzle of game level on date, on a day with
+// levels games.
+func (s *Server) puzzleFor(date week.Date, level, levels int) (puzzle.Puzzle, error) {
+	// ForWeek always yields 16 hex digits, which ParseWeekSeed accepts.
+	ws, _ := puzzle.ParseWeekSeed(seed.ForWeek([]byte(s.deps.Config.ServerSecret), date.ISOWeek()))
+	return puzzle.Generate(ws, date.Weekday(), level, levels)
 }
 
 // validateResult applies the sanity caps relative to today. The level's

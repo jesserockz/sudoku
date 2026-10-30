@@ -25,9 +25,10 @@ Non-2xx responses carry:
 | ------ | ------------------------- | ---------------------------------------------- |
 | 400    | `bad_request`             | Malformed body                                 |
 | 400    | `invalid_result`          | Failed caps                                    |
+| 413    | `too_large`               | Request body over the size cap                 |
 | 401    | `unauthorized`            | Missing / invalid / expired token              |
 | 403    | `forbidden`               | Caller is not an admin                         |
-| 404    | `not_found`               | Unknown route                                  |
+| 404    | `not_found`               | Unknown route, or no such result (admin)       |
 | 404    | `release_not_found`       | Unknown release (admin endpoints)              |
 | 409    | `update_in_progress`      | An update or rollback is running (admin)       |
 | 409    | `update_unavailable`      | Update cannot run here (admin)                 |
@@ -55,7 +56,7 @@ e.g. `Bearer dev:alice:Alice`. Dev tokens carry only the claims `sub` and `name`
 
 - `weekSeed = HMAC-SHA256(key = serverSecret, message = "sudoku-week:" + isoWeek)`, truncated to the **first 8 bytes**, read as a big-endian unsigned 64-bit integer, encoded as **16 lowercase hex characters**.
 - Hex (not a JSON number) because JS cannot represent 64-bit integers exactly. Clients parse it into a 64-bit value (`ULong`/`Long` bit pattern).
-- How a client turns `(weekSeed, dayOfWeek, level)` into a puzzle is defined entirely by the client (`web/src/generator/`); the server never needs to know.
+- How a client turns `(weekSeed, dayOfWeek, level)` into a puzzle is defined by the client (`web/src/generator/`). The server has a bit-identical Go port (`server/internal/puzzle/`, pinned by the same golden puzzles) so it can check [replays](#replays) against the day's puzzle; it never stores puzzles.
 
 ## Endpoints
 
@@ -130,19 +131,24 @@ Submit one completed puzzle.
   "date": "2026-10-26",
   "level": 1,
   "elapsedMs": 183000,
-  "completedAt": "2026-10-26T09:15:00+13:00"
+  "completedAt": "2026-10-26T09:15:00+13:00",
+  "replay": { "version": 1, "events": [{ "t": 0, "w": 1761423000000, "a": "start" }, "..."] }
 }
 ```
 
+- `replay` is the game's full [replay](#replays). It is optional so that results queued by older clients still upload, but a result without one is flagged as suspicious.
 - **Idempotent**: one result per `(user, date, level)`. The first accepted submission wins; later ones are ignored.
   - `201 Created` — stored.
   - `200 OK` — a result already existed; the body is the **stored** result, which may differ from the one submitted.
-  - Both return the result object `{ "date", "level", "elapsedMs", "completedAt" }`.
+  - Both return the result object `{ "date", "level", "elapsedMs", "completedAt" }` (never the replay).
 - **Sanity caps** (`400 invalid_result` on failure):
   - `level` in `1..5`.
   - `elapsedMs` in `[5000, 86400000]` (5 s to 24 h).
   - `date` not after today, and not more than **8 days** before today (covers offline play across a week boundary).
   - `completedAt` parses as RFC 3339. It is stored as reported and is informational only — it does not affect ranking.
+  - `replay`, when present, is an object with `version` `1` and at most **10000** `events`, each well-formed as described under [Replays](#replays) (`400 invalid_result` otherwise).
+- The whole request body is capped at **1 MiB** (`413 too_large`).
+- The replay is then **checked** against the day's puzzle (see [Replay checks](#replay-checks)). A replay that fails a check does **not** reject the result: it is stored with the replay and automatically flagged as suspicious, with the failed check as the reason. So is a result with no replay.
 
 Clients queue results offline and retry until they receive `200`/`201`. A `400` is final; the client should drop the result and not retry.
 
@@ -180,10 +186,115 @@ Defaults to today.
 - Entries are sorted by time ascending. **Ties share a rank** with no tiebreaker, using standard competition ranking (1, 2, 2, 4). Entries with equal time are ordered by `displayName` for stable display only.
 - `total` includes only users who completed **all five** levels that day.
 - `players` lists every user with at least one result that day, so clients can show partial progress (e.g. 3 of 5).
+- Every puzzle and total entry also has `"suspicious": true|false`: `true` when an admin (or the server's replay check) flagged that result, or for a total entry, any of the player's results that day. Flagged results stay listed and ranked like any other; clients show a visible marker on them. Who flagged a result and why is only shown to admins.
 
-## Admin endpoints
+## Replays
 
-Self-update of the server binary. Every `/api/v1/admin/*` endpoint needs a valid bearer token whose claims match the server's `[admin]` config (a claim, which may be a dot-separated path, equal to one of a list of values). Otherwise: `401 unauthorized` without a valid token, `403 forbidden` ("admin access required") for a valid non-admin token. With no `[admin]` config nobody is admin. If the server was built without the updater, every admin endpoint answers `409 update_unavailable`.
+A replay records every action of a game, so the server can check a result and an admin can watch it back. Clients record it while playing, keep it with the in-progress game (so a reload doesn't lose it) and send it with the result.
+
+```json
+{
+  "version": 1,
+  "events": [
+    { "t": 0, "w": 1761423000000, "a": "start" },
+    { "t": 0, "w": 1761423000004, "a": "resume" },
+    { "t": 4210, "w": 1761423004214, "a": "place", "c": 40, "d": 5 },
+    { "t": 6020, "w": 1761423006024, "a": "notes", "on": true },
+    { "t": 7400, "w": 1761423007404, "a": "noteAdd", "c": 41, "d": 3 },
+    { "t": 9000, "w": 1761423009004, "a": "hidden" },
+    { "t": 9000, "w": 1761423009005, "a": "pause" },
+    { "t": 9000, "w": 1761423069005, "a": "visible" },
+    { "t": 9000, "w": 1761423070000, "a": "resume" },
+    { "t": 183000, "w": 1761423244000, "a": "place", "c": 80, "d": 9 },
+    { "t": 183000, "w": 1761423244000, "a": "finish" }
+  ]
+}
+```
+
+Every event has `t`, the game timer in integer milliseconds (the in-game clock, which stops while paused), `w`, the wall clock in integer epoch milliseconds, and `a`, the action. `c` is a cell index `0..80` (row-major) and `d` a digit `1..9`.
+
+| `a`          | Fields   | Meaning                                                                                               |
+| ------------ | -------- | ----------------------------------------------------------------------------------------------------- |
+| `start`      |          | The puzzle was opened for the first time (always the first event, `t` = 0)                            |
+| `place`      | `c`, `d` | Digit `d` placed in `c` (replacing any other digit; clears `c`'s notes and `d` from its peers' notes) |
+| `erase`      | `c`      | Cleared `c`: its digit if it has one, else its notes                                                  |
+| `noteAdd`    | `c`, `d` | Pencil mark `d` added to the empty cell `c`                                                           |
+| `noteRemove` | `c`, `d` | Pencil mark `d` removed from `c`                                                                      |
+| `undo`       |          | Reverted the last `place`, `erase`, `noteAdd`, `noteRemove` or `clear`                                |
+| `clear`      |          | Cleared every entered digit and note                                                                  |
+| `notes`      | `on`     | Notes mode switched on (`true`) or off (`false`); changes nothing on the board                        |
+| `pause`      |          | The timer stopped (Pause, the app hidden, or the puzzle closed)                                       |
+| `resume`     |          | The timer started again                                                                               |
+| `hidden`     |          | The app was hidden (`visibilitychange`)                                                               |
+| `visible`    |          | The app became visible again                                                                          |
+| `restore`    |          | The game was reloaded from storage: the timer is stopped and the undo history is gone                 |
+| `finish`     |          | The puzzle was solved (always the last event, right after the solving `place`)                        |
+
+Only actions that change something are recorded: a `place` of the digit already there, or an `undo` with nothing to undo, never appears.
+
+### Replay checks
+
+The server replays the events on the day's puzzle (regenerated from the week seed) and checks, in order:
+
+1. **Shape**: `start` is first with `t` = 0, `finish` is last, and neither appears anywhere else.
+2. **Timer**: `t` never decreases, and it stays the same while the timer is stopped (after `pause` or `restore`, until `resume`), except that `restore` itself may move it forward: the time banked by the last save before the app was closed.
+3. **Moves**: every `place`, `erase`, `noteAdd`, `noteRemove`, `undo` and `clear` happens while the timer runs and is legal on the board at that point (no changing a given, no `noteAdd` of a mark already there, and so on), and `pause`/`resume` alternate.
+4. **Solved**: the board after the last move is the puzzle's solution, the solving `place` is followed directly by `finish`, and the `finish` event's `t` equals the submitted `elapsedMs`.
+5. **Wall clock**: the wall-clock time spent with the timer running (the sum of `w` gaps between consecutive events while it runs; a gap where `w` goes backwards, e.g. a clock change, counts as 0) is at least `elapsedMs` minus **2 seconds**. Equivalently, the replay's wall-clock span minus the time spent paused can't be shorter than the time claimed.
+
+A replay that passes is `valid`; one that fails is `invalid`, with the first failed check as the reason.
+
+## Admin endpoints (results)
+
+The anti-cheat tools. They need an admin token, exactly as the update endpoints below (`401` / `403` otherwise), but work whether or not the server has the updater.
+
+### `GET /api/v1/admin/results?date=YYYY-MM-DD`
+
+Every result for a day (defaults to today, any past date allowed), ordered by level, then time.
+
+```json
+{
+  "date": "2026-10-26",
+  "levels": 5,
+  "results": [
+    {
+      "userId": "2",
+      "displayName": "Bob",
+      "level": 5,
+      "elapsedMs": 120000,
+      "completedAt": "2026-10-26T09:15:00+13:00",
+      "submittedAt": "2026-10-25T20:15:01.123Z",
+      "replay": "invalid",
+      "replayError": "the wall clock ran 41 s while the timer ran 120 s",
+      "flag": {
+        "reason": "Replay check failed: the wall clock ran 41 s while the timer ran 120 s",
+        "auto": true,
+        "flaggedBy": null,
+        "flaggedAt": "2026-10-25T20:15:01.123Z"
+      }
+    }
+  ]
+}
+```
+
+- `replay` is `valid`, `invalid` (see `replayError`), `missing` (submitted without one) or `none` (submitted before the server kept replays).
+- `flag` is `null` when the result isn't flagged. `auto` is `true` when the server flagged it on submission (then `flaggedBy` is `null`); otherwise `flaggedBy` is `{ "userId", "displayName" }` of the admin who did.
+
+### `GET /api/v1/admin/results/{date}/{level}/{userId}/replay`
+
+One result with everything needed to watch it back: the fields of a list item above, plus `date`, `levels` (games that day), `givens` (the puzzle's starting grid as 81 digits, `0` = empty; never the solution) and `events` (the stored replay's events, `[]` when there is none). `404 not_found` if there is no such result.
+
+### `PUT /api/v1/admin/results/{date}/{level}/{userId}/flag`
+
+Flags a result as suspicious, replacing any earlier flag (including an automatic one). Body `{ "reason": "Way faster than usual" }`; `reason` is optional, trimmed, and at most 500 characters (`400 bad_request` otherwise). Records the calling admin and the time. `200` with the updated list item, `404 not_found` if there is no such result.
+
+### `DELETE /api/v1/admin/results/{date}/{level}/{userId}/flag`
+
+Removes the flag (automatic or not). `200` with the updated list item; also `200` if it wasn't flagged. `404 not_found` if there is no such result.
+
+## Admin endpoints (self-update)
+
+Self-update of the server binary. Every `/api/v1/admin/*` endpoint needs a valid bearer token whose claims match the server's `[admin]` config (a claim, which may be a dot-separated path, equal to one of a list of values). Otherwise: `401 unauthorized` without a valid token, `403 forbidden` ("admin access required") for a valid non-admin token. With no `[admin]` config nobody is admin. If the server was built without the updater, every self-update endpoint answers `409 update_unavailable`.
 
 Only the server binary is updated; the web client is deployed separately.
 

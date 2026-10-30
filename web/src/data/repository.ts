@@ -3,6 +3,7 @@ import { type AppConfig, type DayResult, type GameResult, type Leaderboard, type
 import { OidcClient, TokenSession, type TokenResponse, createPkce } from "../api/oidc.ts";
 import { formatTimestamp, inWeek, today } from "../game/calendar.ts";
 import { Game } from "../game/game.ts";
+import { MAX_REPLAY_EVENTS, REPLAY_VERSION } from "../game/replay.ts";
 import type { Puzzle } from "../generator/generator.ts";
 import { type AppStorage, type Settings, gameKey } from "./app-storage.ts";
 import { randomToken } from "./crypto.ts";
@@ -263,7 +264,9 @@ export class SudokuRepository {
   /** Queues the result of a just-finished game. */
   async complete(date: string, level: number, game: Game): Promise<GameResult> {
     if (game.completedElapsedMs === null) throw new Error("game isn't complete");
-    const result = { date, level, elapsedMs: game.completedElapsedMs, completedAt: formatTimestamp(this.#now()) };
+    const result: GameResult = { date, level, elapsedMs: game.completedElapsedMs, completedAt: formatTimestamp(this.#now()) };
+    // A replay the server would refuse is left out: the result still counts, flagged as having none.
+    if (game.replay.length <= MAX_REPLAY_EVENTS) result.replay = { version: REPLAY_VERSION, events: game.replay.slice() };
     await this.sync.enqueue(result);
     return result;
   }

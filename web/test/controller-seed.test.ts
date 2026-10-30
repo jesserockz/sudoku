@@ -9,6 +9,9 @@ import { AppController, type Host } from "../src/ui/controller.ts";
 
 const NOW = Date.parse("2026-10-27T01:00:00Z");
 
+/** The wall clock the test host reports; tests move it by assigning. */
+let wall = NOW;
+
 function host(hash = ""): Host {
   return {
     location: { hash, pathname: "/", search: "", origin: "http://localhost" } as Location,
@@ -16,6 +19,7 @@ function host(hash = ""): Host {
     baseUri: () => "http://localhost/",
     isVisible: () => true,
     nowMs: () => NOW,
+    wallMs: () => wall,
   };
 }
 

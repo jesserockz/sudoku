@@ -3,6 +3,7 @@
 import { dayOfWeek, inWeek, isIsoDate } from "../game/calendar.ts";
 import { DEFAULT_LEVELS, generateDay, type Puzzle } from "../generator/generator.ts";
 import { parseWeekSeed } from "../generator/week-seed.ts";
+import { type Replay, type ReplayEvent, decodeReplay, decodeReplayEvent } from "../game/replay.ts";
 import { bool, list, num, obj, optional, str } from "../data/store.ts";
 
 export interface ApiError {
@@ -97,16 +98,20 @@ export interface ReleaseList {
   update: UpdateStatus;
 }
 
-/** One result: the body of `POST /api/v1/results` and its response. `completedAt` is RFC 3339 with offset. */
+/**
+ * One result: the body of `POST /api/v1/results` and its response. `completedAt` is RFC 3339 with offset.
+ * `replay` is only sent, never returned.
+ */
 export interface GameResult {
   date: string;
   level: number;
   elapsedMs: number;
   completedAt: string;
+  replay?: Replay;
 }
 
 /** An item of `GET /api/v1/me/results`, which omits the date. */
-export type DayResult = Omit<GameResult, "date">;
+export type DayResult = Omit<GameResult, "date" | "replay">;
 
 /** `GET /api/v1/me/results` */
 export interface MyResults {
@@ -114,12 +119,51 @@ export interface MyResults {
   results: DayResult[];
 }
 
-/** `GET /api/v1/leaderboard` */
+/** `GET /api/v1/leaderboard`. `suspicious` marks a result an admin flagged (older servers don't send it: false). */
 export interface Leaderboard {
   date: string;
-  puzzles: { level: number; entries: { rank: number; userId: string; displayName: string; elapsedMs: number }[] }[];
-  total: { entries: { rank: number; userId: string; displayName: string; totalMs: number }[] };
+  puzzles: { level: number; entries: { rank: number; userId: string; displayName: string; elapsedMs: number; suspicious: boolean }[] }[];
+  total: { entries: { rank: number; userId: string; displayName: string; totalMs: number; suspicious: boolean }[] };
   players: { userId: string; displayName: string; completedLevels: number[] }[];
+}
+
+/** How a result's replay checked out on submission (`none`: submitted before the server kept replays). */
+export type ReplayStatus = "valid" | "invalid" | "missing" | "none";
+
+/** Why a result is flagged as suspicious. `flaggedBy` is `null` for the server's own (`auto`) flags. */
+export interface ResultFlag {
+  reason: string;
+  auto: boolean;
+  flaggedBy: { userId: string; displayName: string } | null;
+  flaggedAt: string;
+}
+
+/** One result as admins see it, from `GET /api/v1/admin/results`. */
+export interface AdminResult {
+  userId: string;
+  displayName: string;
+  level: number;
+  elapsedMs: number;
+  completedAt: string;
+  submittedAt: string;
+  replay: ReplayStatus;
+  replayError: string;
+  flag: ResultFlag | null;
+}
+
+/** `GET /api/v1/admin/results` */
+export interface AdminResults {
+  date: string;
+  levels: number;
+  results: AdminResult[];
+}
+
+/** `GET /api/v1/admin/results/{date}/{level}/{userId}/replay`. `givens` is the starting grid, never the solution. */
+export interface ReplayDetail extends AdminResult {
+  date: string;
+  levels: number;
+  givens: string;
+  events: ReplayEvent[];
 }
 
 /** The day's games for `date`, which must be in `week`. */
@@ -206,13 +250,47 @@ export function decodeReleaseList(json: unknown): ReleaseList {
   };
 }
 
+export function decodeResultFlag(json: unknown): ResultFlag {
+  const o = obj(json);
+  return {
+    reason: optional(o.reason, str) ?? "", auto: optional(o.auto, bool) ?? false, flaggedAt: str(o.flaggedAt),
+    flaggedBy: optional(o.flaggedBy, (b) => ({ userId: str(obj(b).userId), displayName: str(obj(b).displayName) })),
+  };
+}
+
+export function decodeAdminResult(json: unknown): AdminResult {
+  const o = obj(json);
+  return {
+    userId: str(o.userId), displayName: str(o.displayName), level: num(o.level), elapsedMs: num(o.elapsedMs),
+    completedAt: str(o.completedAt), submittedAt: optional(o.submittedAt, str) ?? "",
+    replay: oneOf("replay status", ["valid", "invalid", "missing", "none"] as const)(o.replay),
+    replayError: optional(o.replayError, str) ?? "", flag: optional(o.flag, decodeResultFlag),
+  };
+}
+
+export function decodeAdminResults(json: unknown): AdminResults {
+  const o = obj(json);
+  return { date: date(o.date), levels: num(o.levels), results: list(o.results, decodeAdminResult) };
+}
+
+export function decodeReplayDetail(json: unknown): ReplayDetail {
+  const o = obj(json);
+  const givens = str(o.givens);
+  if (!/^[0-9]{81}$/.test(givens)) throw new TypeError("givens must be 81 digits");
+  return {
+    ...decodeAdminResult(json), date: date(o.date), levels: num(o.levels), givens,
+    events: optional(o.events, (e) => list(e, decodeReplayEvent)) ?? [],
+  };
+}
+
 export function decodeDayResult(json: unknown): DayResult {
   const o = obj(json);
   return { level: num(o.level), elapsedMs: num(o.elapsedMs), completedAt: str(o.completedAt) };
 }
 
 export function decodeGameResult(json: unknown): GameResult {
-  return { date: date(obj(json).date), ...decodeDayResult(json) };
+  const replay = optional(obj(json).replay, decodeReplay);
+  return { date: date(obj(json).date), ...decodeDayResult(json), ...(replay ? { replay } : {}) };
 }
 
 export function decodeMyResults(json: unknown): MyResults {
@@ -230,14 +308,20 @@ export function decodeLeaderboard(json: unknown): Leaderboard {
         level: num(b.level),
         entries: list(b.entries, (e) => {
           const x = obj(e);
-          return { rank: num(x.rank), userId: str(x.userId), displayName: str(x.displayName), elapsedMs: num(x.elapsedMs) };
+          return {
+            rank: num(x.rank), userId: str(x.userId), displayName: str(x.displayName), elapsedMs: num(x.elapsedMs),
+            suspicious: optional(x.suspicious, bool) ?? false,
+          };
         }),
       };
     }),
     total: {
       entries: list(obj(o.total).entries, (e) => {
         const x = obj(e);
-        return { rank: num(x.rank), userId: str(x.userId), displayName: str(x.displayName), totalMs: num(x.totalMs) };
+        return {
+          rank: num(x.rank), userId: str(x.userId), displayName: str(x.displayName), totalMs: num(x.totalMs),
+          suspicious: optional(x.suspicious, bool) ?? false,
+        };
       }),
     },
     players: list(o.players, (p) => {
