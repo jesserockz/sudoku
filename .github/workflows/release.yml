@@ -1,0 +1,114 @@
+name: Release
+
+# On every push to main, Release Drafter updates the draft release's notes and
+# this workflow rebuilds the server and the web client and attaches them to the
+# draft, replacing what was there. Publishing the release deploys its attached
+# `sudoku-web.zip` to GitHub Pages without rebuilding (pages.yml), so the site
+# is exactly the bundle that was attached to the draft.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-draft
+  cancel-in-progress: true
+
+jobs:
+  draft:
+    name: Update draft release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    outputs:
+      tag_name: ${{ steps.drafter.outputs.tag_name }}
+    steps:
+      - name: Update draft release
+        id: drafter
+        uses: release-drafter/release-drafter@978bb0b30c5ee8cdd332ced253758157150d43f0  # v7.10.0
+
+  server:
+    name: Server binaries
+    needs: draft
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Static build (linux/amd64, linux/arm64)
+        run: make dist
+      - name: Upload server binaries
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: release-server
+          path: server/dist/
+          if-no-files-found: error
+
+  web:
+    name: Web bundle
+    needs: draft
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build
+        working-directory: web
+        run: npm ci && npm run build
+      - name: Package
+        run: |
+          mkdir -p dist
+          (cd web/dist && zip -qr "$GITHUB_WORKSPACE/dist/sudoku-web.zip" .)
+      - name: Upload web bundle
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: release-web
+          path: dist/
+          if-no-files-found: error
+
+  attach:
+    name: Attach to draft release
+    needs: [draft, server, web]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download builds
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Replace the draft's assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.draft.outputs.tag_name }}
+        run: |
+          ls -l dist
+          if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" != "true" ]; then
+            echo "::error::$TAG is not a draft release; not touching its assets"
+            exit 1
+          fi
+          # The version (and so the tag) can change between runs, and the draft
+          # should only carry this commit's builds, so start from no assets.
+          gh release view "$TAG" --json assets --jq '.assets[].name' |
+            while read -r name; do gh release delete-asset "$TAG" "$name" --yes; done
+          gh release upload "$TAG" dist/*

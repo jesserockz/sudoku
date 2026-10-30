@@ -11,13 +11,13 @@ Notes for coding agents working in this repository.
 | `deploy/`            | systemd units, backup timer, example config, Caddy snippet     |
 | `docs/API.md`        | API contract                                                   |
 | `docs/WEB.md`        | Web client docs                                                |
-| `.github/workflows/` | `web.yml`, `server.yml`, `pages.yml` (manual GitHub Pages deploy) |
+| `.github/workflows/` | `web.yml`, `server.yml`, `release.yml` (draft release + builds), `pages.yml` (deploys a published release to GitHub Pages) |
 
 ## Checks CI runs
 
 Run these locally before pushing.
 
-`web/` (Node 22, see `web.yml`):
+`web/` (Node 26 in CI, see `web.yml`):
 
 ```sh
 npm ci

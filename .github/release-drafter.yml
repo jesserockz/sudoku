@@ -1,0 +1,31 @@
+name-template: "v$RESOLVED_VERSION"
+tag-template: "v$RESOLVED_VERSION"
+categories:
+  - title: "Breaking changes"
+    semver-increment: major
+    when:
+      labels: ["breaking", "major"]
+  - title: "Features"
+    semver-increment: minor
+    when:
+      labels: ["feature", "enhancement"]
+  - title: "Bug fixes"
+    when:
+      labels: ["fix", "bugfix", "bug"]
+  - title: "Maintenance"
+    when:
+      labels: ["chore", "dependencies", "ci"]
+  - title: "Other changes"
+  - type: "pre-exclude"
+    when:
+      label: "skip-changelog"
+change-template: "- $TITLE (#$NUMBER) $AUTHORS"
+# Add # and @ to prevent mentions. Add ` to prevent code blocks.
+change-title-escapes: '\<*_&'
+template: |
+  $CHANGES
+
+  ## Downloads
+
+  - `sudoku-server-linux-amd64`, `sudoku-server-linux-arm64`: the server, static binaries (see `deploy/README.md`)
+  - `sudoku-web.zip`: the web client, a static site to serve from any host; this is what is deployed to GitHub Pages when the release is published
