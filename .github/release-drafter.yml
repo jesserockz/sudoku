@@ -29,4 +29,4 @@ template: |
 
   - `sudoku-server-linux-amd64`, `sudoku-server-linux-arm64`: the server, static binaries (see `deploy/README.md`)
   - `sudoku-web.zip`: the web client, a static site to serve from any host
-  - `sudoku-web-pages.tar`: the same web client as a GitHub Pages artifact; published to GitHub Pages when this release is
+  - `sudoku-web-pages.tar`: the same web client as a GitHub Pages artifact, which is deployed to GitHub Pages when the release is published
