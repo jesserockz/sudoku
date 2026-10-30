@@ -33,10 +33,11 @@ gofmt -l .        # must print nothing
 go vet ./...
 go test -race ./...
 make dist         # static linux/amd64 and linux/arm64 builds
-make test-arm64   # tests as arm64 binaries; needs qemu-aarch64-static
+make test-arm64   # tests as arm64 binaries on x86; needs qemu-aarch64-static
 ```
 
-CI also smoke-tests the arm64 binary under QEMU.
+CI also runs the tests and a smoke test natively on an arm64 runner
+(`ubuntu-24.04-arm`); `make test-arm64` is the local equivalent on x86.
 
 ## Conventions
 
