@@ -53,7 +53,7 @@ export class FakeServer {
   async #handle(r: FakeServer["requests"][number]): Promise<Response> {
     switch (r.url.pathname) {
       case "/api/v1/config":
-        return json({ timezone: "Pacific/Auckland", authMode: this.authMode, oidc: { issuer: ISSUER, clientId: "sudoku", scopes: ["openid", "profile", "offline_access"] } });
+        return json({ timezone: "Pacific/Auckland", authMode: this.authMode, version: "1.2.3", oidc: { issuer: ISSUER, clientId: "sudoku", scopes: ["openid", "profile", "offline_access"] } });
       case "/o/sudoku/.well-known/openid-configuration":
         return json({
           issuer: ISSUER, authorization_endpoint: "https://auth.test/o/authorize/",

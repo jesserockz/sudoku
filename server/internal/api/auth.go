@@ -10,6 +10,7 @@ import (
 	"github.com/jesserockz/sudoku/server/internal/auth"
 	"github.com/jesserockz/sudoku/server/internal/httpx"
 	"github.com/jesserockz/sudoku/server/internal/store"
+	"github.com/jesserockz/sudoku/server/internal/version"
 )
 
 type userKey struct{}
@@ -69,6 +70,7 @@ type configResponse struct {
 	Timezone string     `json:"timezone"`
 	OIDC     oidcConfig `json:"oidc"`
 	AuthMode string     `json:"authMode"`
+	Version  string     `json:"version"`
 }
 
 type oidcConfig struct {
@@ -87,5 +89,6 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 		Timezone: c.Timezone,
 		OIDC:     oidcConfig{Issuer: c.OIDC.Issuer, ClientID: c.OIDC.ClientID, Scopes: scopes},
 		AuthMode: c.Auth.Mode,
+		Version:  version.Version,
 	})
 }

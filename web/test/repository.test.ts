@@ -144,7 +144,9 @@ test("sign-out forgets user data but keeps the server", async () => {
 });
 
 test("config and URL normalisation", async () => {
-  assert.equal((await repo().fetchConfig("sudoku.test/")).authMode, "dev");
+  const config = await repo().fetchConfig("sudoku.test/");
+  assert.equal(config.authMode, "dev");
+  assert.equal(config.version, "1.2.3");
   assert.equal(normalizeUrl(" http://localhost:8080/ "), "http://localhost:8080");
   assert.equal(normalizeUrl("sudoku.example.com"), "https://sudoku.example.com");
 });

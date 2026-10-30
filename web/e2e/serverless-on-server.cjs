@@ -39,6 +39,15 @@ async function easyGrid(page) {
   await page.getByText("Easy", { exact: true }).waitFor();
   const fromServer = await easyGrid(page);
 
+  // About shows the web and server versions when signed in.
+  await page.getByRole("button", { name: "About", exact: true }).click();
+  await page.getByText("Server version").waitFor();
+  await page.getByText("Checking…").waitFor({ state: "detached" });
+  const about = await page.locator("table.board-table").innerText();
+  check(/Web version\s+\d+\.\d+\.\d+/.test(about) && /Server version\s+\d+\.\d+\.\d+/.test(about), "About shows both versions: " + about.replace(/\s+/g, " "));
+  await page.getByRole("button", { name: "‹ Back", exact: true }).click();
+  await page.locator(".puzzles").waitFor();
+
   // A fresh browser chooses seed play from the sign-in screen, with the server's secret.
   const other = await (await browser.newContext()).newPage();
   await other.goto(base + "/");
@@ -50,6 +59,10 @@ async function easyGrid(page) {
   await other.getByText("Easy", { exact: true }).waitFor();
   check(JSON.stringify(await easyGrid(other)) === JSON.stringify(fromServer), "the server's secret as a seed plays the server's puzzles");
   check(await other.getByRole("button", { name: "Leaderboard" }).count() === 0, "seed play has no server leaderboard");
+  await other.getByRole("button", { name: "About", exact: true }).click();
+  await other.getByText("Not connected", { exact: false }).waitFor();
+  check(true, "About says the server isn't connected in seed play");
+  await other.getByRole("button", { name: "‹ Back", exact: true }).click();
 
   // A share link opened while signed in asks before switching; leaving the seed returns to the server.
   await page.evaluate(() => { location.hash = "#seed=family&levels=5"; });

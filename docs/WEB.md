@@ -52,6 +52,18 @@ tests and builds on every change under `web/`.
   `<sudoku-keypad>` (fires `digit`) and `<action-button>` (a button that shows
   a result message, e.g. "Link copied.").
 
+## Versions and About
+
+The web client's version is `web/package.json`'s, bumped together with the
+server's by the release workflow. `npm run build` stamps it into the
+compiled `WEB_VERSION` (`src/version.ts` holds a placeholder, so the dev server
+shows "dev").
+The **About** button on the Today screen opens a screen showing the web
+version and the server's (from `version` in `GET /api/v1/config`, fetched when
+the screen opens): "unknown" for a server that doesn't report one, "Can't
+reach the server" when offline, and "Not connected" when playing with a seed.
+It also links to the GitHub repository and releases.
+
 ## Puzzles
 
 Puzzles are generated on the device, deterministically from the week's seed

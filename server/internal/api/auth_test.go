@@ -9,6 +9,7 @@ import (
 
 	"github.com/jesserockz/sudoku/server/internal/auth"
 	"github.com/jesserockz/sudoku/server/internal/config"
+	"github.com/jesserockz/sudoku/server/internal/version"
 )
 
 func TestMe(t *testing.T) {
@@ -81,6 +82,7 @@ func TestConfigIsPublic(t *testing.T) {
 			Scopes:   []string{"openid", "profile", "offline_access"},
 		},
 		AuthMode: "oidc",
+		Version:  version.Version,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("config = %+v\nwant %+v", got, want)

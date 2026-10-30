@@ -68,11 +68,12 @@ Unauthenticated. Lets the web client discover how to log in.
     "clientId": "sudoku-web",
     "scopes": ["openid", "profile", "offline_access"]
   },
-  "authMode": "oidc"
+  "authMode": "oidc",
+  "version": "0.1.0"
 }
 ```
 
-`authMode` is `"oidc"` or `"dev"`.
+`authMode` is `"oidc"` or `"dev"`. `version` is the server's release version (semver, no leading `v`); older servers don't send it.
 
 ### `GET /api/v1/week`
 

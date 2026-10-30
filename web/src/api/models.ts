@@ -22,6 +22,8 @@ export interface AppConfig {
   /** May be absent when the server runs in dev auth mode. */
   oidc: OidcConfig | null;
   authMode: "oidc" | "dev";
+  /** The server's release version; older servers don't send it. */
+  version?: string;
 }
 
 /** `GET /api/v1/week`. The seed is 16 lowercase hex characters. */
@@ -94,7 +96,8 @@ export function decodeAppConfig(json: unknown): AppConfig {
   const o = obj(json);
   const authMode = str(o.authMode);
   if (authMode !== "oidc" && authMode !== "dev") throw new TypeError(`unknown auth mode: ${authMode}`);
-  return { timezone: str(o.timezone), oidc: optional(o.oidc, decodeOidcConfig), authMode };
+  const version = optional(o.version, str);
+  return { timezone: str(o.timezone), oidc: optional(o.oidc, decodeOidcConfig), authMode, ...(version ? { version } : {}) };
 }
 
 export function decodeWeek(json: unknown): Week {

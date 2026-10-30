@@ -106,6 +106,7 @@ form.login button { margin-top: 16px; width: 100%; }
 .puzzles .status { font-size: 0.9rem; color: var(--muted); }
 .puzzles .status.done { color: var(--done); }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.actions a { color: var(--accent); padding: 8px; }
 
 /* Play */
 .play-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
