@@ -273,10 +273,22 @@ URL must end in `/` (most hosts redirect `/sudoku` to `/sudoku/`). HTTPS (or
 `localhost`) is needed for the service worker, the clipboard and WebCrypto.
 
 **GitHub Pages**: in the repository's **Settings → Pages**, set the source to
-**GitHub Actions**, then run the **Web (GitHub Pages)** workflow from the
-Actions tab. It builds `web/dist` and publishes it to
-`https://<owner>.github.io/<repo>/`. It only runs when started by hand, so
-nothing is published unless you choose to.
+**GitHub Actions**. Then, under **Settings → Environments → github-pages →
+Deployment branches and tags**, add a tag rule for `v*`, since deploys run from
+the release's tag. Publishing a release then deploys it to
+`https://<owner>.github.io/<repo>/` (the **Web (GitHub Pages)** workflow), and
+nothing is published until you publish a release. Any other static host works
+the same way: upload the contents of `web/dist`, or unzip a release's
+`sudoku-web.zip`.
+
+**Releases**: on every push to `main`, the **Release** workflow updates a draft
+release with [Release Drafter](https://github.com/release-drafter/release-drafter)
+(notes from merged pull requests, grouped and versioned by their labels, see
+`.github/release-drafter.yml`) and attaches fresh builds to it: the server
+binaries, `sudoku-web.zip` and `sudoku-web-pages.tar`. Publishing the draft
+deploys that `sudoku-web-pages.tar` to Pages as is, without rebuilding, so the
+site is exactly what was attached to the draft. Running **Web (GitHub Pages)**
+by hand redeploys the latest release, or the tag given.
 
 **Checking it** end to end, at the root and under a sub-path of plain static
 servers with no `/api`:
