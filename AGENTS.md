@@ -11,7 +11,7 @@ Notes for coding agents working in this repository.
 | `deploy/`            | systemd units, backup timer, example config, Caddy snippet     |
 | `docs/API.md`        | API contract                                                   |
 | `docs/WEB.md`        | Web client docs                                                |
-| `.github/workflows/` | `web.yml`, `server.yml`, `release.yml` (draft release + builds), `pages.yml` (deploys a published release to GitHub Pages) |
+| `.github/workflows/` | `web.yml`, `server.yml`, `release.yml` (draft release + builds), `pages.yml` (deploys a published release to GitHub Pages), `lockfile.yml` (verifies `actions.lock`) |
 | `.github/dependabot.yml` | Weekly grouped updates for Actions, `web/` npm and `server/` Go modules |
 
 ## Checks CI runs
@@ -45,17 +45,24 @@ binary; `make test-arm64` is the local way to test arm64 on x86.
 
 ### GitHub Actions pinning
 
-- Pin every action to the full commit SHA of its latest release, with the
-  version in a trailing comment: two spaces before `#`, lowercase `v`
-  matching the tag.
+- Actions are locked with [`gh actions-lock`](https://github.com/github/gh-actions-lock)
+  (`gh extension install github/gh-actions-lock`). Commit SHAs live in
+  `.github/workflows/actions.lock`, which satisfies the repository's
+  "require actions to be pinned to a full-length commit SHA" setting.
+- In workflows, reference each action by its full release tag, not a SHA
+  and not a partial tag like `v7`:
 
   ```yaml
-  - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+  - uses: actions/checkout@v7.0.1
   ```
 
-- For annotated tags, use the peeled commit (`refs/tags/<tag>^{}`), not the
-  tag object SHA, e.g. `git ls-remote https://github.com/<owner>/<repo>
-  'refs/tags/<tag>^{}'`.
+- After adding a workflow or changing any `uses:`, run `gh actions-lock` and
+  commit the workflow and `actions.lock` together. Never edit `actions.lock`
+  by hand. A workflow missing from the lockfile is blocked by the SHA
+  pinning setting. `lockfile.yml` runs `gh actions-lock --verify` in CI;
+  `gh actions-lock --verify-local` is a quick offline check.
+- Calls to reusable workflows in other repositories are not locked; pin
+  those to a full commit SHA.
 - When updating actions, move to the latest release and check that the inputs
   in use are still valid for any new major version.
 
