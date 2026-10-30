@@ -12,6 +12,7 @@ Notes for coding agents working in this repository.
 | `docs/API.md`        | API contract                                                   |
 | `docs/WEB.md`        | Web client docs                                                |
 | `.github/workflows/` | `web.yml`, `server.yml`, `release.yml` (draft release + builds), `pages.yml` (deploys a published release to GitHub Pages), `lockfile.yml` (verifies `actions.lock`) |
+| `.github/dependabot.yml` | Weekly grouped updates for Actions, `web/` npm and `server/` Go modules |
 
 ## Checks CI runs
 
