@@ -150,7 +150,8 @@ export class PlayScreen extends Component {
     } else {
       Object.assign(this.#keypad, { counts: game.digitCounts(), disabled: paused, notesMode: this.#notesMode });
       this.#keypad.update();
-      footer = [
+      footer = h("div", { class: "pad" },
+        this.#keypad,
         h("div", { class: "controls" },
           h("button", { disabled: !game.canUndo || paused, onclick: () => this.#undo() }, "Undo"),
           h("button", { disabled: paused, onclick: () => this.#erase() }, "Erase"),
@@ -163,25 +164,23 @@ export class PlayScreen extends Component {
             onclick: () => this.#toggleNotes(),
           }, this.#notesMode ? "Notes on" : "Notes off"),
         ),
-        this.#keypad,
-      ];
+      );
     }
 
     return [
       topBar(puzzle.title, () => app.openToday(),
-        !game.isComplete && !paused && h("button", { class: "link", onclick: () => this.#pause() }, "Pause")),
-      h("div", { class: "play-head" },
-        h("span", { class: "muted" }, `${app.today} · ${puzzle.givenCount} givens`),
         this.#timer,
-      ),
-      h("div", { class: "board-wrap" },
-        this.#board,
-        paused && h("div", { class: "paused" },
-          h("p", null, "Paused"),
-          h("button", { class: "primary", onclick: () => this.#resume() }, "Resume"),
+        !game.isComplete && !paused && h("button", { class: "link", onclick: () => this.#pause() }, "Pause")),
+      h("div", { class: "play-area" },
+        h("div", { class: "board-box" },
+          this.#board,
+          paused && h("div", { class: "paused" },
+            h("p", null, "Paused"),
+            h("button", { class: "primary", onclick: () => this.#resume() }, "Resume"),
+          ),
         ),
+        footer,
       ),
-      footer,
     ];
   }
 }
