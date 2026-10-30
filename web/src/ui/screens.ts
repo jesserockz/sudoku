@@ -3,7 +3,8 @@ import { formatDuration } from "../game/timer.ts";
 import { DEFAULT_LEVELS, MAX_LEVELS, puzzleTitle } from "../generator/generator.ts";
 import { generateSeed, normalizeSeed, seedSettings, type SeedSettings } from "../serverless/seed.ts";
 import { parseShareLink } from "../serverless/share-link.ts";
-import type { AppController, Phase } from "./controller.ts";
+import { WEB_VERSION } from "../version.ts";
+import type { AppController, Phase, ServerInfo } from "./controller.ts";
 import { type Child, Component, h, topBar } from "./dom.ts";
 import { actionButton, canShare, copyText, share, shareResultsButton } from "./share.ts";
 
@@ -107,9 +108,11 @@ export class TodayScreen extends Screen {
     const app = this.app;
     const serverless = app.seed !== null;
     const header = [
-      topBar("Sudoku", null, serverless
-        ? h("button", { class: "link", onclick: () => app.openHistory() }, "History")
-        : h("button", { class: "link", onclick: () => void app.signOut() }, "Sign out")),
+      topBar("Sudoku", null,
+        h("button", { class: "link", onclick: () => app.openAbout() }, "About"),
+        serverless
+          ? h("button", { class: "link", onclick: () => app.openHistory() }, "History")
+          : h("button", { class: "link", onclick: () => void app.signOut() }, "Sign out")),
       app.needsSignIn && h("div", { class: "notice" },
         "Your sign-in has expired. ",
         h("button", { class: "link", onclick: () => app.signIn() }, "Sign in again"),
@@ -298,6 +301,37 @@ export class HistoryScreen extends Screen {
   }
 }
 
+const REPO_URL = "https://github.com/jesserockz/sudoku";
+
+function describeServer(info: ServerInfo): string {
+  switch (info.kind) {
+    case "none": return "Not connected (playing with a seed)";
+    case "loading": return "Checking…";
+    case "ok": return info.version ?? "unknown";
+    case "unreachable": return "Can't reach the server";
+  }
+}
+
+/** `<sudoku-about>`: the web client's and the server's versions, and where to find the project. */
+export class AboutScreen extends Screen {
+  protected render(): Child {
+    const app = this.app;
+    return [
+      topBar("About", () => app.openToday()),
+      h("div", { class: "card" },
+        h("table", { class: "board-table" }, h("tbody", null,
+          h("tr", null, h("td", null, "Web version"), h("td", { class: "time" }, WEB_VERSION)),
+          h("tr", null, h("td", null, "Server version"), h("td", { class: "time" }, describeServer(app.serverInfo))),
+        )),
+      ),
+      h("div", { class: "actions" },
+        h("a", { href: REPO_URL, target: "_blank", rel: "noopener" }, "GitHub"),
+        h("a", { href: `${REPO_URL}/releases`, target: "_blank", rel: "noopener" }, "Releases"),
+      ),
+    ];
+  }
+}
+
 /** `<sudoku-seed-setup>`: enter, paste or generate a seed, and the settings the group shares. */
 export class SeedSetupScreen extends Screen {
   readonly #notice = h("div");
@@ -389,5 +423,6 @@ customElements.define("sudoku-sign-in", SignInScreen);
 customElements.define("sudoku-today", TodayScreen);
 customElements.define("sudoku-scores", ScoresScreen);
 customElements.define("sudoku-history", HistoryScreen);
+customElements.define("sudoku-about", AboutScreen);
 customElements.define("sudoku-seed-setup", SeedSetupScreen);
 customElements.define("sudoku-confirm-seed", ConfirmSeedScreen);

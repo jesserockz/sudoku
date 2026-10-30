@@ -31,7 +31,18 @@ export type Screen =
   | { kind: "play"; level: number }
   | { kind: "scores"; date: string; tab: number }
   /** Serverless play's local history of solve times. */
-  | { kind: "history" };
+  | { kind: "history" }
+  | { kind: "about" };
+
+/** The server's side of the About screen. */
+export type ServerInfo =
+  /** Playing with a seed: no server involved. */
+  | { kind: "none" }
+  | { kind: "loading" }
+  /** `version` is `null` when the server didn't report one (an older server). */
+  | { kind: "ok"; version: string | null }
+  /** Signed in, but the server couldn't be reached (e.g. offline). */
+  | { kind: "unreachable" };
 
 /** A puzzle's state on the "today" list. `synced` is false while a result waits in the offline queue. */
 export type PuzzleStatus =
@@ -84,6 +95,8 @@ export class AppController extends EventTarget {
   leaderboardError: string | null = null;
   /** A transient problem worth showing (e.g. offline, results not uploaded yet). */
   notice: string | null = null;
+  /** What the About screen shows for the server; fetched when it's opened. */
+  serverInfo: ServerInfo = { kind: "none" };
 
   readonly #repo: SudokuRepository;
   readonly #seeds: SeedRepository;
@@ -114,7 +127,7 @@ export class AppController extends EventTarget {
     this.dispatchEvent(new Event("change"));
   }
 
-  #set(changes: Partial<Pick<AppController, "phase" | "screen" | "notice" | "me" | "seed" | "puzzles" | "needsSignIn">>): void {
+  #set(changes: Partial<Pick<AppController, "phase" | "screen" | "notice" | "me" | "seed" | "puzzles" | "needsSignIn" | "serverInfo">>): void {
     Object.assign(this, changes);
     this.#changed();
   }
@@ -333,6 +346,19 @@ export class AppController extends EventTarget {
 
   openHistory(): void {
     if (this.seed) this.#set({ screen: { kind: "history" } });
+  }
+
+  /** The About screen. The server's version comes from `GET /config`, fetched once per visit while signed in. */
+  openAbout(): void {
+    const connected = !this.seed;
+    this.#set({ screen: { kind: "about" }, serverInfo: connected ? { kind: "loading" } : { kind: "none" } });
+    if (!connected) return;
+    this.#repo.fetchConfig(this.#repo.settings().serverUrl).then(
+      (config): ServerInfo => ({ kind: "ok", version: config.version ?? null }),
+      (): ServerInfo => ({ kind: "unreachable" }),
+    ).then((serverInfo) => {
+      if (this.screen.kind === "about") this.#set({ serverInfo });
+    });
   }
 
   // Sign-in

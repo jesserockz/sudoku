@@ -1,10 +1,15 @@
 name: Release
 
-# On every push to main, Release Drafter updates the draft release's notes and
-# this workflow rebuilds the server and the web client and attaches them to the
-# draft, replacing what was there. Publishing the release deploys its attached
-# `sudoku-web.zip` to GitHub Pages without rebuilding (pages.yml), so the site
-# is exactly the bundle that was attached to the draft.
+# On every push to main, Release Drafter resolves the next version from the
+# merged PRs' labels. If it differs from the version tracked in the repository
+# (server/internal/version and web/package.json), this workflow commits the
+# bump to main. Pushes made with the workflow's token don't trigger workflows,
+# so that commit doesn't start another run.
+# Release Drafter then updates the draft release, targeting the bump commit,
+# and this workflow rebuilds the server and the web client from that commit and
+# attaches them to the draft, replacing what was there. Publishing the release
+# deploys its attached `sudoku-web.zip` to GitHub Pages without rebuilding
+# (pages.yml), so the site is exactly the bundle that was attached to the draft.
 
 on:
   push:
@@ -27,10 +32,51 @@ jobs:
       pull-requests: read
     outputs:
       tag_name: ${{ steps.drafter.outputs.tag_name }}
+      sha: ${{ steps.bump.outputs.sha }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+      - name: Resolve next version
+        id: resolve
+        uses: release-drafter/release-drafter@v7.10.0
+        with:
+          dry-run: true
+      - name: Set up Node
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 26
+      - name: Set version
+        env:
+          VERSION: ${{ steps.resolve.outputs.resolved_version }}
+        run: |
+          if [ -z "$VERSION" ]; then
+            echo "::error::Release Drafter did not resolve a version"
+            exit 1
+          fi
+          sed -i -E "s/^var Version = \".*\"$/var Version = \"$VERSION\"/" server/internal/version/version.go
+          (cd web && npm version "$VERSION" --no-git-tag-version --allow-same-version)
+      - name: Commit version bump
+        id: bump
+        env:
+          VERSION: ${{ steps.resolve.outputs.resolved_version }}
+        run: |
+          if git diff --quiet; then
+            echo "Version is already $VERSION"
+          elif [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Version needs bumping to $VERSION, which is only committed from main"
+            exit 1
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -am "Bump version to $VERSION"
+            git push origin HEAD:main
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Update draft release
         id: drafter
         uses: release-drafter/release-drafter@v7.10.0
+        with:
+          commitish: ${{ steps.bump.outputs.sha }}
 
   server:
     name: Server binaries
@@ -42,6 +88,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ needs.draft.outputs.sha }}
       - name: Set up Go
         uses: actions/setup-go@v7.0.0
         with:
@@ -63,6 +111,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ needs.draft.outputs.sha }}
       - name: Set up Node
         uses: actions/setup-node@v7.1.0
         with:

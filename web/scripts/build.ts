@@ -13,6 +13,13 @@ rmSync(dist, { recursive: true, force: true });
 execFileSync(process.execPath, [join(root, "node_modules/typescript/bin/tsc"), "-p", join(root, "tsconfig.json")], { stdio: "inherit" });
 cpSync(join(root, "public"), dist, { recursive: true });
 
+// The web version comes from package.json, stamped into the compiled version module.
+const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version: string };
+const versionPath = join(dist, "app", "version.js");
+const versionJs = readFileSync(versionPath, "utf8").replace(/WEB_VERSION = "[^"]*"/, `WEB_VERSION = ${JSON.stringify(pkg.version)}`);
+if (!/^\d+\.\d+\.\d+/.test(pkg.version) || !versionJs.includes(`WEB_VERSION = "${pkg.version}"`)) throw new Error("couldn't stamp version.js");
+writeFileSync(versionPath, versionJs);
+
 // Every file the app needs offline, and a hash of them, which names the cache.
 const shell = (readdirSync(dist, { recursive: true, withFileTypes: true }))
   .filter((f) => f.isFile() && f.name !== "sw.js")

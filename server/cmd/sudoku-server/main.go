@@ -19,6 +19,7 @@ import (
 	"github.com/jesserockz/sudoku/server/internal/clock"
 	"github.com/jesserockz/sudoku/server/internal/config"
 	"github.com/jesserockz/sudoku/server/internal/store"
+	"github.com/jesserockz/sudoku/server/internal/version"
 	"github.com/jesserockz/sudoku/server/internal/web"
 )
 
@@ -83,7 +84,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
 	}
-	slog.Info("listening", "addr", ln.Addr().String(), "authMode", cfg.Auth.Mode)
+	slog.Info("listening", "addr", ln.Addr().String(), "authMode", cfg.Auth.Mode, "version", version.Version)
 
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(ln) }()
