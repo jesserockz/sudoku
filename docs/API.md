@@ -1,6 +1,6 @@
 # API contract (v1)
 
-The contract between the Go server and the KMP clients (Android + web). Both sides build against this document; change it in its own PR before changing behaviour on either side.
+The contract between the Go server and the web client. Both sides build against this document; change it in its own PR before changing behaviour on either side.
 
 ## Conventions
 
@@ -48,7 +48,7 @@ e.g. `Bearer dev:alice:Alice`. Dev mode must never be enabled in production; the
 
 - `weekSeed = HMAC-SHA256(key = serverSecret, message = "sudoku-week:" + isoWeek)`, truncated to the **first 8 bytes**, read as a big-endian unsigned 64-bit integer, encoded as **16 lowercase hex characters**.
 - Hex (not a JSON number) because JS cannot represent 64-bit integers exactly. Clients parse it into a 64-bit value (`ULong`/`Long` bit pattern).
-- How a client turns `(weekSeed, dayOfWeek, level)` into a puzzle is defined entirely by the shared KMP module; the server never needs to know.
+- How a client turns `(weekSeed, dayOfWeek, level)` into a puzzle is defined entirely by the client (`web/src/generator/`); the server never needs to know.
 
 ## Endpoints
 

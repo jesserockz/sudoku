@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Sudoku">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="theme-color" content="#f6f5f1" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#16181d" media="(prefers-color-scheme: dark)">
+  <title>Sudoku</title>
+  <script>
+    // Everything loads relative to the app's own directory, so one build works at a
+    // site root (the Go server, which also serves this page for /auth/callback) and
+    // under a sub-path on a static host (e.g. GitHub Pages at /<repo>/).
+    (function () {
+      var path = location.pathname.replace(/auth\/callback$/, "");
+      var base = document.createElement("base");
+      base.href = path.slice(0, path.lastIndexOf("/") + 1);
+      document.head.appendChild(base);
+    })();
+  </script>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+</head>
+<body>
+  <div id="root"><p class="boot">Loading…</p></div>
+  <script type="module" src="app/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+// Type-checks the tests and build scripts, which run on Node.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "rootDir": ".",
+    "noEmit": true
+  },
+  "include": ["src", "test", "scripts"]
+}

@@ -1,0 +1,132 @@
+// An in-memory v1 server and OIDC provider behind a fetch function, following docs/API.md.
+import type { GameResult } from "../src/api/models.ts";
+import { createPkce } from "../src/api/oidc.ts";
+import { weekAt } from "../src/game/calendar.ts";
+import { weekSeed } from "../src/serverless/seed.ts";
+
+export const ISSUER = "https://auth.test/o/sudoku/";
+export const SECRET = "test-secret-0123456789";
+
+export class FakeServer {
+  online = true;
+  rejectAll = false;
+  levels = 5;
+  readonly authMode: "dev" | "oidc";
+  readonly now: () => number;
+
+  // OIDC provider state.
+  oidcSub = "alice";
+  refreshRevoked = false;
+  refreshGrants = 0;
+  readonly #codes = new Map<string, string>(); // code -> PKCE challenge
+  readonly #accessTokens = new Map<string, number>(); // token -> expiry (epoch ms)
+  #counter = 0;
+
+  readonly requests: { method: string; url: URL; headers: Headers; body: string }[] = [];
+  readonly stored: GameResult[] = [];
+
+  constructor(now: () => number, authMode: "dev" | "oidc" = "dev") {
+    this.now = now;
+    this.authMode = authMode;
+  }
+
+  posts(): number {
+    return this.requests.filter((r) => r.url.pathname === "/api/v1/results").length;
+  }
+
+  /** The provider "redirects" back: returns the redirect URL for an authorization URL. */
+  authorize(authorizationUrl: string, state?: string): string {
+    const q = new URL(authorizationUrl).searchParams;
+    const code = `code${++this.#counter}`;
+    this.#codes.set(code, q.get("code_challenge")!);
+    return `${q.get("redirect_uri")}?code=${code}&state=${state ?? q.get("state")}`;
+  }
+
+  readonly fetch: typeof fetch = async (input, init) => {
+    if (!this.online) throw new TypeError("Failed to fetch");
+    const url = new URL(String(input));
+    const request = { method: init?.method ?? "GET", url, headers: new Headers(init?.headers), body: init?.body ? String(init.body) : "" };
+    this.requests.push(request);
+    return this.#handle(request);
+  };
+
+  async #handle(r: FakeServer["requests"][number]): Promise<Response> {
+    switch (r.url.pathname) {
+      case "/api/v1/config":
+        return json({ timezone: "Pacific/Auckland", authMode: this.authMode, oidc: { issuer: ISSUER, clientId: "sudoku", scopes: ["openid", "profile", "offline_access"] } });
+      case "/o/sudoku/.well-known/openid-configuration":
+        return json({
+          issuer: ISSUER, authorization_endpoint: "https://auth.test/o/authorize/",
+          token_endpoint: "https://auth.test/o/token/", end_session_endpoint: "https://auth.test/o/end/",
+        });
+      case "/o/token/":
+        return this.#token(new URLSearchParams(r.body));
+    }
+    const user = this.#user(r.headers.get("Authorization"));
+    if (!user) return json({ error: { code: "unauthorized", message: "bad token" } }, 401);
+    switch (r.url.pathname) {
+      case "/api/v1/me":
+        return json(user);
+      case "/api/v1/week": {
+        const info = weekAt(this.now());
+        return json({ ...info, seed: await weekSeed(SECRET, info.isoWeek), timezone: "Pacific/Auckland", levels: this.levels });
+      }
+      case "/api/v1/me/results": {
+        const date = r.url.searchParams.get("date") ?? weekAt(this.now()).today;
+        return json({ date, results: this.stored.filter((s) => s.date === date).map(({ date: _, ...rest }) => rest) });
+      }
+      case "/api/v1/results": {
+        if (this.rejectAll) return json({ error: { code: "invalid_result", message: "nope" } }, 400);
+        const result = JSON.parse(r.body) as GameResult;
+        const existing = this.stored.find((s) => s.date === result.date && s.level === result.level);
+        if (existing) return json(existing, 200);
+        this.stored.push(result);
+        return json(result, 201);
+      }
+      case "/api/v1/leaderboard":
+        return json({ date: r.url.searchParams.get("date"), puzzles: [], total: { entries: [] }, players: [] });
+    }
+    return json({ error: { code: "not_found", message: "" } }, 404);
+  }
+
+  #user(authorization: string | null): { id: string; displayName: string } | null {
+    const token = authorization?.replace(/^Bearer /, "") ?? "";
+    if (this.authMode === "dev") {
+      const [, sub, name] = token.split(":");
+      return token.startsWith("dev:") && sub && name ? { id: sub, displayName: name } : null;
+    }
+    const expiry = this.#accessTokens.get(token);
+    if (expiry === undefined || expiry <= this.now()) return null;
+    return { id: token.split("|")[0]!, displayName: "Alice" };
+  }
+
+  async #token(form: URLSearchParams): Promise<Response> {
+    if (form.get("grant_type") === "authorization_code") {
+      const challenge = this.#codes.get(form.get("code") ?? "");
+      this.#codes.delete(form.get("code") ?? "");
+      if (!challenge || (await createPkce(form.get("code_verifier") ?? "")).challenge !== challenge) {
+        return json({ error: "invalid_grant" }, 400);
+      }
+      return this.#issue(true);
+    }
+    if (form.get("grant_type") === "refresh_token") {
+      if (this.refreshRevoked) return json({ error: "invalid_grant", error_description: "revoked" }, 400);
+      this.refreshGrants++;
+      return this.#issue(false);
+    }
+    return json({ error: "unsupported_grant_type" }, 400);
+  }
+
+  #issue(withRefresh: boolean): Response {
+    const token = `${this.oidcSub}|${++this.#counter}`;
+    this.#accessTokens.set(token, this.now() + 300_000);
+    return json({
+      access_token: token, token_type: "Bearer", expires_in: 300, id_token: `id-${this.oidcSub}`,
+      ...(withRefresh ? { refresh_token: `refresh-${this.oidcSub}` } : {}),
+    });
+  }
+}
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+}

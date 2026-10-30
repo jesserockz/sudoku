@@ -36,5 +36,5 @@ issuer = "https://auth.example.com/application/o/sudoku/"
 client_id = "sudoku-web"
 scopes = ["openid", "profile", "offline_access"]
 # Accepted aud values. Authentik sets aud to the client id, so list every
-# client that calls the API (web and Android).
-audience = ["sudoku-web", "sudoku-android"]
+# client that calls the API.
+audience = ["sudoku-web"]

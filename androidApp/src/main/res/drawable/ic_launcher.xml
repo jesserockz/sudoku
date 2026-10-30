@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- A 3x3 grid on blue; good enough until there's real artwork. -->
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="48dp" android:height="48dp" android:viewportWidth="48" android:viewportHeight="48">
-    <path android:fillColor="#2F6FDB" android:pathData="M8,4h32a4,4 0,0 1,4 4v32a4,4 0,0 1,-4 4H8a4,4 0,0 1,-4 -4V8a4,4 0,0 1,4 -4z" />
-    <path android:fillColor="#FFFFFF" android:pathData="M18,10h2v28h-2zM28,10h2v28h-2zM10,18h28v2H10zM10,28h28v2H10z" />
-</vector>
