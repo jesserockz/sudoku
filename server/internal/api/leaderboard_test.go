@@ -33,10 +33,10 @@ func TestBuildLeaderboard(t *testing.T) {
 	got := buildLeaderboard(rows, 5)
 
 	wantL1 := []puzzleEntry{
-		{1, "2", "Bob", 150000},
-		{2, "1", "Alice", 183000},
-		{2, "3", "Carol", 183000},
-		{4, "4", "Dave", 200000},
+		{1, "2", "Bob", 150000, false},
+		{2, "1", "Alice", 183000, false},
+		{2, "3", "Carol", 183000, false},
+		{4, "4", "Dave", 200000, false},
 	}
 	if len(got.Puzzles) != 5 {
 		t.Fatalf("puzzles = %d", len(got.Puzzles))
@@ -49,13 +49,13 @@ func TestBuildLeaderboard(t *testing.T) {
 	if !reflect.DeepEqual(got.Puzzles[0].Entries, wantL1) {
 		t.Errorf("level 1 = %+v\nwant %+v", got.Puzzles[0].Entries, wantL1)
 	}
-	wantL3 := []puzzleEntry{{1, "1", "Alice", 90000}, {2, "2", "Bob", 300000}, {2, "3", "Carol", 300000}}
+	wantL3 := []puzzleEntry{{1, "1", "Alice", 90000, false}, {2, "2", "Bob", 300000, false}, {2, "3", "Carol", 300000, false}}
 	if !reflect.DeepEqual(got.Puzzles[2].Entries, wantL3) {
 		t.Errorf("level 3 = %+v", got.Puzzles[2].Entries)
 	}
 
 	// Bob: 150+200+300+400+500 = 1550s; Carol: 183+167+300+400+500 = 1550s.
-	wantTotal := []totalEntry{{1, "2", "Bob", 1550000}, {1, "3", "Carol", 1550000}}
+	wantTotal := []totalEntry{{1, "2", "Bob", 1550000, false}, {1, "3", "Carol", 1550000, false}}
 	if !reflect.DeepEqual(got.Total.Entries, wantTotal) {
 		t.Errorf("total = %+v\nwant %+v", got.Total.Entries, wantTotal)
 	}
@@ -72,7 +72,7 @@ func TestBuildLeaderboard(t *testing.T) {
 }
 
 func TestRankCompetition(t *testing.T) {
-	items := []scored{{1, "a", 5}, {2, "b", 5}, {3, "c", 5}, {4, "d", 6}, {5, "e", 7}, {6, "f", 7}, {7, "g", 8}}
+	items := []scored{{1, "a", 5, false}, {2, "b", 5, false}, {3, "c", 5, false}, {4, "d", 6, false}, {5, "e", 7, false}, {6, "f", 7, false}, {7, "g", 8, false}}
 	if got, want := rank(items), []int{1, 1, 1, 4, 5, 5, 7}; !reflect.DeepEqual(got, want) {
 		t.Errorf("ranks = %v, want %v", got, want)
 	}

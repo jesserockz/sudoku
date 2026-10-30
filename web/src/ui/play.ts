@@ -31,7 +31,7 @@ export class PlayScreen extends Component {
   }
 
   override connectedCallback(): void {
-    this.app.update(this.level, (g) => g.resume(this.app.nowMs()));
+    this.app.update(this.level, (g) => g.resume(this.app.nowMs()), { a: "resume" });
     document.addEventListener("visibilitychange", this.#onVisibility);
     window.addEventListener("keydown", this.#onKey);
     this.#tick = window.setInterval(() => this.#showTime(), 250);
@@ -43,7 +43,7 @@ export class PlayScreen extends Component {
     window.removeEventListener("keydown", this.#onKey);
     clearInterval(this.#tick);
     this.#wakeLock.set(false);
-    this.app.update(this.level, (g) => g.pause(this.app.nowMs()));
+    this.app.update(this.level, (g) => g.pause(this.app.nowMs()), { a: "pause" });
   }
 
   get #game() {
@@ -61,14 +61,14 @@ export class PlayScreen extends Component {
   }
 
   #pause(): void {
-    this.app.update(this.level, (g) => g.pause(this.app.nowMs()));
+    this.app.update(this.level, (g) => g.pause(this.app.nowMs()), { a: "pause" });
     if (this.#game?.isComplete === false) this.#paused = true;
     this.update();
   }
 
   #resume(): void {
     this.#paused = false;
-    this.app.update(this.level, (g) => g.resume(this.app.nowMs()));
+    this.app.update(this.level, (g) => g.resume(this.app.nowMs()), { a: "resume" });
     this.update();
   }
 
@@ -76,23 +76,23 @@ export class PlayScreen extends Component {
     const g = this.#game;
     const i = this.#selected;
     if (!g || i < 0 || this.#paused || g.board.isGiven(i)) return;
-    this.app.update(this.level, (game) => {
-      if (this.#notesMode) return game.toggleNote(i, digit);
-      if (game.board.get(i) === digit) return game.erase(i);
-      return game.place(i, digit, this.app.nowMs());
-    });
+    if (this.#notesMode) this.app.update(this.level, (game) => game.toggleNote(i, digit), { a: g.notes.has(i, digit) ? "noteRemove" : "noteAdd", c: i, d: digit });
+    else if (g.board.get(i) === digit) this.app.update(this.level, (game) => game.erase(i), { a: "erase", c: i });
+    else this.app.update(this.level, (game) => game.place(i, digit, this.app.nowMs()), { a: "place", c: i, d: digit });
   }
 
   #erase(): void {
-    if (this.#selected >= 0 && !this.#paused) this.app.update(this.level, (g) => g.erase(this.#selected));
+    const i = this.#selected;
+    if (i >= 0 && !this.#paused) this.app.update(this.level, (g) => g.erase(i), { a: "erase", c: i });
   }
 
   #undo(): void {
-    if (!this.#paused) this.app.update(this.level, (g) => g.undo());
+    if (!this.#paused) this.app.update(this.level, (g) => g.undo(), { a: "undo" });
   }
 
   #toggleNotes(): void {
     this.#notesMode = !this.#notesMode;
+    this.app.log(this.level, { a: "notes", on: this.#notesMode });
     this.update();
   }
 
@@ -102,6 +102,7 @@ export class PlayScreen extends Component {
   }
 
   readonly #onVisibility = (): void => {
+    this.app.log(this.level, { a: document.hidden ? "hidden" : "visible" });
     if (document.hidden) this.#pause();
   };
 
@@ -157,7 +158,7 @@ export class PlayScreen extends Component {
           h("button", { disabled: paused, onclick: () => this.#erase() }, "Erase"),
           h("button", {
             disabled: !game.canClearAll || paused, "aria-label": "Clear board",
-            onclick: () => app.update(this.level, (g) => g.clearAll()),
+            onclick: () => app.update(this.level, (g) => g.clearAll(), { a: "clear" }),
           }, "Clear"),
           h("button", {
             class: this.#notesMode && "active", "aria-pressed": String(this.#notesMode),

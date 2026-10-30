@@ -14,6 +14,7 @@ const (
 	CodeBadRequest       = "bad_request"
 	CodeInvalidResult    = "invalid_result"
 	CodeUnauthorized     = "unauthorized"
+	CodeTooLarge         = "too_large"
 	CodeNotFound         = "not_found"
 	CodeMethodNotAllowed = "method_not_allowed"
 	CodeInternal         = "internal"

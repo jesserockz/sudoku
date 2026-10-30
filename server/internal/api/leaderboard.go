@@ -26,6 +26,7 @@ type puzzleEntry struct {
 	UserID      string `json:"userId"`
 	DisplayName string `json:"displayName"`
 	ElapsedMs   int64  `json:"elapsedMs"`
+	Suspicious  bool   `json:"suspicious"`
 }
 
 type totalBoard struct {
@@ -37,6 +38,7 @@ type totalEntry struct {
 	UserID      string `json:"userId"`
 	DisplayName string `json:"displayName"`
 	TotalMs     int64  `json:"totalMs"`
+	Suspicious  bool   `json:"suspicious"`
 }
 
 type playerJSON struct {
@@ -70,6 +72,8 @@ type scored struct {
 	userID int64
 	name   string
 	ms     int64
+	// flagged is set when any of the user's results on the board is flagged.
+	flagged bool
 }
 
 // rank sorts by time, then display name for stable display, and assigns
@@ -96,13 +100,14 @@ func buildLeaderboard(rows []store.DayResult, levels int) leaderboardResponse {
 		name    string
 		levels  []int
 		totalMs int64
+		flagged bool
 	}
 	players := map[int64]*player{}
 	for _, r := range rows {
 		if r.Level < minLevel || r.Level > levels {
 			continue
 		}
-		byLevel[r.Level] = append(byLevel[r.Level], scored{r.UserID, r.DisplayName, r.ElapsedMs})
+		byLevel[r.Level] = append(byLevel[r.Level], scored{r.UserID, r.DisplayName, r.ElapsedMs, r.Flagged})
 		p := players[r.UserID]
 		if p == nil {
 			p = &player{name: r.DisplayName}
@@ -110,6 +115,7 @@ func buildLeaderboard(rows []store.DayResult, levels int) leaderboardResponse {
 		}
 		p.levels = append(p.levels, r.Level)
 		p.totalMs += r.ElapsedMs
+		p.flagged = p.flagged || r.Flagged
 	}
 
 	out := leaderboardResponse{
@@ -122,7 +128,7 @@ func buildLeaderboard(rows []store.DayResult, levels int) leaderboardResponse {
 		ranks := rank(items)
 		entries := make([]puzzleEntry, len(items))
 		for i, it := range items {
-			entries[i] = puzzleEntry{Rank: ranks[i], UserID: userID(it.userID), DisplayName: it.name, ElapsedMs: it.ms}
+			entries[i] = puzzleEntry{Rank: ranks[i], UserID: userID(it.userID), DisplayName: it.name, ElapsedMs: it.ms, Suspicious: it.flagged}
 		}
 		out.Puzzles = append(out.Puzzles, puzzleBoard{Level: level, Entries: entries})
 	}
@@ -132,12 +138,12 @@ func buildLeaderboard(rows []store.DayResult, levels int) leaderboardResponse {
 		slices.Sort(p.levels)
 		out.Players = append(out.Players, playerJSON{UserID: userID(id), DisplayName: p.name, CompletedLevels: p.levels})
 		if len(p.levels) == levels-minLevel+1 {
-			totals = append(totals, scored{id, p.name, p.totalMs})
+			totals = append(totals, scored{id, p.name, p.totalMs, p.flagged})
 		}
 	}
 	ranks := rank(totals)
 	for i, it := range totals {
-		out.Total.Entries = append(out.Total.Entries, totalEntry{Rank: ranks[i], UserID: userID(it.userID), DisplayName: it.name, TotalMs: it.ms})
+		out.Total.Entries = append(out.Total.Entries, totalEntry{Rank: ranks[i], UserID: userID(it.userID), DisplayName: it.name, TotalMs: it.ms, Suspicious: it.flagged})
 	}
 	slices.SortFunc(out.Players, func(a, b playerJSON) int {
 		return cmp.Or(cmp.Compare(a.DisplayName, b.DisplayName), cmp.Compare(a.UserID, b.UserID))

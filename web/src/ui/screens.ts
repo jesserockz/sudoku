@@ -221,10 +221,10 @@ export class ScoresScreen extends Screen {
     // That day's game count: from its leaderboard once loaded (a past week may differ).
     const levels = (board?.puzzles.length || app.puzzles?.length) ?? 0;
 
-    const scoreRow = (rank: number, name: string, ms: number, isMe: boolean) =>
-      h("tr", { class: isMe && "me" },
+    const scoreRow = (rank: number, name: string, ms: number, isMe: boolean, suspicious: boolean) =>
+      h("tr", { class: [isMe && "me", suspicious && "flagged"] },
         h("td", { class: "rank" }, String(rank)),
-        h("td", null, name),
+        h("td", null, name, suspicious && h("span", { class: "badge suspicious", title: "An admin flagged this result as suspicious" }, "suspicious")),
         h("td", { class: "time" }, formatDuration(ms)),
       );
     let body: Child;
@@ -236,13 +236,13 @@ export class ScoresScreen extends Screen {
       body = board.total.entries.length === 0
         ? h("p", { class: "muted" }, `Nobody has finished all ${levels} yet.`)
         : h("table", { class: "board-table" }, h("tbody", null,
-          board.total.entries.map((e) => scoreRow(e.rank, e.displayName, e.totalMs, e.userId === meId))));
+          board.total.entries.map((e) => scoreRow(e.rank, e.displayName, e.totalMs, e.userId === meId, e.suspicious))));
     } else {
       const entries = board.puzzles.find((p) => p.level === tab)?.entries ?? [];
       body = entries.length === 0
         ? h("p", { class: "muted" }, "No one has solved this one yet.")
         : h("table", { class: "board-table" }, h("tbody", null,
-          entries.map((e) => scoreRow(e.rank, e.displayName, e.elapsedMs, e.userId === meId))));
+          entries.map((e) => scoreRow(e.rank, e.displayName, e.elapsedMs, e.userId === meId, e.suspicious))));
     }
 
     const players = board?.players.slice().sort((a, b) =>
@@ -359,6 +359,7 @@ export class AdminScreen extends Screen {
     const list = m.list;
     return [
       topBar("Server admin", back),
+      h("div", { class: "actions" }, h("button", { onclick: () => this.app.openAdminResults() }, "Results and replays")),
       m.loadError && h("div", { class: "notice" }, m.loadError),
       m.error && h("div", { class: "notice" }, m.error),
       list && h("div", { class: "card" },

@@ -20,6 +20,10 @@ export class FakeServer {
     update: { state: "idle", action: "", target: "", message: "", error: "", bytesDone: 0, bytesTotal: 0, startedAt: null, finishedAt: null, rollbackAvailable: false },
   };
   adminStatus: unknown = (this.adminReleases as { update: unknown }).update;
+  /** Answers to the admin results endpoints: the list, one result's replay, and a flag change. */
+  adminResultsList: unknown = { date: "2026-10-27", levels: 5, results: [] };
+  adminReplayDetail: unknown = null;
+  adminFlagResult: unknown = null;
   readonly authMode: "dev" | "oidc";
   readonly now: () => number;
 
@@ -73,6 +77,11 @@ export class FakeServer {
     }
     const user = this.#user(r.headers.get("Authorization"));
     if (!user) return json({ error: { code: "unauthorized", message: "bad token" } }, 401);
+    if (r.url.pathname.startsWith("/api/v1/admin/results")) {
+      if (!this.admin) return json({ error: { code: "forbidden", message: "admin access required" } }, 403);
+      if (r.url.pathname === "/api/v1/admin/results") return json(this.adminResultsList);
+      return json(r.url.pathname.endsWith("/replay") ? this.adminReplayDetail : this.adminFlagResult);
+    }
     switch (r.url.pathname) {
       case "/api/v1/me":
         return json(this.admin === undefined ? user : { ...user, admin: this.admin });
