@@ -140,6 +140,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ needs.draft.outputs.sha }}
+          sparse-checkout: .github/scripts
       - name: Download builds
         uses: actions/download-artifact@v8.0.2
         with:
@@ -164,3 +169,33 @@ jobs:
           gh release view "$TAG" --json assets --jq '.assets[].name' |
             while read -r name; do gh release delete-asset "$TAG" "$name" --yes; done
           gh release upload "$TAG" dist/*
+      - name: Link the downloads in the release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.draft.outputs.tag_name }}
+        run: |
+          # Fetch the full release by id: a PATCH to a draft must re-send its
+          # tag_name, name and target_commitish, or the tag resets to an
+          # untagged-* placeholder.
+          if ! id=$(gh release view "$TAG" --json databaseId --jq .databaseId); then
+            echo "::error::Could not find the draft release $TAG"
+            exit 1
+          fi
+          if ! release=$(gh api "repos/$GH_REPO/releases/$id"); then
+            echo "::error::Could not fetch release $id"
+            exit 1
+          fi
+          if [ "$(jq -r '.draft' <<< "$release")" != "true" ] ||
+            [ "$(jq -r '.tag_name' <<< "$release")" != "$TAG" ]; then
+            echo "::error::Release $id is not the draft for $TAG; not editing it"
+            exit 1
+          fi
+          if ! body=$(.github/scripts/release-body.sh "$GH_REPO" "$TAG" <<< "$release"); then
+            echo "::error::Could not build the release notes"
+            exit 1
+          fi
+          printf '%s\n' "$body"
+          jq --arg body "$body" \
+            '{tag_name, name, target_commitish, prerelease, draft: true, body: $body}' <<< "$release" |
+            gh api -X PATCH "repos/$GH_REPO/releases/$id" --input - --jq '.tag_name'
