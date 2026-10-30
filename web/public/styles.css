@@ -109,10 +109,28 @@ form.login button { margin-top: 16px; width: 100%; }
 .actions a { color: var(--accent); padding: 8px; }
 
 /* Play */
-.play-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
 .timer { font-variant-numeric: tabular-nums; font-size: 1.2rem; font-weight: 600; }
+sudoku-play header.bar > div { display: flex; align-items: center; gap: 4px; }
 
-.board-wrap { position: relative; }
+/* The play screen fills the viewport exactly, so the keypad never needs a
+   scroll. The board is --board wide: as wide as the screen allows, less
+   whatever height the keypad needs. Any space left over is shared equally
+   above the board, between the board and keypad, and below the keypad. */
+sudoku-app:has(> sudoku-play) { padding-bottom: 12px; }
+sudoku-play {
+  --key: clamp(40px, 10dvh, 84px);
+  display: flex; flex-direction: column;
+  height: calc(100vh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  height: calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+}
+sudoku-play > header.bar { flex: none; margin-bottom: 0; }
+.play-area {
+  --board: min(100cqw, 100cqh - 3 * var(--key) - 16px - 24px);
+  flex: 1 1 0; min-height: 0; container-type: size;
+  display: flex; flex-direction: column; align-items: center; justify-content: space-evenly;
+}
+.play-area > * { flex: none; width: 100%; }
+.play-area > .board-box { position: relative; width: var(--board); }
 .board {
   display: grid; grid-template-columns: repeat(9, 1fr);
   aspect-ratio: 1; width: 100%;
@@ -123,7 +141,7 @@ form.login button { margin-top: 16px; width: 100%; }
 .cell {
   position: relative; display: flex; align-items: center; justify-content: center;
   border-right: 1px solid var(--line); border-bottom: 1px solid var(--line);
-  font-size: clamp(18px, 6.2vw, 30px); cursor: pointer; color: var(--entry);
+  font-size: clamp(14px, var(--board) * 0.068, 30px); cursor: pointer; color: var(--entry);
   container-type: size;
 }
 .cell.c2, .cell.c5 { border-right: 2px solid var(--line-strong); }
@@ -139,7 +157,7 @@ form.login button { margin-top: 16px; width: 100%; }
 .notes {
   position: absolute; inset: 1px; display: grid;
   grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr);
-  font-size: clamp(8px, 2.2vw, 11px); color: var(--muted); line-height: 1;
+  font-size: clamp(8px, 22cqmin, 11px); color: var(--muted); line-height: 1;
 }
 .notes span { display: flex; align-items: center; justify-content: center; }
 
@@ -149,12 +167,36 @@ form.login button { margin-top: 16px; width: 100%; }
   background: var(--surface); border: 2px solid var(--line-strong); border-radius: 6px;
 }
 
-.controls { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 12px; }
-.keypad { display: grid; grid-template-columns: repeat(9, 1fr); gap: 4px; margin-top: 8px; }
-.keypad button { padding: 0; min-height: 52px; font-size: 1.4rem; font-weight: 600; }
-.keypad button .left { display: block; font-size: 0.65rem; font-weight: 400; color: var(--muted); }
+/* Digits in a 3x3 grid, actions in a column on the right as tall as the grid. */
+.pad { display: grid; grid-template-columns: 3fr 1fr; gap: 8px; }
+.keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.keypad button {
+  padding: 0; min-height: 0; height: var(--key); overflow: hidden;
+  font-size: min(2rem, var(--key) * 0.42); font-weight: 600; line-height: 1.1;
+  touch-action: manipulation;
+}
+.keypad button .left { display: block; font-size: 0.75rem; font-weight: 400; color: var(--muted); }
+.controls { display: grid; grid-template-rows: repeat(4, 1fr); gap: 8px; }
+.controls button { padding: 4px; min-height: 0; font-size: 0.95rem; touch-action: manipulation; }
 
-.solved { text-align: center; margin-top: 12px; }
+/* Short landscape screens (a phone on its side): the board takes the full
+   height under the top bar, with the pad beside it at the same height. */
+@media (orientation: landscape) and (max-height: 560px) {
+  sudoku-app:has(> sudoku-play) { max-width: 900px; padding-top: 4px; padding-bottom: 8px; }
+  sudoku-play {
+    height: calc(100vh - 12px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    height: calc(100dvh - 12px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  }
+  .play-area { --board: min(100cqh, 50cqw - 8px); flex-direction: row; justify-content: center; gap: 16px; }
+  .play-area > * { width: auto; }
+  .play-area > .pad { flex: 1 1 0; height: var(--board); }
+  .play-area > .solved { flex: 1 1 0; }
+  .pad sudoku-keypad, .pad .keypad { height: 100%; }
+  .pad .keypad { grid-template-rows: repeat(3, 1fr); }
+  .pad .keypad button { height: auto; font-size: 2rem; }
+}
+
+.solved { text-align: center; }
 .solved .big { font-size: 1.6rem; font-weight: 700; color: var(--done); }
 
 /* Leaderboard */
