@@ -4,4 +4,4 @@ package version
 // Version is the server's release version. The release workflow bumps it;
 // a build can override it with
 // -ldflags "-X github.com/jesserockz/sudoku/server/internal/version.Version=...".
-var Version = "0.1.0"
+var Version = "0.1.1"
