@@ -28,7 +28,8 @@ jobs:
     outputs:
       tag_name: ${{ steps.drafter.outputs.tag_name }}
     steps:
-      - id: drafter
+      - name: Update draft release
+        id: drafter
         uses: release-drafter/release-drafter@978bb0b30c5ee8cdd332ced253758157150d43f0  # v7.10.0
 
   server:
@@ -39,14 +40,17 @@ jobs:
       run:
         working-directory: server
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
       - name: Static build (linux/amd64, linux/arm64)
         run: make dist
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+      - name: Upload server binaries
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: release-server
           path: server/dist/
@@ -57,8 +61,10 @@ jobs:
     needs: draft
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: 22
           cache: npm
@@ -67,7 +73,8 @@ jobs:
         working-directory: web
         run: npm ci && npm run build
       # Makes $RUNNER_TEMP/artifact.tar, the archive GitHub Pages deploys.
-      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9  # v5.0.0
+      - name: Archive for GitHub Pages
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9  # v5.0.0
         with:
           path: web/dist/
       - name: Package
@@ -75,7 +82,8 @@ jobs:
           mkdir -p dist
           cp "$RUNNER_TEMP/artifact.tar" dist/sudoku-web-pages.tar
           (cd web/dist && zip -qr "$GITHUB_WORKSPACE/dist/sudoku-web.zip" .)
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+      - name: Upload web bundle
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: release-web
           path: dist/
@@ -88,7 +96,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+      - name: Download builds
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           pattern: release-*
           path: dist
