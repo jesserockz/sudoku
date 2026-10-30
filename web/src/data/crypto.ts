@@ -1,13 +1,27 @@
-/** WebCrypto: browsers (secure contexts: HTTPS or localhost) and Node.js. */
+/**
+ * WebCrypto where it's available: Node.js, and browsers in secure contexts
+ * (HTTPS or localhost). Over plain http (e.g. on a LAN) browsers leave out
+ * `crypto.subtle`, so hashing falls back to a pure-TS implementation with the
+ * same output. `crypto.getRandomValues` works in any context.
+ */
+import { hmacSha256Bytes, sha256Bytes } from "./sha256.ts";
+
 const encoder = new TextEncoder();
 
-export async function hmacSha256(key: string, message: string): Promise<Uint8Array> {
-  const k = await crypto.subtle.importKey("raw", encoder.encode(key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  return new Uint8Array(await crypto.subtle.sign("HMAC", k, encoder.encode(message)));
+/** `crypto.subtle`, or `null` outside a secure context. */
+export function webSubtle(): SubtleCrypto | null {
+  return globalThis.crypto?.subtle ?? null;
 }
 
-export async function sha256(text: string): Promise<Uint8Array> {
-  return new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(text)));
+export async function hmacSha256(key: string, message: string, subtle: SubtleCrypto | null = webSubtle()): Promise<Uint8Array> {
+  if (!subtle) return hmacSha256Bytes(encoder.encode(key), encoder.encode(message));
+  const k = await subtle.importKey("raw", encoder.encode(key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return new Uint8Array(await subtle.sign("HMAC", k, encoder.encode(message)));
+}
+
+export async function sha256(text: string, subtle: SubtleCrypto | null = webSubtle()): Promise<Uint8Array> {
+  if (!subtle) return sha256Bytes(encoder.encode(text));
+  return new Uint8Array(await subtle.digest("SHA-256", encoder.encode(text)));
 }
 
 export function randomBytes(size: number): Uint8Array {
