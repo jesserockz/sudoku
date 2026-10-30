@@ -63,6 +63,38 @@ version and the server's (from `version` in `GET /api/v1/config`, fetched when
 the screen opens): "unknown" for a server that doesn't report one, "Can't
 reach the server" when offline, and "Not connected" when playing with a seed.
 It also links to the GitHub repository and releases.
+Admins (see below) also get an **Admin** button there.
+
+## Admin
+
+`GET /api/v1/me` reports `admin: true` for accounts the server's `[admin]`
+config recognises (older servers don't send it, which reads as false). Only
+those users, signed in to a server, see an **Admin** button on the About
+screen, which opens the **Server admin** page. It updates the server binary
+only; the web client is updated separately.
+
+The page shows the running version and platform, and the recent GitHub
+releases (prereleases only with "Show prereleases") with Latest, Current and
+Prerelease badges. Each installable release has a button: "Update to",
+"Reinstall" or "Downgrade to" (or "Install" when the versions can't be
+compared). Choosing one asks for confirmation on the page; reinstalling and
+downgrading get an extra warning, and only those send `allowDowngrade: true`.
+Releases the server can't install (no asset for its platform, or no
+`SHA256SUMS`) are listed with the reason.
+
+After `POST /api/v1/admin/update` the page polls `GET /api/v1/admin/update`
+every second, showing the server's message and a progress bar from
+`bytesDone` / `bytesTotal` (indeterminate when the total is unknown). When the
+server is `restarting` (or stops answering, as it restarts) the page polls
+`GET /api/v1/config` until `version` matches the target, giving up after two
+minutes, and then reports "Updated to X" or what went wrong. A failure
+reported by the server shows its error. If the page is opened while an update
+is under way it picks it up. When the server has a previous binary, "Roll back
+to previous binary" does the same after a confirmation. Errors show the
+server's message; a 403 reads "Your account isn't an admin".
+
+The logic is in `src/ui/admin.ts` (`AdminModel`, with an injected clock and
+sleep so tests don't wait); `AdminScreen` in `screens.ts` only renders it.
 
 ## Puzzles
 

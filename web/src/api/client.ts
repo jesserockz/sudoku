@@ -1,6 +1,6 @@
 import {
-  type ApiError, type AppConfig, type GameResult, type Leaderboard, type Me, type MyResults, type Week,
-  decodeApiError, decodeAppConfig, decodeGameResult, decodeLeaderboard, decodeMe, decodeMyResults, decodeWeek,
+  type ApiError, type AppConfig, type GameResult, type Leaderboard, type Me, type MyResults, type ReleaseList, type UpdateStatus, type Week,
+  decodeApiError, decodeAppConfig, decodeGameResult, decodeLeaderboard, decodeMe, decodeMyResults, decodeReleaseList, decodeUpdateStatus, decodeWeek,
 } from "./models.ts";
 
 /** A non-2xx API response. `error` is the parsed error envelope, when there was one. */
@@ -88,6 +88,34 @@ export class SudokuApi {
     if (response.status === 200) return { kind: "stored", result: decodeGameResult(await response.json()) };
     if (response.status === 400) return { kind: "rejected", error: await errorOf(response) };
     throw new ApiException(response.status, await errorOf(response));
+  }
+
+  /** Admin only: the server's version and its recent GitHub releases. */
+  async adminReleases(includePrereleases = false): Promise<ReleaseList> {
+    return decodeReleaseList(await this.#get("admin/releases" + (includePrereleases ? "?prereleases=true" : "")));
+  }
+
+  /** Admin only: how the running or last update is going. */
+  async adminUpdateStatus(): Promise<UpdateStatus> {
+    return decodeUpdateStatus(await this.#get("admin/update"));
+  }
+
+  /** Admin only: installs release `tag` and restarts (202). `allowDowngrade` confirms a reinstall or downgrade. */
+  async startUpdate(tag: string, allowDowngrade = false): Promise<UpdateStatus> {
+    return this.#post("admin/update", { tag, allowDowngrade });
+  }
+
+  /** Admin only: swaps the previous binary back in and restarts (202). */
+  async rollback(): Promise<UpdateStatus> {
+    return this.#post("admin/rollback");
+  }
+
+  async #post(path: string, body?: unknown): Promise<UpdateStatus> {
+    const headers = await this.#headers(true);
+    if (body !== undefined) headers["Content-Type"] = "application/json";
+    const response = await this.#fetch(this.#base + path, { method: "POST", headers, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+    if (!response.ok) throw new ApiException(response.status, await errorOf(response));
+    return decodeUpdateStatus(await response.json());
   }
 
   async #get(path: string, auth = true): Promise<unknown> {

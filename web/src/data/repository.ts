@@ -114,6 +114,11 @@ export class SudokuRepository {
     return this.#puzzleCache.puzzles;
   }
 
+  /** The signed-in API client, for calls that don't need caching here (the admin page). */
+  api(): SudokuApi {
+    return this.#client();
+  }
+
   /** `GET /config` on a server that isn't saved yet (first-run setup). */
   fetchConfig(serverUrl: string): Promise<AppConfig> {
     return new SudokuApi(normalizeUrl(serverUrl), async () => null, this.#fetch).config();

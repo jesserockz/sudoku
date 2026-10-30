@@ -41,6 +41,16 @@ overrides. Environment wins.
 | `oidc.audience`      | `SUDOKU_OIDC_AUDIENCE`  | `[client_id]`                        |
 | `oidc.client_id`     | `SUDOKU_OIDC_CLIENT_ID` |                                      |
 | `oidc.scopes`        | `SUDOKU_OIDC_SCOPES`    | `["openid","profile","offline_access"]` |
+| `admin.claim`        | `SUDOKU_ADMIN_CLAIM`    | empty (nobody is admin)              |
+| `admin.values`       | `SUDOKU_ADMIN_VALUES`   | empty; set together with the claim   |
+
+`admin.claim` and `admin.values` choose who may use the admin endpoints
+(self-update): a caller is admin if that access-token claim (a string or a
+list of strings; a dot path such as `realm_access.roles` reaches nested
+claims) equals one of the values. In `dev` auth mode the only claims are
+`sub` and `name`, so use `claim = "sub"`, `values = ["ann"]` for the token
+`dev:ann:Ann`. See
+`docs/API.md` and `deploy/README.md`.
 
 List env vars are comma or space separated. `server_secret` keys the weekly
 seed and must never change once the deployment is live.

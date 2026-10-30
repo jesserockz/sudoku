@@ -32,7 +32,10 @@ npm run build`) and copy `web/dist` (the directory containing `index.html`).
 apt install sqlite3            # for backups and ad-hoc inspection
 useradd --system --home /var/lib/sudoku --shell /usr/sbin/nologin sudoku
 
-install -m 0755 sudoku-server /usr/local/bin/sudoku-server
+# The binary directory is owned by the service user so the server can replace
+# its own binary (see "Updating from the web").
+install -d -m 0755 -o sudoku -g sudoku /opt/sudoku/bin
+install -m 0755 -o sudoku -g sudoku sudoku-server /opt/sudoku/bin/sudoku-server
 install -m 0755 deploy/sudoku-backup.sh /usr/local/bin/sudoku-backup
 
 install -d -m 0755 /opt/sudoku/web
@@ -49,7 +52,7 @@ systemctl daemon-reload
 ```
 
 Edit `/etc/sudoku/config.toml`: set the Authentik `issuer`, `client_id` and
-`audience` (see below).
+`audience` (see below), and optionally the admin group.
 
 **Back up `/etc/sudoku/env` somewhere safe.** The server secret determines
 every week's puzzles; losing or changing it changes all of them.
@@ -77,7 +80,28 @@ The server fetches `<issuer>.well-known/openid-configuration` and the JWKS
 on the first authenticated request, so the LXC needs outbound HTTPS to
 Authentik.
 
-## 4. Caddy
+## 4. Admins (optional)
+
+Self-update is available to admins only. Nobody is admin until you set
+`[admin]` in `/etc/sudoku/config.toml` (or `SUDOKU_ADMIN_CLAIM` /
+`SUDOKU_ADMIN_VALUES`): a caller is admin if the access-token claim named by
+`claim` equals one of `values`. The claim can be a string or a list of
+strings, and a dot-separated path reaches nested claims.
+
+With Authentik, create a group (e.g. `sudoku-admins`), add yourself, and make
+sure the `groups` claim is in the access token (the default `profile` scope
+mapping adds it):
+
+```toml
+[admin]
+claim = "groups"
+values = ["sudoku-admins"]
+```
+
+`claim` and `values` must be set together. Restart the service after
+changing them.
+
+## 5. Caddy
 
 Merge `Caddyfile.snippet` into the existing Caddy config and reload. If Caddy
 runs in a different container, bind the server to the LXC's address
@@ -107,13 +131,45 @@ systemctl start sudoku-server
 ## Upgrading
 
 ```sh
-install -m 0755 sudoku-server /usr/local/bin/sudoku-server
+install -m 0755 -o sudoku -g sudoku sudoku-server /opt/sudoku/bin/sudoku-server
 rsync -a --delete path/to/web-build/ /opt/sudoku/web/
 systemctl restart sudoku-server
 ```
 
 Database migrations run automatically at startup. Take a backup first
 (`systemctl start sudoku-backup`).
+
+## Updating from the web
+
+An admin (see "Admins") can update the server from the **Admin** page, reached
+from the About screen. It lists the GitHub releases, downloads the binary for
+this host (`sudoku-server-<os>-<arch>`), verifies it against the release's
+`SHA256SUMS`, replaces `/opt/sudoku/bin/sudoku-server` and restarts the
+service. The server exits with status 75 and systemd starts the new binary,
+which relies on `Restart=on-failure` in the unit.
+
+Requirements:
+
+- `/opt/sudoku/bin` owned by the `sudoku` user and listed in `ReadWritePaths=`
+  in the unit (both are in the instructions above). If either is missing the
+  page reports that the directory is not writable and names it.
+- Outbound HTTPS to `api.github.com` and GitHub's release storage.
+- The release must have been published with a `SHA256SUMS` asset.
+
+The previous binary is kept as `/opt/sudoku/bin/sudoku-server.previous`, and
+the Admin page can roll back to it. To roll back by hand (for example if the
+new version does not start):
+
+```sh
+mv /opt/sudoku/bin/sudoku-server.previous /opt/sudoku/bin/sudoku-server
+systemctl restart sudoku-server
+```
+
+This updates the **server binary only**. The web client in `web_dir`
+(`/opt/sudoku/web`) is separate: update it with the `rsync` step above.
+Moving from an older install: copy the binary to `/opt/sudoku/bin`, update
+`ExecStart` and add `ReadWritePaths` (the unit in this directory has both),
+then `systemctl daemon-reload`.
 
 ## Troubleshooting
 

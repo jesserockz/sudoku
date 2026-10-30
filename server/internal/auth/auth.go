@@ -26,6 +26,8 @@ type Identity struct {
 	// Subject is the stable key for the local user record.
 	Subject     string
 	DisplayName string
+	// Claims is the token's full claim set, for authorization decisions.
+	Claims map[string]any
 }
 
 type Verifier interface {
@@ -51,9 +53,39 @@ func displayName(name, preferredUsername, sub string) string {
 	return sub
 }
 
-// Dev trusts tokens of the form "dev:<sub>:<display name>". Never use it in
-// production. Dev subjects are stored as "dev:<sub>" so they can never
-// collide with OIDC users in the same database.
+// HasClaimValue reports whether the claim at the dot-separated path holds one
+// of values: either as a string or as an element of a list of strings.
+// Missing claims, wrong types and empty paths or value lists never match.
+func HasClaimValue(claims map[string]any, path string, values []string) bool {
+	if path == "" || len(values) == 0 {
+		return false
+	}
+	var cur any = claims
+	for _, key := range strings.Split(path, ".") {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return false
+		}
+		if cur, ok = m[key]; !ok {
+			return false
+		}
+	}
+	switch v := cur.(type) {
+	case string:
+		return slices.Contains(values, v)
+	case []any:
+		return slices.ContainsFunc(v, func(e any) bool {
+			s, ok := e.(string)
+			return ok && slices.Contains(values, s)
+		})
+	}
+	return false
+}
+
+// Dev trusts tokens of the form "dev:<sub>:<display name>". Its claims are
+// just sub and name, so dev mode admin is configured with claim "sub".
+// Never use it in production. Dev subjects are stored as "dev:<sub>" so they
+// can never collide with OIDC users in the same database.
 type Dev struct{}
 
 func (Dev) Verify(_ context.Context, token string) (Identity, error) {
@@ -66,7 +98,8 @@ func (Dev) Verify(_ context.Context, token string) (Identity, error) {
 	if len(parts) == 3 {
 		name = parts[2]
 	}
-	return Identity{Subject: "dev:" + sub, DisplayName: displayName(name, "", sub)}, nil
+	claims := map[string]any{"sub": sub, "name": name}
+	return Identity{Subject: "dev:" + sub, DisplayName: displayName(name, "", sub), Claims: claims}, nil
 }
 
 // OIDC verifies JWT access tokens: signature against the issuer's JWKS,
@@ -99,16 +132,15 @@ func (o *OIDC) Verify(ctx context.Context, token string) (Identity, error) {
 	if tok.Subject == "" {
 		return Identity{}, fmt.Errorf("%w: missing sub", ErrInvalidToken)
 	}
-	var claims struct {
-		Name              string `json:"name"`
-		PreferredUsername string `json:"preferred_username"`
-	}
-	if err := tok.Claims(&claims); err != nil {
-		return Identity{}, fmt.Errorf("%w: %v", ErrInvalidToken, err)
-	}
+	// Verify already decoded the payload as a JSON object, so this cannot fail.
+	var all map[string]any
+	_ = tok.Claims(&all)
+	name, _ := all["name"].(string)
+	preferred, _ := all["preferred_username"].(string)
 	return Identity{
 		Subject:     tok.Subject,
-		DisplayName: displayName(claims.Name, claims.PreferredUsername, tok.Subject),
+		DisplayName: displayName(name, preferred, tok.Subject),
+		Claims:      all,
 	}, nil
 }
 

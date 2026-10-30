@@ -38,3 +38,14 @@ scopes = ["openid", "profile", "offline_access"]
 # Accepted aud values. Authentik sets aud to the client id, so list every
 # client that calls the API.
 audience = ["sudoku-web"]
+
+# Who may use the admin page (self-update). Leave commented out and nobody is
+# admin. A caller is admin if the access-token claim named by `claim` (a
+# string, or a list of strings) equals one of `values`. A dot-separated claim
+# reaches nested claims, e.g. "realm_access.roles" for Keycloak. Both must be
+# set together. With Authentik, add the "groups" claim to the access token
+# (the default "profile" scope mapping already does) and put the admins in a
+# group with this name.
+# [admin]
+# claim = "groups"
+# values = ["sudoku-admins"]

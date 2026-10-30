@@ -3,7 +3,7 @@
 import { dayOfWeek, inWeek, isIsoDate } from "../game/calendar.ts";
 import { DEFAULT_LEVELS, generateDay, type Puzzle } from "../generator/generator.ts";
 import { parseWeekSeed } from "../generator/week-seed.ts";
-import { list, num, obj, optional, str } from "../data/store.ts";
+import { bool, list, num, obj, optional, str } from "../data/store.ts";
 
 export interface ApiError {
   code: string;
@@ -43,6 +43,58 @@ export interface Week {
 export interface Me {
   id: string;
   displayName: string;
+  /** May update the server (see `admin` in the server config). Older servers don't send it: false. */
+  admin: boolean;
+}
+
+/** How a release's version compares with the running server's; `unknown` when either isn't semver. */
+export type Comparison = "newer" | "same" | "older" | "unknown";
+
+/** The running server binary, from `GET /api/v1/admin/releases`. */
+export interface CurrentBuild {
+  version: string;
+  os: string;
+  arch: string;
+  asset: string;
+}
+
+/** One GitHub release, from `GET /api/v1/admin/releases`. */
+export interface Release {
+  tag: string;
+  version: string;
+  name: string;
+  publishedAt: string;
+  prerelease: boolean;
+  latest: boolean;
+  current: boolean;
+  comparison: Comparison;
+  installable: boolean;
+  notInstallableReason: string;
+  url: string;
+}
+
+export type UpdateState = "idle" | "downloading" | "verifying" | "installing" | "restarting" | "failed";
+
+/** `GET /api/v1/admin/update`, and the 202 answer of the update and rollback requests. */
+export interface UpdateStatus {
+  state: UpdateState;
+  action: "update" | "rollback" | "";
+  target: string;
+  message: string;
+  error: string;
+  bytesDone: number;
+  /** 0 when unknown. */
+  bytesTotal: number;
+  startedAt: string | null;
+  finishedAt: string | null;
+  rollbackAvailable: boolean;
+}
+
+/** `GET /api/v1/admin/releases` */
+export interface ReleaseList {
+  current: CurrentBuild;
+  releases: Release[];
+  update: UpdateStatus;
 }
 
 /** One result: the body of `POST /api/v1/results` and its response. `completedAt` is RFC 3339 with offset. */
@@ -112,7 +164,46 @@ export function decodeWeek(json: unknown): Week {
 
 export function decodeMe(json: unknown): Me {
   const o = obj(json);
-  return { id: str(o.id), displayName: str(o.displayName) };
+  return { id: str(o.id), displayName: str(o.displayName), admin: optional(o.admin, bool) ?? false };
+}
+
+const oneOf = <T extends string>(what: string, allowed: readonly T[]) => (json: unknown): T => {
+  const s = str(json);
+  if (!(allowed as readonly string[]).includes(s)) throw new TypeError(`unknown ${what}: ${s}`);
+  return s as T;
+};
+
+export function decodeRelease(json: unknown): Release {
+  const o = obj(json);
+  return {
+    tag: str(o.tag), version: str(o.version), name: optional(o.name, str) ?? "", publishedAt: optional(o.publishedAt, str) ?? "",
+    prerelease: bool(o.prerelease), latest: bool(o.latest), current: bool(o.current),
+    comparison: oneOf("comparison", ["newer", "same", "older", "unknown"] as const)(o.comparison),
+    installable: bool(o.installable), notInstallableReason: optional(o.notInstallableReason, str) ?? "",
+    url: optional(o.url, str) ?? "",
+  };
+}
+
+export function decodeUpdateStatus(json: unknown): UpdateStatus {
+  const o = obj(json);
+  return {
+    state: oneOf("update state", ["idle", "downloading", "verifying", "installing", "restarting", "failed"] as const)(o.state),
+    action: optional(o.action, oneOf("action", ["update", "rollback", ""] as const)) ?? "",
+    target: optional(o.target, str) ?? "", message: optional(o.message, str) ?? "", error: optional(o.error, str) ?? "",
+    bytesDone: optional(o.bytesDone, num) ?? 0, bytesTotal: optional(o.bytesTotal, num) ?? 0,
+    startedAt: optional(o.startedAt, str), finishedAt: optional(o.finishedAt, str),
+    rollbackAvailable: optional(o.rollbackAvailable, bool) ?? false,
+  };
+}
+
+export function decodeReleaseList(json: unknown): ReleaseList {
+  const o = obj(json);
+  const c = obj(o.current);
+  return {
+    current: { version: str(c.version), os: str(c.os), arch: str(c.arch), asset: str(c.asset) },
+    releases: list(o.releases, decodeRelease),
+    update: decodeUpdateStatus(o.update),
+  };
 }
 
 export function decodeDayResult(json: unknown): DayResult {

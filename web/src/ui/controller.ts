@@ -7,6 +7,7 @@ import type { Puzzle } from "../generator/generator.ts";
 import { fingerprint, sameSettings, type SeedSettings } from "../serverless/seed.ts";
 import type { SeedProfile, SeedRepository, SeedResult } from "../serverless/seed-repository.ts";
 import { buildShareLink, parseShareLink } from "../serverless/share-link.ts";
+import { AdminModel } from "./admin.ts";
 
 /** Register `<origin>/auth/callback` as the redirect URI with the identity provider. */
 export const CALLBACK_PATH = "/auth/callback";
@@ -32,7 +33,9 @@ export type Screen =
   | { kind: "scores"; date: string; tab: number }
   /** Serverless play's local history of solve times. */
   | { kind: "history" }
-  | { kind: "about" };
+  | { kind: "about" }
+  /** Server admin: update the server binary. Only for `me.admin`. */
+  | { kind: "admin" };
 
 /** The server's side of the About screen. */
 export type ServerInfo =
@@ -97,6 +100,8 @@ export class AppController extends EventTarget {
   notice: string | null = null;
   /** What the About screen shows for the server; fetched when it's opened. */
   serverInfo: ServerInfo = { kind: "none" };
+  /** The Admin screen's state, while it is open. */
+  admin: AdminModel | null = null;
 
   readonly #repo: SudokuRepository;
   readonly #seeds: SeedRepository;
@@ -359,6 +364,19 @@ export class AppController extends EventTarget {
     ).then((serverInfo) => {
       if (this.screen.kind === "about") this.#set({ serverInfo });
     });
+  }
+
+  /** The Admin screen, for an admin signed in to a server. It loads the releases and follows any update under way. */
+  openAdmin(): void {
+    if (this.seed || !this.me?.admin) return;
+    const model = new AdminModel(this.#repo.api(), {
+      serverVersion: async () => (await this.#repo.fetchConfig(this.#repo.settings().serverUrl)).version ?? null,
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      now: () => this.#host.nowMs(),
+    });
+    this.admin = model;
+    this.#set({ screen: { kind: "admin" } });
+    void model.load();
   }
 
   // Sign-in

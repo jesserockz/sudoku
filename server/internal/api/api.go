@@ -24,6 +24,9 @@ type Deps struct {
 	Verifier auth.Verifier
 	// Web serves the web client for every other GET path; nil disables it.
 	Web http.Handler
+	// Updater backs the admin self-update routes; nil makes them answer 409
+	// update_unavailable.
+	Updater Updater
 }
 
 type Server struct {
@@ -55,6 +58,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/me/results", s.requireAuth(s.getMyResults))
 	s.mux.HandleFunc("POST /api/v1/results", s.requireAuth(s.postResult))
 	s.mux.HandleFunc("GET /api/v1/leaderboard", s.requireAuth(s.getLeaderboard))
+	s.mux.HandleFunc("GET /api/v1/admin/releases", s.requireAdmin(s.getAdminReleases))
+	s.mux.HandleFunc("POST /api/v1/admin/update", s.requireAdmin(s.postAdminUpdate))
+	s.mux.HandleFunc("GET /api/v1/admin/update", s.requireAdmin(s.getAdminUpdate))
+	s.mux.HandleFunc("POST /api/v1/admin/rollback", s.requireAdmin(s.postAdminRollback))
 	if s.deps.Web != nil {
 		s.mux.HandleFunc("GET /", s.static)
 	}
