@@ -285,10 +285,10 @@ the same way: upload the contents of `web/dist`, or unzip a release's
 release with [Release Drafter](https://github.com/release-drafter/release-drafter)
 (notes from merged pull requests, grouped and versioned by their labels, see
 `.github/release-drafter.yml`) and attaches fresh builds to it: the server
-binaries, `sudoku-web.zip` and `sudoku-web-pages.tar`. Publishing the draft
-deploys that `sudoku-web-pages.tar` to Pages as is, without rebuilding, so the
-site is exactly what was attached to the draft. Running **Web (GitHub Pages)**
-by hand redeploys the latest release, or the tag given.
+binaries and `sudoku-web.zip`. Publishing the draft deploys the files in that
+`sudoku-web.zip` to Pages as they are, without rebuilding, so the site is
+exactly what was attached to the draft. Running **Web (GitHub Pages)** by hand
+redeploys the latest release, or the tag given.
 
 **Checking it** end to end, at the root and under a sub-path of plain static
 servers with no `/api`:

@@ -3,8 +3,8 @@ name: Release
 # On every push to main, Release Drafter updates the draft release's notes and
 # this workflow rebuilds the server and the web client and attaches them to the
 # draft, replacing what was there. Publishing the release deploys its attached
-# `sudoku-web-pages.tar` to GitHub Pages as is (pages.yml), so the site is
-# exactly the bundle that was attached to the draft.
+# `sudoku-web.zip` to GitHub Pages without rebuilding (pages.yml), so the site
+# is exactly the bundle that was attached to the draft.
 
 on:
   push:
@@ -72,15 +72,9 @@ jobs:
       - name: Build
         working-directory: web
         run: npm ci && npm run build
-      # Makes $RUNNER_TEMP/artifact.tar, the archive GitHub Pages deploys.
-      - name: Archive for GitHub Pages
-        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9  # v5.0.0
-        with:
-          path: web/dist/
       - name: Package
         run: |
           mkdir -p dist
-          cp "$RUNNER_TEMP/artifact.tar" dist/sudoku-web-pages.tar
           (cd web/dist && zip -qr "$GITHUB_WORKSPACE/dist/sudoku-web.zip" .)
       - name: Upload web bundle
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2

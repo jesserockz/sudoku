@@ -2,8 +2,8 @@ name: Web (GitHub Pages)
 
 # Publishes the web client to GitHub Pages for serverless (seed) play, e.g.
 # https://<owner>.github.io/<repo>/, when a release is published. It deploys
-# the release's attached `sudoku-web-pages.tar` (built by release.yml for the
-# draft) byte for byte, without rebuilding. Running it by hand redeploys the
+# the files in the release's attached `sudoku-web.zip` (built by release.yml
+# for the draft) as they are, without rebuilding. Running it by hand redeploys the
 # latest release, or the one named. Needs Settings → Pages → Source set to
 # "GitHub Actions". See docs/WEB.md, "Hosting without a server".
 
@@ -33,21 +33,19 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Download the release's Pages artifact
+      - name: Download the release's web bundle
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
-          gh release download $TAG --pattern sudoku-web-pages.tar --output "$RUNNER_TEMP/artifact.tar"
-          tar -tf "$RUNNER_TEMP/artifact.tar" | grep -qx './index.html'
-      - name: Upload as the Pages artifact
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+          gh release download $TAG --pattern sudoku-web.zip --output "$RUNNER_TEMP/sudoku-web.zip"
+          unzip -q "$RUNNER_TEMP/sudoku-web.zip" -d "$RUNNER_TEMP/site"
+          test -f "$RUNNER_TEMP/site/index.html"
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9  # v5.0.0
         with:
-          name: github-pages
-          path: ${{ runner.temp }}/artifact.tar
-          retention-days: 1
-          if-no-files-found: error
+          path: ${{ runner.temp }}/site/
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346  # v5.0.1
