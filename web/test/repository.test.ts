@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
 import { SudokuApi } from "../src/api/client.ts";
 import type { GameResult } from "../src/api/models.ts";
-import { TokenSession } from "../src/api/oidc.ts";
+import { OidcException, TokenSession, defaultLock, type TokenResponse } from "../src/api/oidc.ts";
 import { AppStorage, type StoredTokens } from "../src/data/app-storage.ts";
 import { SudokuRepository, SignInError, normalizeUrl } from "../src/data/repository.ts";
 import { ResultSync, isUnauthorized } from "../src/data/result-sync.ts";
@@ -285,6 +285,77 @@ test("token session: refresh margin, rotation and failures", async () => {
   failWith = new OidcException(400, "invalid_grant", null);
   assert.equal(await session.token(), null);
   assert.equal(tokens, null);
+});
+
+/** Two TokenSessions over one shared store, like two tabs. */
+function twoTabs(lock: ReturnType<typeof defaultLock> | undefined, refresh: (rt: string) => Promise<TokenResponse>) {
+  let tokens: StoredTokens | null = { accessToken: "old", refreshToken: "r1", idToken: null, expiresAtEpochMs: now + 10_000 };
+  const make = () => new TokenSession(() => tokens, (t) => { tokens = t; }, refresh, clock, 60_000, lock);
+  return { a: make(), b: make(), get tokens() { return tokens; }, set tokens(t) { tokens = t; } };
+}
+
+test("token session: a shared lock makes two tabs refresh once", async () => {
+  let refreshes = 0;
+  let tail: Promise<unknown> = Promise.resolve();
+  const shared = <T,>(section: () => Promise<T>): Promise<T> => {
+    const r = tail.then(section);
+    tail = r.catch(() => undefined);
+    return r;
+  };
+  const tabs = twoTabs(shared, async (rt) => {
+    refreshes++;
+    if (rt !== "r1") throw new OidcException(400, "invalid_grant", null);
+    await Promise.resolve();
+    return { accessToken: "new", expiresIn: 300, refreshToken: "r2", idToken: null };
+  });
+  assert.deepEqual(await Promise.all([tabs.a.token(), tabs.b.token()]), ["new", "new"]);
+  assert.equal(refreshes, 1);
+  assert.equal(tabs.tokens!.refreshToken, "r2");
+});
+
+test("token session: refresh token rotated by another tab does not log out", async () => {
+  const tabs = twoTabs(undefined, async () => {
+    // The other tab rotates the token while our request is in flight.
+    tabs.tokens = { accessToken: "theirs", refreshToken: "r2", idToken: null, expiresAtEpochMs: now + 300_000 };
+    throw new OidcException(400, "invalid_grant", null);
+  });
+  assert.equal(await tabs.a.token(), "theirs");
+  assert.equal(tabs.tokens!.refreshToken, "r2");
+});
+
+test("token session: a genuine invalid_grant still ends the session", async () => {
+  const tabs = twoTabs(undefined, async () => { throw new OidcException(400, "invalid_grant", null); });
+  assert.equal(await tabs.a.token(), null);
+  assert.equal(tabs.tokens, null);
+});
+
+test("token session: a rejection after the tokens were cleared elsewhere ends the session", async () => {
+  const tabs = twoTabs(undefined, async () => {
+    tabs.tokens = null;
+    throw new OidcException(400, "invalid_grant", null);
+  });
+  assert.equal(await tabs.a.token(), null);
+});
+
+test("default lock uses navigator.locks when present, else the mutex", async () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  const requested: string[] = [];
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { locks: { request: (name: string, cb: () => Promise<unknown>) => { requested.push(name); return cb(); } } },
+    });
+    assert.equal(await defaultLock("x")(async () => 1), 1);
+    assert.deepEqual(requested, ["x"]);
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: {} });
+    assert.equal(await defaultLock("x")(async () => 2), 2);
+    assert.deepEqual(requested, ["x"]);
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: undefined });
+    assert.equal(await defaultLock()(async () => 3), 3);
+  } finally {
+    if (original) Object.defineProperty(globalThis, "navigator", original);
+    else delete (globalThis as { navigator?: unknown }).navigator;
+  }
 });
 
 test("the API client sends the bearer token and reports errors", async () => {
