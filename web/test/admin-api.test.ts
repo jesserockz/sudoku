@@ -40,6 +40,8 @@ test("releases and update status decode, with optional fields defaulted", () => 
   const list = decodeReleaseList({ current: { version: "1.2.3", os: "linux", arch: "arm64", asset: "a" }, releases: [release], update: status });
   assert.equal(list.releases.length, 1);
   assert.equal(list.current.arch, "arm64");
+  assert.equal(list.current.updatesWeb, false);
+  assert.equal(decodeReleaseList({ current: { version: "1", os: "linux", arch: "arm64", asset: "a", updatesWeb: true }, releases: [], update: status }).current.updatesWeb, true);
 });
 
 test("the client calls the admin endpoints", async () => {
