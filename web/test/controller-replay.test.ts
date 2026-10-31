@@ -41,6 +41,8 @@ async function env(admin: boolean | undefined): Promise<Env> {
   c.start();
   await settled();
   await settled();
+  // start() kicks off a background sync that reloads the day when it ends; let it finish so it can't land mid-test.
+  while (c.syncing) await settled();
   assert.equal(c.phase.kind, "ready");
   return { c, server, repo, clock };
 }
