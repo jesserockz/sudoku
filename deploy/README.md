@@ -9,7 +9,7 @@ client over plain HTTP; the existing Caddy terminates TLS in front of it.
 | `sudoku-server.service`  | `/etc/systemd/system/sudoku-server.service`    |
 | `sudoku-backup.service`  | `/etc/systemd/system/sudoku-backup.service`    |
 | `sudoku-backup.timer`    | `/etc/systemd/system/sudoku-backup.timer`      |
-| `sudoku-backup.sh`       | `/usr/local/bin/sudoku-backup`                 |
+| `sudoku-backup.sh`       | `/opt/sudoku/bin/sudoku-backup`                |
 | `config.example.toml`    | `/etc/sudoku/config.toml`                      |
 | `Caddyfile.snippet`      | merged into your Caddy config                  |
 
@@ -37,7 +37,7 @@ useradd --system --home /var/lib/sudoku --shell /usr/sbin/nologin sudoku
 install -d -m 0755 -o sudoku -g sudoku /opt/sudoku
 install -d -m 0755 -o sudoku -g sudoku /opt/sudoku/bin
 install -m 0755 -o sudoku -g sudoku sudoku-server /opt/sudoku/bin/sudoku-server
-install -m 0755 deploy/sudoku-backup.sh /usr/local/bin/sudoku-backup
+install -m 0755 -o sudoku -g sudoku deploy/sudoku-backup.sh /opt/sudoku/bin/sudoku-backup
 
 install -d -m 0755 -o sudoku -g sudoku /opt/sudoku/web
 cp -r path/to/web-build/. /opt/sudoku/web/
