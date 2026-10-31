@@ -2,8 +2,11 @@
 //
 // `npm run build` replaces BUILD_VERSION with a hash of the shell files and
 // SHELL with their paths, so every build gets its own cache and an update
-// replaces the old one. The API is never cached: the app keeps its own
-// offline state (week, games, result queue) in localStorage.
+// replaces the old one. A new worker installs, activates and claims open pages
+// at once; the page notices (controllerchange) and offers a reload, and asks
+// for a new copy of this file when it comes online or into view
+// (src/ui/update.ts). The API is never cached: the app keeps its own offline
+// state (week, games, result queue) in localStorage.
 //
 // Paths are relative to the worker's scope (the app's directory), so the same
 // build works at a site root or under a sub-path such as GitHub Pages' /<repo>/.

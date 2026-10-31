@@ -71,6 +71,8 @@ export interface Host {
   nowMs: () => number;
   /** The wall clock in epoch milliseconds, for replays. */
   wallMs: () => number;
+  /** Reloads the page, to pick up a new version of the app. */
+  reloadPage: () => void;
 }
 
 /**
@@ -112,6 +114,8 @@ export class AppController extends EventTarget {
   admin: AdminModel | null = null;
   /** The admin results and replay screens' state, kept while either is open. */
   adminResults: AdminResultsModel | null = null;
+  /** A newer version of the app has been installed; reloading the page switches to it. */
+  updateAvailable = false;
 
   readonly #repo: SudokuRepository;
   readonly #seeds: SeedRepository;
@@ -572,6 +576,18 @@ export class AppController extends EventTarget {
   reload(): void {
     this.screen = { kind: "today" };
     this.start();
+  }
+
+  /** A newer version of the app has taken over: shows the "Reload" banner. */
+  updateReady(): void {
+    if (this.updateAvailable) return;
+    this.updateAvailable = true;
+    this.#changed();
+  }
+
+  /** Reloads the page onto the new version. */
+  applyUpdate(): void {
+    this.#host.reloadPage();
   }
 
   /** Every 30 s: catches the day rolling over, and retries a sync that failed while the page is visible. */

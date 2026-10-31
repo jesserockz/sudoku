@@ -1,4 +1,5 @@
 import type { AppController } from "./controller.ts";
+import { h } from "./dom.ts";
 import "./play.ts";
 import "./replay-screens.ts";
 import "./screens.ts";
@@ -15,6 +16,7 @@ export class SudokuApp extends HTMLElement {
   #app: AppController | null = null;
   #key = "";
   #screen: ScreenElement | null = null;
+  #banner: HTMLElement | null = null;
 
   set app(app: AppController) {
     this.#app = app;
@@ -25,6 +27,7 @@ export class SudokuApp extends HTMLElement {
   #show(): void {
     const app = this.#app;
     if (!app) return;
+    this.#showBanner(app);
     const { phase, screen } = app;
     const [tag, key] = phase.kind !== "ready"
       ? [`sudoku-${phase.kind}`, phase.kind]
@@ -41,8 +44,17 @@ export class SudokuApp extends HTMLElement {
     // Set before swapping: the old screen may change the app as it leaves (e.g. pausing its game).
     this.#key = key;
     this.#screen = next;
-    this.replaceChildren(next);
+    this.replaceChildren(...(this.#banner ? [this.#banner] : []), next);
     window.scrollTo(0, 0);
+  }
+
+  /** Adds the "new version" banner above the screen once an update is ready, leaving the screen element alone. */
+  #showBanner(app: AppController): void {
+    if (!app.updateAvailable || this.#banner) return;
+    this.#banner = h("div", { class: "update-banner", role: "status" },
+      h("span", null, "A new version is available"),
+      h("button", { class: "primary", onclick: () => app.applyUpdate() }, "Reload"));
+    this.prepend(this.#banner);
   }
 }
 
