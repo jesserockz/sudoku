@@ -53,6 +53,12 @@ html, body {
 
 body { padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
 
+.update-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  background: var(--selected); border: 1px solid var(--accent); border-radius: var(--radius);
+  padding: 8px 12px; margin-bottom: 12px;
+}
+
 .boot { text-align: center; color: var(--muted); margin-top: 30vh; }
 
 sudoku-app { display: block; max-width: 520px; margin: 0 auto; padding: 12px 16px 32px; }

@@ -20,6 +20,7 @@ function host(hash = ""): Host {
     isVisible: () => true,
     nowMs: () => NOW,
     wallMs: () => wall,
+    reloadPage: () => {},
   };
 }
 

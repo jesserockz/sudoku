@@ -5,6 +5,7 @@ import { SeedRepository } from "./serverless/seed-repository.ts";
 import "./ui/app.ts";
 import type { SudokuApp } from "./ui/app.ts";
 import { AppController, CALLBACK_PATH } from "./ui/controller.ts";
+import { watchForUpdates } from "./ui/update.ts";
 
 const store = new WebStorageStore();
 const origin = location.origin;
@@ -18,13 +19,24 @@ const app = new AppController(
     isVisible: () => !document.hidden,
     nowMs: () => performance.now(),
     wallMs: () => Date.now(),
+    reloadPage: () => location.reload(),
   },
 );
 
+// A new build installs and takes over in the background; the page keeps running the old code until reloaded.
+const checkForUpdate = watchForUpdates(navigator.serviceWorker, () => app.updateReady());
+
 // Background sync: no Background Sync API on iOS, so sync whenever the app could have a connection again.
-window.addEventListener("online", () => app.sync());
+// Also asks for a new sw.js, as a long-lived page never navigates.
+window.addEventListener("online", () => {
+  app.sync();
+  void checkForUpdate();
+});
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) app.sync();
+  if (!document.hidden) {
+    app.sync();
+    void checkForUpdate();
+  }
 });
 // A share link opened in a tab that already shows the app only changes the fragment.
 window.addEventListener("hashchange", () => app.onHashChange());

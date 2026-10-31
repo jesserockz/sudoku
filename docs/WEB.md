@@ -222,6 +222,17 @@ answer. Navigations to any path (`/auth/callback?...` included) fall back to
 the cached `index.html`. `/api/` and `/healthz` are never cached. A service
 worker needs a secure context: HTTPS, or `http://localhost`.
 
+**Updates.** A new build's `sw.js` installs, activates and takes over open
+pages immediately (`skipWaiting` and `clients.claim`), but a page keeps running
+the JavaScript it loaded. `src/ui/update.ts` listens for `controllerchange`
+and, if the page was already under a worker (the first-ever install doesn't
+count), calls `AppController.updateReady()`; `<sudoku-app>` then shows an "A new
+version is available" banner with a **Reload** button (`applyUpdate()`, which
+reloads through `Host.reloadPage`). Browsers only re-check `sw.js` on
+navigation, so `main.ts` also asks (`registration.update()`) whenever the
+browser comes back online or the page becomes visible; failures, such as being
+offline, are ignored.
+
 Reverse proxy: serve `sw.js` with `Cache-Control: no-cache` so browsers pick
 up new builds promptly (they already bypass the HTTP cache for it by default,
 so this is a safeguard). Optionally serve `manifest.webmanifest` as
@@ -401,3 +412,13 @@ It generates a seed and solves a puzzle, opens the share link in a fresh
 browser and checks the puzzles are identical, switches seeds and back, round
 trips a Unicode seed, and starts offline. The e2e scripts need Playwright with
 Chromium (`npm i -g playwright && npx playwright install chromium`).
+
+`web/e2e/update.cjs` checks the "new version available" banner. It simulates a
+deployment by changing `BUILD_VERSION` in the served `sw.js` (restored
+afterwards), goes offline and back online to trigger the update check, and
+checks the banner appears and that Reload brings in the new worker. It needs
+the path of the served directory:
+
+```sh
+node web/e2e/update.cjs http://localhost:8090/ web/dist
+```

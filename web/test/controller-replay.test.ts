@@ -35,6 +35,7 @@ async function env(admin: boolean | undefined): Promise<Env> {
     isVisible: () => true,
     nowMs: () => clock.mono,
     wallMs: () => clock.wall,
+    reloadPage: () => {},
   };
   const c = new AppController(repo, new SeedRepository(new MemoryStore(), () => NOW), host);
   c.start();
