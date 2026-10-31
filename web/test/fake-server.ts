@@ -29,10 +29,25 @@ export class FakeServer {
 
   // OIDC provider state.
   oidcSub = "alice";
+  /** Revokes every refresh token, as an admin ending the session would. */
   refreshRevoked = false;
+  /** Refresh grants processed (including those whose response was lost). */
   refreshGrants = 0;
+  /** Like Authentik's refresh token threshold: a refresh rotates the refresh token only once it is this old. 0 rotates on every refresh. */
+  refreshThresholdMs = 0;
+  /** How long a refresh token lives. */
+  refreshLifetimeMs = 30 * 24 * 3600_000;
+  /** The token endpoint is unreachable: fetch rejects with a TypeError and nothing is processed. */
+  idpOnline = true;
+  /** The token endpoint answers this status without processing the request (e.g. 429, 503). */
+  tokenStatus: number | null = null;
+  /** The next token endpoint calls are processed but their responses are lost (fetch rejects after the IdP rotated). */
+  loseTokenResponses = 0;
+  /** How far ahead of the IdP the API server's clock runs, when judging access token expiry. */
+  skewMs = 0;
   readonly #codes = new Map<string, string>(); // code -> PKCE challenge
   readonly #accessTokens = new Map<string, number>(); // token -> expiry (epoch ms)
+  readonly #refreshTokens = new Map<string, { sub: string; issuedAt: number; revoked: boolean }>();
   #counter = 0;
 
   readonly requests: { method: string; url: URL; headers: Headers; body: string }[] = [];
@@ -41,6 +56,11 @@ export class FakeServer {
   constructor(now: () => number, authMode: "dev" | "oidc" = "dev") {
     this.now = now;
     this.authMode = authMode;
+  }
+
+  /** The API server forgets every access token, as after a signing key rotation. */
+  forgetAccessTokens(): void {
+    this.#accessTokens.clear();
   }
 
   posts(): number {
@@ -72,8 +92,16 @@ export class FakeServer {
           issuer: ISSUER, authorization_endpoint: "https://auth.test/o/authorize/",
           token_endpoint: "https://auth.test/o/token/", end_session_endpoint: "https://auth.test/o/end/",
         });
-      case "/o/token/":
-        return this.#token(new URLSearchParams(r.body));
+      case "/o/token/": {
+        if (!this.idpOnline) throw new TypeError("Failed to fetch");
+        if (this.tokenStatus !== null) return json({ error: "temporarily_unavailable" }, this.tokenStatus);
+        const response = await this.#token(new URLSearchParams(r.body));
+        if (this.loseTokenResponses > 0) {
+          this.loseTokenResponses--;
+          throw new TypeError("Failed to fetch");
+        }
+        return response;
+      }
     }
     const user = this.#user(r.headers.get("Authorization"));
     if (!user) return json({ error: { code: "unauthorized", message: "bad token" } }, 401);
@@ -123,7 +151,7 @@ export class FakeServer {
       return token.startsWith("dev:") && sub && name ? { id: sub, displayName: name } : null;
     }
     const expiry = this.#accessTokens.get(token);
-    if (expiry === undefined || expiry <= this.now()) return null;
+    if (expiry === undefined || expiry <= this.now() + this.skewMs) return null;
     return { id: token.split("|")[0]!, displayName: "Alice" };
   }
 
@@ -137,9 +165,14 @@ export class FakeServer {
       return this.#issue(true);
     }
     if (form.get("grant_type") === "refresh_token") {
-      if (this.refreshRevoked) return json({ error: "invalid_grant", error_description: "revoked" }, 400);
+      const old = this.#refreshTokens.get(form.get("refresh_token") ?? "");
+      if (this.refreshRevoked || !old || old.revoked || old.issuedAt + this.refreshLifetimeMs <= this.now()) {
+        return json({ error: "invalid_grant", error_description: "revoked" }, 400);
+      }
       this.refreshGrants++;
-      return this.#issue(false);
+      const rotate = this.now() - old.issuedAt >= this.refreshThresholdMs;
+      if (rotate) old.revoked = true;
+      return this.#issue(rotate);
     }
     return json({ error: "unsupported_grant_type" }, 400);
   }
@@ -147,9 +180,11 @@ export class FakeServer {
   #issue(withRefresh: boolean): Response {
     const token = `${this.oidcSub}|${++this.#counter}`;
     this.#accessTokens.set(token, this.now() + 300_000);
+    const refresh = `refresh-${this.oidcSub}-${this.#counter}`;
+    if (withRefresh) this.#refreshTokens.set(refresh, { sub: this.oidcSub, issuedAt: this.now(), revoked: false });
     return json({
       access_token: token, token_type: "Bearer", expires_in: 300, id_token: `id-${this.oidcSub}`,
-      ...(withRefresh ? { refresh_token: `refresh-${this.oidcSub}` } : {}),
+      ...(withRefresh ? { refresh_token: refresh } : {}),
     });
   }
 }

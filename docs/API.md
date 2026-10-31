@@ -39,12 +39,12 @@ Non-2xx responses carry:
 ## Authentication
 
 - Every endpoint except `GET /api/v1/config` and `GET /healthz` requires `Authorization: Bearer <access token>`.
-- In production the token is an OIDC access token (JWT) issued by Authentik. The server verifies signature (via the issuer's JWKS), `iss`, `aud`, and `exp`.
+- In production the token is an OIDC access token (JWT) issued by the OIDC provider (e.g. Authentik). The server verifies signature (via the issuer's JWKS), `iss`, `aud`, and `exp`.
 - The user is keyed by the token's `sub`. Display name is taken from `name`, falling back to `preferred_username`, then `sub`. A user record is created on first authenticated request and the display name refreshed on later ones.
 
 ### Dev auth mode
 
-For local development and client testing without Authentik, the server can be started with `auth.mode = "dev"`. In that mode the bearer token is:
+For local development and client testing without an OIDC provider, the server can be started with `auth.mode = "dev"`. In that mode the bearer token is:
 
 ```
 Authorization: Bearer dev:<sub>:<display name>

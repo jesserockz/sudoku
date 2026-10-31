@@ -53,8 +53,8 @@ cp deploy/sudoku-server.service deploy/sudoku-backup.service deploy/sudoku-backu
 systemctl daemon-reload
 ```
 
-Edit `/etc/sudoku/config.toml`: set the Authentik `issuer`, `client_id` and
-`audience` (see below), and optionally the admin group.
+Edit `/etc/sudoku/config.toml`: set the identity provider's `issuer`,
+`client_id` and `audience` (see below), and optionally the admin group.
 
 **Back up `/etc/sudoku/env` somewhere safe.** The server secret determines
 every week's puzzles; losing or changing it changes all of them.
@@ -66,21 +66,41 @@ curl -s localhost:8080/healthz      # {"status":"ok"}
 journalctl -u sudoku-server -f
 ```
 
-## 3. Authentik
+## 3. Identity provider (OIDC)
+
+Any OpenID Connect provider works. Register a client for the web app:
+
+- Public client (no secret), Authorization Code + PKCE, redirect URI
+  `https://<sudoku host>/auth/callback`. Its client id goes in `client_id`.
+- Scopes: `openid`, `profile`, `offline_access` (refresh tokens). The server
+  reads `name` / `preferred_username` from the **access token** for display
+  names, so the provider must put them there.
+- Access tokens must be signed JWTs (RS256, ES256, ...) whose `aud` includes
+  one of the server's configured audiences.
+- `issuer` must match the tokens' `iss` exactly (including any trailing slash).
+- Token lifetimes: access tokens around an hour (not minutes), refresh tokens
+  long enough to cover the longest gap between uses (e.g. 30 days, renewed on
+  each refresh). If the provider rotates refresh tokens on every refresh, a
+  refresh whose response is lost (app suspended mid-request) leaves the app
+  holding a revoked token and signs the user out. Where the provider allows
+  it, only rotate refresh tokens near expiry, or allow a reuse grace period.
+
+The server fetches `<issuer>.well-known/openid-configuration` and the JWKS
+on the first authenticated request, so the LXC needs outbound HTTPS to the
+provider.
+
+### Example: Authentik
 
 Create an OAuth2/OpenID provider and application (slug e.g. `sudoku`):
 
-- Web client: public client, Authorization Code + PKCE, redirect URI on the
-  sudoku host. Its client id goes in `client_id`.
-- Scopes: `openid`, `profile`, `offline_access`. The server reads `name` /
-  `preferred_username` from the **access token** for display names.
-- Signing key: pick one so access tokens are signed JWTs (RS256 or ES256).
+- Client type **Public**, redirect URI as above, scopes `openid`, `profile`
+  and `offline_access`, and a signing key (RS256 or ES256).
 - `issuer` is `https://<authentik>/application/o/<slug>/`, trailing slash
-  included; it must match the token's `iss` exactly.
-
-The server fetches `<issuer>.well-known/openid-configuration` and the JWKS
-on the first authenticated request, so the LXC needs outbound HTTPS to
-Authentik.
+  included.
+- Advanced protocol settings: **Access Token validity** `hours=1`, **Refresh
+  Token validity** `days=30`, and **Refresh Token threshold** e.g. `days=7`
+  (authentik 2025.10+). The default threshold, `seconds=0`, rotates the
+  refresh token on every refresh.
 
 ## 4. Admins (optional)
 

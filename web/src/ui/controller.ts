@@ -1,5 +1,6 @@
 import { ApiException } from "../api/client.ts";
 import type { AppConfig, Leaderboard, Me } from "../api/models.ts";
+import { OidcException } from "../api/oidc.ts";
 import { SignInError, type SudokuRepository } from "../data/repository.ts";
 import { addDays } from "../game/calendar.ts";
 import { Game } from "../game/game.ts";
@@ -215,9 +216,13 @@ export class AppController extends EventTarget {
     for (const r of this.#repo.pending()) if (r.date === this.today) this.#queued.set(r.level, r.elapsedMs);
   }
 
-  /** Syncs with the server in the background; offline is fine and just noted. */
+  /**
+   * Syncs with the server in the background; offline is fine and just noted.
+   * Not while the page is hidden: the visibility handler syncs when it is shown again, and a token refresh
+   * cut off by the OS suspending the page can lose the rotated refresh token and sign the player out.
+   */
   sync(): void {
-    if (this.syncing || this.phase.kind !== "ready" || this.seed || !this.#repo.isSignedIn) return;
+    if (this.syncing || this.phase.kind !== "ready" || this.seed || !this.#repo.isSignedIn || !this.#host.isVisible()) return;
     this.syncing = true;
     this.#changed();
     void (async () => {
@@ -229,7 +234,12 @@ export class AppController extends EventTarget {
           : report.rejected.length > 0 ? `The server rejected ${report.rejected.length} result(s).` : null;
       } catch (e) {
         if (e instanceof ApiException) {
-          this.notice = e.isUnauthorized ? "The server didn't accept your sign-in." : describe(e);
+          // An ended session has its own "Sign in again" banner; that is the one message.
+          this.notice = e.isUnauthorized ? (this.#repo.needsSignIn ? null : "The server didn't accept your sign-in.") : describe(e);
+        } else if (e instanceof OidcException) {
+          // The sign-in server failed (5xx, 429...): the session is kept, so retry like offline.
+          this.#offline = true;
+          this.notice = "Can't reach the sign-in server. Puzzles still work; results upload once it's back.";
         } else {
           this.#offline = true;
           this.notice = "Offline. Puzzles still work; results upload when you're back online.";
@@ -609,6 +619,6 @@ export class AppController extends EventTarget {
 
 function describe(e: unknown): string {
   if (e instanceof SignInError) return e.message || "Sign-in failed.";
-  if (e instanceof ApiException) return e.error?.message.trim() || `Server error (HTTP ${e.status})`;
+  if (e instanceof ApiException) return e.error?.message.trim() || (e.isUnauthorized ? "Your sign-in has expired." : `Server error (HTTP ${e.status})`);
   return "Can't reach the server. Check your connection and try again.";
 }
