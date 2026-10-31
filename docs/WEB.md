@@ -299,18 +299,22 @@ Code + PKCE (S256), using the issuer, client id and scopes from
 4. **Sign out** forgets the tokens and, if the provider has an
    `end_session_endpoint`, ends the provider session too.
 
-Authentik setup: an **OAuth2/OpenID Provider** with client type **Public**,
-redirect URI `https://<your host>/auth/callback`, an RS256 signing key, and the
-`openid`, `profile` and `offline_access` scopes (the last one is what issues
-refresh tokens). The server's `oidc.client_id` must be this provider's client id.
+Provider setup: a **public** client (no secret) using Authorization Code +
+PKCE, redirect URI `https://<your host>/auth/callback`, access tokens signed as
+JWTs (e.g. RS256), and the `openid`, `profile` and `offline_access` scopes (the
+last one is what issues refresh tokens on most providers). The server's
+`oidc.client_id` must be this client's id. See
+[deploy/README.md](../deploy/README.md#3-identity-provider-oidc) for an
+Authentik example.
 
-Authentik rotates the refresh token on every refresh by default. If a
-refresh's response is lost (the app was suspended mid-request, or the network
-dropped), the app still holds the revoked token and the user has to sign in
-again. Set the provider's **Refresh Token threshold** (advanced protocol
-settings, authentik 2025.10+) to e.g. `days=7` with **Refresh Token validity**
-`days=30`, so most refreshes keep the same refresh token, and keep **Access
-Token validity** around `hours=1` (not minutes) so refreshes are rare.
+Token lifetimes: keep access tokens around an hour (not minutes) so refreshes
+are rare, and refresh tokens long enough to cover the longest gap between
+uses (e.g. 30 days, renewed on each refresh). If the provider rotates refresh
+tokens (single-use, the old one revoked on each refresh), a refresh whose
+response is lost (the app was suspended mid-request, or the network dropped)
+leaves the app holding a revoked token, and the user has to sign in again. The
+app can't recover from that, so where the provider allows it, only rotate the
+refresh token when it is close to expiry, or allow a short reuse grace period.
 
 In dev auth mode the app instead asks for a user id and display name and sends
 `Authorization: Bearer dev:<id>:<name>`.
