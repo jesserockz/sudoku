@@ -32,7 +32,7 @@ class FakeApi implements AdminApi {
     this.calls.push(`releases:${pre}`);
     if (this.listError) throw this.listError;
     return {
-      current: { version: this.version, os: "linux", arch: "amd64", asset: "sudoku-server-linux-amd64" },
+      current: { version: this.version, os: "linux", arch: "amd64", asset: "sudoku-server-linux-amd64", updatesWeb: true },
       releases: this.releases.filter((r) => pre || !r.prerelease),
       update: this.update,
     };

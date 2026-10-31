@@ -15,7 +15,7 @@ export class FakeServer {
   admin: boolean | undefined = undefined;
   /** Answer to the admin endpoints, as the server would give them. */
   adminReleases: unknown = {
-    current: { version: "1.2.3", os: "linux", arch: "amd64", asset: "sudoku-server-linux-amd64" },
+    current: { version: "1.2.3", os: "linux", arch: "amd64", asset: "sudoku-server-linux-amd64", updatesWeb: false },
     releases: [],
     update: { state: "idle", action: "", target: "", message: "", error: "", bytesDone: 0, bytesTotal: 0, startedAt: null, finishedAt: null, rollbackAvailable: false },
   };

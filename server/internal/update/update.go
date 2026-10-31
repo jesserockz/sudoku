@@ -1,10 +1,12 @@
-// Package update replaces the running server binary with a release from
-// GitHub, verified against the release's SHA256SUMS, and can swap the
-// previous binary back in. It only ever talks to the configured GitHub API
-// base and repository, never to a URL supplied by a client.
+// Package update replaces the running server binary, and optionally the web
+// client directory, with a release from GitHub, verified against the
+// release's SHA256SUMS, and can swap the previous versions back in. It only
+// ever talks to the configured GitHub API base and repository, never to a URL
+// supplied by a client.
 package update
 
 import (
+	"archive/zip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -17,6 +19,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -35,6 +38,7 @@ const (
 
 const (
 	sumsAsset      = "SHA256SUMS"
+	webAsset       = "sudoku-web.zip"
 	maxReleases    = 30
 	metaTimeout    = 30 * time.Second
 	jobTimeout     = 15 * time.Minute
@@ -45,6 +49,10 @@ const (
 var (
 	maxSumsBytes   int64 = 64 << 10
 	maxBinaryBytes int64 = 256 << 20
+	// maxWebBytes bounds both the web bundle download and its total
+	// uncompressed size; maxWebEntries bounds the number of archive entries.
+	maxWebBytes   int64 = 64 << 20
+	maxWebEntries       = 10000
 )
 
 // Filesystem hooks, replaced in tests to inject failures.
@@ -93,6 +101,8 @@ type Info struct {
 	OS      string `json:"os"`
 	Arch    string `json:"arch"`
 	Asset   string `json:"asset"`
+	// WebDir is true when updates also replace the web client.
+	WebDir bool `json:"updatesWeb"`
 }
 
 // Release is one GitHub release, as shown to the admin.
@@ -139,6 +149,9 @@ type Updater struct {
 	GOARCH string
 	// CurrentVersion is the running version; empty means version.Version.
 	CurrentVersion string
+	// WebDir is the web client directory to replace with the release's
+	// sudoku-web.zip; empty means only the binary is updated.
+	WebDir string
 	// Restart is called after a new binary is in place; it should make the
 	// process exit so the service manager starts the new one.
 	Restart func()
@@ -212,7 +225,7 @@ func (u *Updater) exePath() (string, error) {
 
 // Info describes the running server.
 func (u *Updater) Info() Info {
-	return Info{Version: u.currentVersion(), OS: u.goos(), Arch: u.goarch(), Asset: u.assetName()}
+	return Info{Version: u.currentVersion(), OS: u.goos(), Arch: u.goarch(), Asset: u.assetName(), WebDir: u.WebDir != ""}
 }
 
 // Status returns the progress of the current or last job.
@@ -340,14 +353,19 @@ func (u *Updater) Releases(ctx context.Context, prereleases bool) ([]Release, er
 	return out, nil
 }
 
-// checkAssets verifies the release carries this platform's binary and its
-// checksums.
+// checkAssets verifies the release carries this platform's binary, its
+// checksums and, when the web client is updated too, the web bundle.
 func (u *Updater) checkAssets(g ghRelease) error {
 	if _, ok := g.asset(u.assetName()); !ok {
 		return fmt.Errorf("no %s asset", u.assetName())
 	}
 	if _, ok := g.asset(sumsAsset); !ok {
 		return fmt.Errorf("no %s", sumsAsset)
+	}
+	if u.WebDir != "" {
+		if _, ok := g.asset(webAsset); !ok {
+			return fmt.Errorf("no %s asset", webAsset)
+		}
 	}
 	return nil
 }
@@ -411,6 +429,18 @@ func (u *Updater) set(state, msg string) {
 	u.mu.Unlock()
 }
 
+// checkWritableDirs proves everything an update or rollback replaces can be
+// written: the binary's directory and, swapping the web directory, its parent.
+func (u *Updater) checkWritableDirs(exe string) error {
+	if err := checkWritable(filepath.Dir(exe)); err != nil {
+		return err
+	}
+	if u.WebDir != "" {
+		return checkWritable(filepath.Dir(u.WebDir))
+	}
+	return nil
+}
+
 // checkWritable proves files can be created in dir, which an update needs.
 func checkWritable(dir string) error {
 	f, err := os.CreateTemp(dir, ".sudoku-writable-*")
@@ -451,8 +481,12 @@ func (u *Updater) Start(ctx context.Context, tag string, allowDowngrade bool) (S
 	}
 	bin, _ := rel.asset(u.assetName())
 	sums, _ := rel.asset(sumsAsset)
+	var web ghAsset
+	if u.WebDir != "" {
+		web, _ = rel.asset(webAsset)
+	}
 	return u.launch("update", rel.TagName, func(ctx context.Context) error {
-		return u.runUpdate(ctx, exe, bin, sums)
+		return u.runUpdate(ctx, exe, bin, sums, web)
 	}), nil
 }
 
@@ -461,7 +495,7 @@ func (u *Updater) preflight(ctx context.Context, tag string, allowDowngrade bool
 	if err != nil {
 		return "", ghRelease{}, fail(ErrUnavailable, "cannot locate the running binary: %v", err)
 	}
-	if err := checkWritable(filepath.Dir(exe)); err != nil {
+	if err := u.checkWritableDirs(exe); err != nil {
 		return "", ghRelease{}, err
 	}
 	var rel ghRelease
@@ -512,7 +546,9 @@ func parseSums(sums, name string) (string, error) {
 	return "", fmt.Errorf("%s has no entry for %s", sumsAsset, name)
 }
 
-func (u *Updater) fetchSums(ctx context.Context, a ghAsset, name string) (string, error) {
+// fetchSums downloads the SHA256SUMS file, which callers look entries up in
+// with parseSums.
+func (u *Updater) fetchSums(ctx context.Context, a ghAsset) (string, error) {
 	body, err := u.fetchAsset(ctx, a)
 	if err != nil {
 		return "", err
@@ -525,7 +561,7 @@ func (u *Updater) fetchSums(ctx context.Context, a ghAsset, name string) (string
 	if int64(len(data)) > maxSumsBytes {
 		return "", fmt.Errorf("%s is larger than %d bytes", sumsAsset, maxSumsBytes)
 	}
-	return parseSums(string(data), name)
+	return string(data), nil
 }
 
 // progressWriter counts bytes written into the job status.
@@ -538,14 +574,27 @@ func (p progressWriter) Write(b []byte) (int, error) {
 	return len(b), nil
 }
 
-// runUpdate downloads, verifies and installs the release binary. The new
-// binary is only renamed over exe once it is complete and checked, so any
-// failure leaves the running binary untouched.
-func (u *Updater) runUpdate(ctx context.Context, exe string, bin, sums ghAsset) error {
+// runUpdate downloads, verifies and installs the release binary and, when
+// WebDir is set, its web bundle (web is the zero asset otherwise). Both are
+// downloaded, verified and staged before anything is replaced, so any failure
+// up to then leaves the running install untouched. The web directory is
+// swapped first, then the binary; if the binary cannot be installed the old
+// web directory is put back.
+func (u *Updater) runUpdate(ctx context.Context, exe string, bin, sums, web ghAsset) error {
 	u.set(StateDownloading, "Downloading "+sumsAsset)
-	want, err := u.fetchSums(ctx, sums, bin.Name)
+	sumsText, err := u.fetchSums(ctx, sums)
 	if err != nil {
 		return err
+	}
+	want, err := parseSums(sumsText, bin.Name)
+	if err != nil {
+		return err
+	}
+	var wantWeb string
+	if u.WebDir != "" {
+		if wantWeb, err = parseSums(sumsText, web.Name); err != nil {
+			return err
+		}
 	}
 
 	tmp, err := os.CreateTemp(filepath.Dir(exe), ".sudoku-server-*.new")
@@ -556,9 +605,9 @@ func (u *Updater) runUpdate(ctx context.Context, exe string, bin, sums ghAsset) 
 
 	u.set(StateDownloading, "Downloading "+bin.Name)
 	u.mu.Lock()
-	u.status.BytesTotal = bin.Size
+	u.status.BytesTotal = bin.Size + web.Size
 	u.mu.Unlock()
-	got, err := u.download(ctx, bin, tmp)
+	got, err := u.download(ctx, bin, tmp, maxBinaryBytes)
 	if err != nil {
 		return err
 	}
@@ -567,14 +616,69 @@ func (u *Updater) runUpdate(ctx context.Context, exe string, bin, sums ghAsset) 
 		return errors.New("checksum mismatch: the download does not match " + sumsAsset)
 	}
 
+	var staging string
+	if u.WebDir != "" {
+		if staging, err = u.stageWeb(ctx, web, wantWeb); err != nil {
+			return err
+		}
+		defer os.RemoveAll(staging) // a no-op once renamed into place
+	}
+
+	var hadOldWeb bool
+	if u.WebDir != "" {
+		u.set(StateInstalling, "Installing the web client")
+		if hadOldWeb, err = installDir(u.WebDir, staging); err != nil {
+			return err
+		}
+	}
 	u.set(StateInstalling, "Installing "+bin.Name)
-	return install(exe, tmp.Name())
+	if err := install(exe, tmp.Name()); err != nil {
+		if u.WebDir != "" {
+			restoreDir(u.WebDir, hadOldWeb)
+		}
+		return err
+	}
+	return nil
+}
+
+// stageWeb downloads the web bundle next to WebDir, verifies it against want
+// and unpacks it into a fresh staging directory, which it returns. Nothing
+// is left behind on failure.
+func (u *Updater) stageWeb(ctx context.Context, a ghAsset, want string) (string, error) {
+	parent := filepath.Dir(u.WebDir)
+	zipTmp, err := os.CreateTemp(parent, ".sudoku-web-*.zip")
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(zipTmp.Name())
+
+	u.set(StateDownloading, "Downloading "+a.Name)
+	got, err := u.download(ctx, a, zipTmp, maxWebBytes)
+	if err != nil {
+		return "", err
+	}
+	u.set(StateVerifying, "Verifying "+a.Name)
+	if got != want {
+		return "", errors.New("checksum mismatch: the download does not match " + sumsAsset)
+	}
+
+	u.set(StateInstalling, "Unpacking "+a.Name)
+	staging, err := os.MkdirTemp(parent, ".sudoku-web-*.new")
+	if err != nil {
+		return "", err
+	}
+	if err := extractZip(zipTmp.Name(), staging); err != nil {
+		os.RemoveAll(staging)
+		return "", fmt.Errorf("unpacking %s: %w", a.Name, err)
+	}
+	return staging, nil
 }
 
 // download streams the asset into tmp, hashing as it goes, then fsyncs and
-// closes tmp. It returns the hex SHA-256 of what was written; it is only
-// meaningful if the error is nil.
-func (u *Updater) download(ctx context.Context, a ghAsset, tmp *os.File) (string, error) {
+// closes tmp. It fails if the asset is larger than limit bytes. It returns
+// the hex SHA-256 of what was written; it is only meaningful if the error is
+// nil.
+func (u *Updater) download(ctx context.Context, a ghAsset, tmp *os.File, limit int64) (string, error) {
 	defer tmp.Close()
 	body, err := u.fetchAsset(ctx, a)
 	if err != nil {
@@ -582,14 +686,147 @@ func (u *Updater) download(ctx context.Context, a ghAsset, tmp *os.File) (string
 	}
 	defer body.Close()
 	h := sha256.New()
-	n, err := io.Copy(io.MultiWriter(tmp, h, progressWriter{u}), io.LimitReader(body, maxBinaryBytes+1))
+	n, err := io.Copy(io.MultiWriter(tmp, h, progressWriter{u}), io.LimitReader(body, limit+1))
 	if err != nil {
 		return "", fmt.Errorf("downloading %s: %w", a.Name, err)
 	}
-	if n > maxBinaryBytes {
-		return "", fmt.Errorf("%s is larger than %d bytes", a.Name, maxBinaryBytes)
+	if n > limit {
+		return "", fmt.Errorf("%s is larger than %d bytes", a.Name, limit)
 	}
 	return hex.EncodeToString(h.Sum(nil)), tmp.Sync()
+}
+
+// extractZip unpacks the archive at zipPath into the existing directory dest.
+// Everything is created through an os.Root on dest, and only plain files and
+// directories with relative, non-escaping names are accepted. Modes in the
+// archive are ignored: files get 0644 and directories 0755. The archive must
+// hold an index.html at its top level.
+func extractZip(zipPath, dest string) error {
+	zr, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return err
+	}
+	defer zr.Close()
+	if len(zr.File) > maxWebEntries {
+		return fmt.Errorf("the archive has more than %d entries", maxWebEntries)
+	}
+	root, err := os.OpenRoot(dest)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+
+	left := maxWebBytes
+	for _, f := range zr.File {
+		name, err := entryName(f.Name)
+		if err != nil {
+			return err
+		}
+		if name == "" { // the archive root itself
+			continue
+		}
+		switch mode := f.Mode(); {
+		case mode.IsDir():
+			err = root.MkdirAll(name, 0o755)
+		case mode.IsRegular():
+			var n int64
+			if n, err = extractFile(root, f, name, left); err == nil {
+				left -= n
+			}
+		default:
+			err = fmt.Errorf("%s is not a regular file or directory", f.Name)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	if fi, err := root.Stat("index.html"); err != nil || !fi.Mode().IsRegular() {
+		return errors.New("the archive has no index.html at its top level")
+	}
+	return nil
+}
+
+// entryName turns an archive entry name into a clean relative slash path,
+// "" for the archive root. Names that are absolute, contain backslashes or
+// have ".." components are refused, not repaired.
+func entryName(name string) (string, error) {
+	if strings.HasPrefix(name, "/") || strings.Contains(name, "\\") {
+		return "", fmt.Errorf("unsafe entry name %q", name)
+	}
+	var parts []string
+	for _, p := range strings.Split(name, "/") {
+		switch p {
+		case "..":
+			return "", fmt.Errorf("unsafe entry name %q", name)
+		case "", ".":
+		default:
+			parts = append(parts, p)
+		}
+	}
+	return strings.Join(parts, "/"), nil
+}
+
+// extractFile writes one archive file below root and returns its size. It
+// fails if the file is larger than limit bytes.
+func extractFile(root *os.Root, f *zip.File, name string, limit int64) (int64, error) {
+	if dir := path.Dir(name); dir != "." {
+		if err := root.MkdirAll(dir, 0o755); err != nil {
+			return 0, err
+		}
+	}
+	in, err := f.Open()
+	if err != nil {
+		return 0, err
+	}
+	defer in.Close()
+	out, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return 0, err
+	}
+	n, err := io.Copy(out, io.LimitReader(in, limit+1))
+	if err == nil && n > limit {
+		err = fmt.Errorf("the archive is larger than %d bytes uncompressed", maxWebBytes)
+	}
+	if err == nil {
+		err = out.Sync()
+	}
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	return n, err
+}
+
+// installDir makes staging the directory dir, keeping the old one as
+// dir.previous (replacing an older dir.previous). hadOld reports whether
+// there was an old dir to keep, for restoreDir. The final rename is the
+// commit point.
+func installDir(dir, staging string) (hadOld bool, err error) {
+	prev := dir + previousSuffix
+	os.RemoveAll(prev) // if this fails, the rename below does too
+	if _, err := os.Stat(dir); err == nil {
+		hadOld = true
+		if err := fsRename(dir, prev); err != nil {
+			return false, fmt.Errorf("keeping the previous web client: %w", err)
+		}
+	}
+	if err := fsRename(staging, dir); err != nil {
+		restoreDir(dir, hadOld)
+		return false, err
+	}
+	syncDir(filepath.Dir(dir))
+	return hadOld, nil
+}
+
+// restoreDir undoes installDir: it removes dir and, if there was one, puts
+// dir.previous back. Best effort; failures are logged.
+func restoreDir(dir string, hadOld bool) {
+	os.RemoveAll(dir)
+	if hadOld {
+		if err := os.Rename(dir+previousSuffix, dir); err != nil {
+			slog.Error("could not put the previous web client back", "dir", dir, "err", err)
+		}
+	}
+	syncDir(filepath.Dir(dir))
 }
 
 // install makes newPath the binary at exe, keeping the old one as
@@ -667,8 +904,10 @@ func syncDir(dir string) {
 }
 
 // Rollback swaps exe.previous back in; the replaced binary becomes the new
-// exe.previous. It returns the initial status; the restart happens in the
-// background.
+// exe.previous. The same goes for the web directory, when WebDir is set and
+// has a .previous (an update made by an older version left none, and then
+// only the binary is rolled back). It returns the initial status; the restart
+// happens in the background.
 func (u *Updater) Rollback() (Status, error) {
 	if err := u.begin(); err != nil {
 		return Status{}, err
@@ -679,8 +918,7 @@ func (u *Updater) Rollback() (Status, error) {
 		return Status{}, err
 	}
 	return u.launch("rollback", "", func(context.Context) error {
-		u.set(StateInstalling, "Restoring the previous binary")
-		return rollback(exe)
+		return u.runRollback(exe)
 	}), nil
 }
 
@@ -689,7 +927,7 @@ func (u *Updater) rollbackPreflight() (string, error) {
 	if err != nil {
 		return "", fail(ErrUnavailable, "cannot locate the running binary: %v", err)
 	}
-	if err := checkWritable(filepath.Dir(exe)); err != nil {
+	if err := u.checkWritableDirs(exe); err != nil {
 		return "", err
 	}
 	if fi, err := os.Stat(exe + previousSuffix); err != nil || !fi.Mode().IsRegular() {
@@ -716,5 +954,52 @@ func rollback(exe string) error {
 		slog.Warn("rolled back, but could not keep the replaced binary", "err", err)
 	}
 	syncDir(filepath.Dir(exe))
+	return nil
+}
+
+// runRollback swaps the web directory back first, then the binary; if the
+// binary cannot be swapped the web directory is swapped forward again.
+func (u *Updater) runRollback(exe string) error {
+	var swappedWeb bool
+	if u.WebDir != "" {
+		if fi, err := os.Stat(u.WebDir + previousSuffix); err == nil && fi.IsDir() {
+			u.set(StateInstalling, "Restoring the previous web client")
+			if err := rollbackDir(u.WebDir); err != nil {
+				return err
+			}
+			swappedWeb = true
+		} else {
+			slog.Info("no previous web client to restore; rolling back the binary only", "dir", u.WebDir+previousSuffix)
+		}
+	}
+	u.set(StateInstalling, "Restoring the previous binary")
+	if err := rollback(exe); err != nil {
+		if swappedWeb {
+			if werr := rollbackDir(u.WebDir); werr != nil {
+				slog.Error("could not put the web client back after a failed rollback", "err", werr)
+			}
+		}
+		return err
+	}
+	return nil
+}
+
+// rollbackDir swaps dir and dir.previous, like rollback does for the binary.
+func rollbackDir(dir string) error {
+	prev := dir + previousSuffix
+	tmp := dir + ".rollback.tmp"
+	os.RemoveAll(tmp)
+	if err := fsRename(dir, tmp); err != nil {
+		return err
+	}
+	if err := fsRename(prev, dir); err != nil {
+		os.Rename(tmp, dir)
+		return err
+	}
+	if err := fsRename(tmp, prev); err != nil {
+		os.RemoveAll(tmp)
+		slog.Warn("rolled back, but could not keep the replaced web client", "err", err)
+	}
+	syncDir(filepath.Dir(dir))
 	return nil
 }

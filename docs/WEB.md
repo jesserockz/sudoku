@@ -71,7 +71,7 @@ Admins (see below) also get an **Admin** button there.
 config recognises (older servers don't send it, which reads as false). Only
 those users, signed in to a server, see an **Admin** button on the About
 screen, which opens the **Server admin** page. It updates the server binary
-only; the web client is updated separately.
+and, when the server has a `web_dir`, the web client too.
 
 The page shows the running version and platform, and the recent GitHub
 releases (prereleases only with "Show prereleases") with Latest, Current and
