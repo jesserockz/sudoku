@@ -77,6 +77,13 @@ Create an OAuth2/OpenID provider and application (slug e.g. `sudoku`):
 - Signing key: pick one so access tokens are signed JWTs (RS256 or ES256).
 - `issuer` is `https://<authentik>/application/o/<slug>/`, trailing slash
   included; it must match the token's `iss` exactly.
+- Token lifetimes (advanced protocol settings): Authentik rotates the
+  refresh token on every refresh by default, so a refresh whose response is
+  lost (app suspended mid-request) signs the user out. Set **Refresh Token
+  threshold** (authentik 2025.10+) to e.g. `days=7` with **Refresh Token
+  validity** `days=30`, so most refreshes keep the same refresh token, and
+  keep **Access Token validity** around `hours=1` (not minutes) so refreshes
+  are rare.
 
 The server fetches `<issuer>.well-known/openid-configuration` and the JWKS
 on the first authenticated request, so the LXC needs outbound HTTPS to

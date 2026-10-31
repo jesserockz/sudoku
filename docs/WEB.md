@@ -287,8 +287,15 @@ Code + PKCE (S256), using the issuer, client id and scopes from
    verifier) at the token endpoint, stores the tokens in `localStorage` and
    replaces the URL with `/`.
 3. Access tokens are refreshed with the refresh token shortly before they
-   expire. If the refresh token is rejected, the app keeps playing offline
-   with results queued, and shows "Sign in again".
+   expire, and once more (followed by a single retry of the request) when the
+   API answers 401 to a token the app thought was valid, e.g. after a clock
+   difference or a signing key change. A refresh that fails for any reason
+   other than the provider rejecting the refresh token (offline, 429, 5xx)
+   keeps the session: the app notes that it can't reach the sign-in server
+   and retries every 30 s. Only `invalid_grant` ends the session; the app then
+   keeps playing offline with results queued, and shows just "Sign in again".
+   Nothing syncs (or refreshes) while the page is hidden, so the OS can't cut
+   a refresh off half way; the app syncs when it is shown again.
 4. **Sign out** forgets the tokens and, if the provider has an
    `end_session_endpoint`, ends the provider session too.
 
@@ -296,6 +303,14 @@ Authentik setup: an **OAuth2/OpenID Provider** with client type **Public**,
 redirect URI `https://<your host>/auth/callback`, an RS256 signing key, and the
 `openid`, `profile` and `offline_access` scopes (the last one is what issues
 refresh tokens). The server's `oidc.client_id` must be this provider's client id.
+
+Authentik rotates the refresh token on every refresh by default. If a
+refresh's response is lost (the app was suspended mid-request, or the network
+dropped), the app still holds the revoked token and the user has to sign in
+again. Set the provider's **Refresh Token threshold** (advanced protocol
+settings, authentik 2025.10+) to e.g. `days=7` with **Refresh Token validity**
+`days=30`, so most refreshes keep the same refresh token, and keep **Access
+Token validity** around `hours=1` (not minutes) so refreshes are rare.
 
 In dev auth mode the app instead asks for a user id and display name and sends
 `Authorization: Bearer dev:<id>:<name>`.

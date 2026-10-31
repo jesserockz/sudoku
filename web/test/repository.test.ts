@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
-import { SudokuApi } from "../src/api/client.ts";
+import { ApiException, SudokuApi } from "../src/api/client.ts";
 import type { GameResult } from "../src/api/models.ts";
 import { OidcException, TokenSession, defaultLock, type TokenResponse } from "../src/api/oidc.ts";
 import { AppStorage, type StoredTokens } from "../src/data/app-storage.ts";
@@ -15,6 +15,7 @@ import { FakeServer } from "./fake-server.ts";
 const REDIRECT = "https://sudoku.test/auth/callback";
 const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
+const HOUR_MS = 60 * MINUTE;
 
 let now: number;
 let store: MemoryStore;
@@ -283,7 +284,8 @@ test("token session: refresh margin, rotation and failures", async () => {
   assert.equal(tokens!.refreshToken, "r2"); // rotated
   now += 5 * MINUTE;
   failWith = new TypeError("offline");
-  assert.equal(await session.token(), "a2"); // the old token; the API decides
+  await assert.rejects(session.token(), TypeError); // expired and can't refresh: the caller sees the failure
+  assert.equal(tokens!.refreshToken, "r2"); // the session is kept
   failWith = new OidcException(400, "invalid_grant", null);
   assert.equal(await session.token(), null);
   assert.equal(tokens, null);
@@ -365,5 +367,179 @@ test("the API client sends the bearer token and reports errors", async () => {
   assert.equal((await api.me()).displayName, "Alice");
   assert.equal(server.requests.at(-1)!.headers.get("Authorization"), "Bearer dev:alice:Alice");
   const anonymous = new SudokuApi("https://sudoku.test", async () => null, server.fetch);
-  await assert.rejects(anonymous.week(), (e: { status: number; error: { code: string } }) => e.status === 401 && e.error.code === "unauthorized");
+  const before = server.requests.length;
+  await assert.rejects(anonymous.week(), (e: ApiException) => e.status === 401 && e.error === null);
+  assert.equal(server.requests.length, before, "no request without a token");
+  // An unauthenticated call never needs one, and a 401 to it is just reported.
+  const failing = new SudokuApi("https://sudoku.test", async () => null, async () => new Response("{}", { status: 401 }));
+  await assert.rejects(failing.config(), (e: ApiException) => e.status === 401);
+});
+
+/** An API over a scripted fetch: each request gets the next status, and records its bearer token. */
+function scripted(statuses: number[], tokens: (rejected?: string) => Promise<string | null>, replay: unknown = "valid") {
+  const seen: (string | null)[] = [];
+  const bodies: string[] = [];
+  const api = new SudokuApi("https://sudoku.test", tokens, async (_url, init) => {
+    seen.push(new Headers(init?.headers).get("Authorization"));
+    bodies.push(String(init?.body ?? ""));
+    const status = statuses.shift()!;
+    return new Response(JSON.stringify(status < 300 ? { id: "alice", userId: "alice", displayName: "Alice", date: "2026-10-27", level: 1, elapsedMs: 5, completedAt: "x", replay, flag: null } : { error: { code: "unauthorized", message: "bad token" } }), { status });
+  });
+  return { api, seen, bodies };
+}
+
+test("a 401 refreshes the token and retries the request once", async () => {
+  const asked: (string | undefined)[] = [];
+  const { api, seen } = scripted([401, 200], async (rejected) => {
+    asked.push(rejected);
+    return rejected ? "fresh" : "stale";
+  });
+  assert.equal((await api.me()).id, "alice");
+  assert.deepEqual(seen, ["Bearer stale", "Bearer fresh"]);
+  assert.deepEqual(asked, [undefined, "stale"]);
+});
+
+test("a retried request that is refused again surfaces the 401", async () => {
+  const { api, seen } = scripted([401, 401], async (rejected) => (rejected ? "fresh" : "stale"));
+  await assert.rejects(api.me(), (e: ApiException) => e.isUnauthorized && e.error?.code === "unauthorized");
+  assert.equal(seen.length, 2);
+});
+
+test("a 401 is not retried when there is no newer token", async () => {
+  for (const next of [null, "stale"]) {
+    const { api, seen } = scripted([401], async (rejected) => (rejected ? next : "stale"));
+    await assert.rejects(api.me(), (e: ApiException) => e.isUnauthorized);
+    assert.equal(seen.length, 1);
+  }
+});
+
+test("retries resend the body of uploads and admin changes", async () => {
+  const fresh = async (rejected?: string) => (rejected ? "fresh" : "stale");
+  const upload = scripted([401, 201], fresh, null);
+  assert.equal((await upload.api.submitResult(result(1))).kind, "created");
+  assert.deepEqual(upload.seen, ["Bearer stale", "Bearer fresh"]);
+  assert.equal(upload.bodies[0], upload.bodies[1]);
+  assert.notEqual(upload.bodies[1], "");
+  const flag = scripted([401, 200], fresh);
+  await flag.api.flagResult("2026-10-27", 1, "alice", "odd");
+  assert.deepEqual(flag.bodies, ['{"reason":"odd"}', '{"reason":"odd"}']);
+});
+
+test("a failure to get a newer token propagates", async () => {
+  const { api } = scripted([401], async (rejected) => {
+    if (rejected) throw new TypeError("offline");
+    return "stale";
+  });
+  await assert.rejects(api.me(), TypeError);
+});
+
+// Token sessions: transient failures and rejected tokens.
+
+function session(initial: StoredTokens | null, refresh: (rt: string) => Promise<TokenResponse>) {
+  const state = { tokens: initial, refreshes: 0 };
+  const s = new TokenSession(
+    () => state.tokens,
+    (t) => { state.tokens = t; },
+    async (rt) => {
+      state.refreshes++;
+      return refresh(rt);
+    },
+    clock,
+  );
+  return { s, state };
+}
+
+const stored = (changes: Partial<StoredTokens> = {}): StoredTokens => ({ accessToken: "a1", refreshToken: "r1", idToken: null, expiresAtEpochMs: now + 30_000, ...changes });
+const granted = async (): Promise<TokenResponse> => ({ accessToken: "a2", expiresIn: 300, refreshToken: "r2", idToken: null });
+
+test("token session: transient refresh failures keep the session and the unexpired token", async () => {
+  for (const failure of [new TypeError("offline"), new OidcException(503, null, null), new OidcException(429, "slow_down", null), new OidcException(404, null, null)]) {
+    const { s, state } = session(stored(), async () => { throw failure; });
+    assert.equal(await s.token(), "a1"); // within the refresh margin but not expired
+    now += MINUTE; // now expired
+    await assert.rejects(s.token(), (e) => e === failure);
+    assert.equal(state.tokens!.refreshToken, "r1");
+    now -= MINUTE;
+  }
+});
+
+test("token session: a token with no expiry is used as is, and refused ones are refreshed", async () => {
+  const { s, state } = session(stored({ expiresAtEpochMs: null }), granted);
+  assert.equal(await s.token(), "a1");
+  assert.equal(state.refreshes, 0);
+  assert.equal(await s.token("a1"), "a2");
+  assert.equal(state.refreshes, 1);
+  assert.equal(state.tokens!.refreshToken, "r2");
+});
+
+test("token session: a rejected token is refreshed even when it looks valid", async () => {
+  const { s, state } = session(stored({ expiresAtEpochMs: now + HOUR_MS }), granted);
+  assert.equal(await s.token(), "a1");
+  assert.equal(await s.token("a1"), "a2");
+  assert.equal(state.refreshes, 1);
+});
+
+test("token session: a rejected token another tab already replaced is not refreshed again", async () => {
+  const { s, state } = session(stored({ accessToken: "theirs" }), granted);
+  assert.equal(await s.token("a1"), "theirs");
+  assert.equal(state.refreshes, 0);
+});
+
+test("token session: a rejected token is not returned when the refresh fails transiently", async () => {
+  const { s, state } = session(stored({ expiresAtEpochMs: now + HOUR_MS }), async () => { throw new TypeError("offline"); });
+  await assert.rejects(s.token("a1"), TypeError);
+  assert.equal(state.tokens!.refreshToken, "r1");
+  const noExpiry = session(stored({ expiresAtEpochMs: null }), async () => { throw new TypeError("offline"); });
+  await assert.rejects(noExpiry.s.token("a1"), TypeError);
+});
+
+test("token session: nothing to refresh with", async () => {
+  const none = session(null, granted);
+  assert.equal(await none.s.token("a1"), null);
+  const rejected = session(stored({ refreshToken: null }), granted);
+  assert.equal(await rejected.s.token("a1"), "a1"); // all there is; the caller sees it fail again
+  assert.equal(rejected.state.refreshes, 0);
+  const valid = session(stored({ refreshToken: null }), granted);
+  now += 20_000; // inside the margin, still unexpired
+  assert.equal(await valid.s.token(), "a1");
+  now += MINUTE;
+  assert.equal(await valid.s.token(), null);
+  assert.equal(valid.state.tokens, null);
+  now -= 20_000 + MINUTE;
+});
+
+test("a lost refresh response signs the user out, unless the provider didn't rotate", async () => {
+  for (const [thresholdMs, signedOut] of [[0, true], [7 * DAY, false]] as const) {
+    server = new FakeServer(clock, "oidc");
+    server.refreshThresholdMs = thresholdMs;
+    const r = repo();
+    await signInOidc(r);
+    now += 10 * MINUTE;
+    server.loseTokenResponses = 1;
+    await assert.rejects(r.refresh(), TypeError);
+    assert.equal(server.refreshGrants, 1);
+    assert.equal(r.needsSignIn, false);
+    now += MINUTE;
+    if (signedOut) {
+      await assert.rejects(r.refresh(), (e: ApiException) => e.isUnauthorized);
+      assert.ok(r.needsSignIn);
+    } else {
+      await r.refresh();
+      assert.equal(r.needsSignIn, false);
+    }
+  }
+});
+
+test("the fake provider revokes refresh tokens on rotation and after their lifetime", async () => {
+  server = new FakeServer(clock, "oidc");
+  const r = repo();
+  await signInOidc(r);
+  const first = new AppStorage(store).tokens.read()!.refreshToken!;
+  now += 10 * MINUTE;
+  await r.refresh();
+  const second = new AppStorage(store).tokens.read()!.refreshToken!;
+  assert.notEqual(first, second);
+  now += 31 * DAY;
+  await assert.rejects(r.refresh(), (e: ApiException) => e.isUnauthorized);
+  assert.ok(r.needsSignIn);
 });

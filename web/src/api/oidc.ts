@@ -144,10 +144,15 @@ export function defaultLock(name = "sudoku-token-refresh"): Lock {
 
 /**
  * Keeps a signed-in session's tokens fresh. `token()` returns a usable access
- * token, refreshing it first when it expires within `refreshMarginMs`. When
- * refresh is impossible (no refresh token, or the provider rejects it) the
- * session ends and `token()` returns `null`. Other refresh failures (offline)
- * return the old token so the API can decide.
+ * token, refreshing it first when it expires within `refreshMarginMs`. Only
+ * the provider rejecting the refresh token (`invalid_grant`), or there being
+ * nothing to refresh with, ends the session: `token()` then returns `null`.
+ * Any other refresh failure (offline, 429, 5xx) is transient: the session is
+ * kept, and the error is thrown once the old access token has expired too (until
+ * then the old token is still good, so it is returned).
+ *
+ * `token(rejected)` is for when the API answered 401 to `rejected`: it
+ * refreshes even though the token looks valid, unless another tab already has.
  */
 export class TokenSession {
   readonly #load: () => StoredTokens | null;
@@ -178,15 +183,17 @@ export class TokenSession {
     return this.#lock(async () => this.#save(this.#stored(response, null)));
   }
 
-  token(): Promise<string | null> {
+  token(rejected?: string): Promise<string | null> {
     return this.#lock(async () => {
       const tokens = this.#load();
       if (!tokens) return null;
+      // Another tab has already replaced the token the API refused.
+      if (rejected !== undefined && tokens.accessToken !== rejected) return tokens.accessToken;
       const expiresAt = tokens.expiresAtEpochMs;
-      const now = this.#now();
-      if (expiresAt === null || expiresAt - this.#refreshMarginMs > now) return tokens.accessToken;
+      if (rejected === undefined && (expiresAt === null || expiresAt - this.#refreshMarginMs > this.#now())) return tokens.accessToken;
       if (tokens.refreshToken === null) {
-        if (expiresAt > now) return tokens.accessToken;
+        // Nothing to refresh with: a token the API refused is all there is; otherwise it lasts until it expires.
+        if (rejected !== undefined || this.#unexpired(tokens)) return tokens.accessToken;
         this.#save(null);
         return null;
       }
@@ -195,7 +202,7 @@ export class TokenSession {
         this.#save(refreshed);
         return refreshed.accessToken;
       } catch (e) {
-        if (e instanceof OidcException && (e.error === "invalid_grant" || (e.status >= 400 && e.status < 500))) {
+        if (e instanceof OidcException && e.error === "invalid_grant") {
           // Another tab may have rotated the refresh token we sent (no Web Locks): keep its session
           // and use its access token rather than logging everyone out.
           const current = this.#load();
@@ -203,9 +210,15 @@ export class TokenSession {
           this.#save(null);
           return null;
         }
-        return tokens.accessToken;
+        // Transient: the session stays. The old token is good only while it hasn't expired and the API hasn't refused it.
+        if (rejected === undefined && this.#unexpired(tokens)) return tokens.accessToken;
+        throw e;
       }
     });
+  }
+
+  #unexpired(tokens: StoredTokens): boolean {
+    return tokens.expiresAtEpochMs === null || tokens.expiresAtEpochMs > this.#now();
   }
 
   #stored(response: TokenResponse, previous: StoredTokens | null): StoredTokens {

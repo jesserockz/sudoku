@@ -64,10 +64,10 @@ export class SudokuRepository {
       },
       now,
     );
-    this.tokens = async () => {
+    this.tokens = async (rejected) => {
       const s = this.settings();
       if (s.devUser) return devToken(s.devUser.sub, s.devUser.name);
-      if (s.oidc) return this.#session.token();
+      if (s.oidc) return this.#session.token(rejected);
       return null;
     };
     this.sync = new ResultSync(storage.pending, (r) => this.#client().submitResult(r));

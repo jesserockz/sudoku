@@ -31,8 +31,12 @@ export type SubmitOutcome =
   | { kind: "stored"; result: GameResult }
   | { kind: "rejected"; error: ApiError | null };
 
-/** Supplies the bearer token for API calls, or `null` when signed out. */
-export type TokenProvider = () => Promise<string | null>;
+/**
+ * Supplies the bearer token for API calls, or `null` when signed out. `rejected`
+ * is the token the API just answered 401 to: the provider should return a
+ * fresher one if it can.
+ */
+export type TokenProvider = (rejected?: string) => Promise<string | null>;
 
 export type Fetch = typeof fetch;
 
@@ -83,9 +87,7 @@ export class SudokuApi {
   }
 
   async submitResult(result: GameResult): Promise<SubmitOutcome> {
-    const headers = await this.#headers(true);
-    headers["Content-Type"] = "application/json";
-    const response = await this.#fetch(this.#base + "results", { method: "POST", headers, body: JSON.stringify(result) });
+    const response = await this.#request("POST", "results", true, result);
     if (response.status === 201) return { kind: "created", result: decodeGameResult(await response.json()) };
     if (response.status === 200) return { kind: "stored", result: decodeGameResult(await response.json()) };
     if (response.status === 400) return { kind: "rejected", error: await errorOf(response) };
@@ -137,22 +139,36 @@ export class SudokuApi {
   }
 
   async #send(method: string, path: string, body?: unknown): Promise<unknown> {
-    const headers = await this.#headers(true);
-    if (body !== undefined) headers["Content-Type"] = "application/json";
-    const response = await this.#fetch(this.#base + path, { method, headers, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+    const response = await this.#request(method, path, true, body);
     if (!response.ok) throw new ApiException(response.status, await errorOf(response));
     return response.json();
   }
 
   async #get(path: string, auth = true): Promise<unknown> {
-    const response = await this.#fetch(this.#base + path, { headers: await this.#headers(auth) });
+    const response = await this.#request("GET", path, auth);
     if (!response.ok) throw new ApiException(response.status, await errorOf(response));
     return response.json();
   }
 
-  async #headers(auth: boolean): Promise<Record<string, string>> {
+  /**
+   * Sends a request, with the bearer token when `auth`. An authenticated call
+   * without a token (signed out, or the session ended) fails with a 401 without
+   * touching the network. If the server answers 401, the token provider is
+   * asked for a fresher token, and the request is retried once if there is one.
+   */
+  async #request(method: string, path: string, auth: boolean, body?: unknown): Promise<Response> {
     const token = auth ? await this.#tokens() : null;
-    return token ? { Authorization: `Bearer ${token}` } : {};
+    if (auth && token === null) throw new ApiException(401, null);
+    const send = (bearer: string | null) => {
+      const headers: Record<string, string> = {};
+      if (bearer !== null) headers.Authorization = `Bearer ${bearer}`;
+      if (body !== undefined) headers["Content-Type"] = "application/json";
+      return this.#fetch(this.#base + path, { method, headers, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+    };
+    const response = await send(token);
+    if (token === null || response.status !== 401) return response;
+    const fresh = await this.#tokens(token);
+    return fresh === null || fresh === token ? response : send(fresh);
   }
 }
 
