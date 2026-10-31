@@ -9,7 +9,7 @@ Group=sudoku
 Environment=DB=/var/lib/sudoku/sudoku.db
 Environment=BACKUP_DIR=/var/backups/sudoku
 Environment=KEEP_DAYS=30
-ExecStart=/usr/local/bin/sudoku-backup
+ExecStart=/opt/sudoku/bin/sudoku-backup
 Nice=10
 IOSchedulingClass=idle
 
