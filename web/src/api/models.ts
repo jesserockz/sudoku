@@ -57,6 +57,8 @@ export interface CurrentBuild {
   os: string;
   arch: string;
   asset: string;
+  /** The server also installs each release's web client into its `web_dir`. */
+  updatesWeb: boolean;
 }
 
 /** One GitHub release, from `GET /api/v1/admin/releases`. */
@@ -244,7 +246,7 @@ export function decodeReleaseList(json: unknown): ReleaseList {
   const o = obj(json);
   const c = obj(o.current);
   return {
-    current: { version: str(c.version), os: str(c.os), arch: str(c.arch), asset: str(c.asset) },
+    current: { version: str(c.version), os: str(c.os), arch: str(c.arch), asset: str(c.asset), updatesWeb: optional(c.updatesWeb, bool) ?? false },
     releases: list(o.releases, decodeRelease),
     update: decodeUpdateStatus(o.update),
   };

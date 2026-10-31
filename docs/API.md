@@ -294,9 +294,9 @@ Removes the flag (automatic or not). `200` with the updated list item; also `200
 
 ## Admin endpoints (self-update)
 
-Self-update of the server binary. Every `/api/v1/admin/*` endpoint needs a valid bearer token whose claims match the server's `[admin]` config (a claim, which may be a dot-separated path, equal to one of a list of values). Otherwise: `401 unauthorized` without a valid token, `403 forbidden` ("admin access required") for a valid non-admin token. With no `[admin]` config nobody is admin. If the server was built without the updater, every self-update endpoint answers `409 update_unavailable`.
+Self-update of the server binary and, when the server has a `web_dir`, the web client. Every `/api/v1/admin/*` endpoint needs a valid bearer token whose claims match the server's `[admin]` config (a claim, which may be a dot-separated path, equal to one of a list of values). Otherwise: `401 unauthorized` without a valid token, `403 forbidden` ("admin access required") for a valid non-admin token. With no `[admin]` config nobody is admin. If the server was built without the updater, every self-update endpoint answers `409 update_unavailable`.
 
-Only the server binary is updated; the web client is deployed separately.
+When `web_dir` is set, an update also installs the release's `sudoku-web.zip` into it (the previous directory is kept as `<web_dir>.previous`) and a rollback restores both. Without `web_dir` only the binary is updated.
 
 ### `GET /api/v1/admin/releases?prereleases=true`
 
@@ -304,7 +304,7 @@ Up to the 30 most recent published (non-draft) GitHub releases, newest first. Pr
 
 ```json
 {
-  "current": { "version": "0.2.0", "os": "linux", "arch": "amd64", "asset": "sudoku-server-linux-amd64" },
+  "current": { "version": "0.2.0", "os": "linux", "arch": "amd64", "asset": "sudoku-server-linux-amd64", "updatesWeb": true },
   "releases": [
     {
       "tag": "v0.3.0",
@@ -324,10 +324,11 @@ Up to the 30 most recent published (non-draft) GitHub releases, newest first. Pr
 }
 ```
 
+- `current.updatesWeb` is true when the server also installs the web client (its `web_dir` is set).
 - `version` is the tag without a leading `v`. `current` is true when it equals the running version.
 - `comparison` is `newer`, `same`, `older` or `unknown` (either version is not semver) relative to the running version, by semver 2 precedence (a prerelease ranks below its release).
 - `latest` is true for the highest-semver non-prerelease release.
-- `installable` needs both this platform's asset (`sudoku-server-<os>-<arch>`) and a `SHA256SUMS` asset; otherwise `notInstallableReason` says what is missing.
+- `installable` needs this platform's asset (`sudoku-server-<os>-<arch>`), a `SHA256SUMS` asset and, when `updatesWeb` is true, a `sudoku-web.zip` asset; otherwise `notInstallableReason` says what is missing.
 
 ### `POST /api/v1/admin/update`
 
@@ -340,12 +341,12 @@ Up to the 30 most recent published (non-draft) GitHub releases, newest first. Pr
 | Status | `code`                    | When                                                                                                       |
 | ------ | ------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | 409    | `update_in_progress`      | An update or rollback is already running                                                                   |
-| 409    | `update_unavailable`      | The binary's directory is not writable by the service user, or the release lacks the asset or `SHA256SUMS` |
+| 409    | `update_unavailable`      | The binary's directory (or the parent of `web_dir`) is not writable by the service user, or the release lacks an asset |
 | 404    | `release_not_found`       | No such published release                                                                                  |
 | 502    | `upstream_error`          | GitHub failed                                                                                              |
 | 409    | `downgrade_not_confirmed` | `comparison` is `same`, `older` or `unknown` and `allowDowngrade` is not `true`                            |
 
-Otherwise `202 Accepted` with the status object below. The download is checked against the release's `SHA256SUMS`; the new binary replaces the old one atomically and the old one is kept as `<binary>.previous`.
+Otherwise `202 Accepted` with the status object below. Downloads are checked against the release's `SHA256SUMS`. The web bundle is unpacked into a staging directory next to `web_dir` (archive entries that are absolute, escape the directory or are not plain files are refused, and it must contain `index.html`). Only then is `web_dir` swapped (the old one is kept as `<web_dir>.previous`) and the new binary installed atomically (the old one is kept as `<binary>.previous`); if the binary cannot be installed the old web directory is put back.
 
 ### `GET /api/v1/admin/update`
 
@@ -369,12 +370,12 @@ Progress of the current or last job.
 - `state` is `idle` (nothing ran since the server started), `downloading`, `verifying`, `installing`, `restarting` or `failed`. `error` is set when `failed`. `action` is `update`, `rollback` or `""` (idle).
 - `target` is the tag being installed; empty for a rollback.
 - `bytesTotal` is `0` when unknown. `finishedAt` is `null` while running.
-- `rollbackAvailable` is true when a `.previous` binary exists next to the running one.
+- `rollbackAvailable` is true when a `.previous` binary exists next to the running one. A web client `.previous` is restored too when present, but is not required.
 - In `restarting` the server is about to exit. Clients poll `GET /api/v1/config` until its `version` matches the target.
 
 ### `POST /api/v1/admin/rollback`
 
-No body. Swaps the `.previous` binary back in (the replaced binary becomes the new `.previous`) and restarts. `409 update_in_progress` if a job is running, `409 update_unavailable` if there is no previous binary or the directory is not writable. Otherwise `202 Accepted` with the status object.
+No body. Swaps the `.previous` binary back in (the replaced binary becomes the new `.previous`) and, when `web_dir` is set and has a `.previous`, the web client too, then restarts. `409 update_in_progress` if a job is running, `409 update_unavailable` if there is no previous binary or a directory is not writable. Otherwise `202 Accepted` with the status object.
 
 ## Static web client
 

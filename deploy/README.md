@@ -32,14 +32,16 @@ npm run build`) and copy `web/dist` (the directory containing `index.html`).
 apt install sqlite3            # for backups and ad-hoc inspection
 useradd --system --home /var/lib/sudoku --shell /usr/sbin/nologin sudoku
 
-# The binary directory is owned by the service user so the server can replace
-# its own binary (see "Updating from the web").
+# /opt/sudoku is owned by the service user so the server can replace its own
+# binary and web client (see "Updating from the web").
+install -d -m 0755 -o sudoku -g sudoku /opt/sudoku
 install -d -m 0755 -o sudoku -g sudoku /opt/sudoku/bin
 install -m 0755 -o sudoku -g sudoku sudoku-server /opt/sudoku/bin/sudoku-server
 install -m 0755 deploy/sudoku-backup.sh /usr/local/bin/sudoku-backup
 
-install -d -m 0755 /opt/sudoku/web
+install -d -m 0755 -o sudoku -g sudoku /opt/sudoku/web
 cp -r path/to/web-build/. /opt/sudoku/web/
+chown -R sudoku:sudoku /opt/sudoku/web
 
 install -d -m 0750 -o root -g sudoku /etc/sudoku
 install -m 0640 -o root -g sudoku deploy/config.example.toml /etc/sudoku/config.toml
@@ -132,7 +134,7 @@ systemctl start sudoku-server
 
 ```sh
 install -m 0755 -o sudoku -g sudoku sudoku-server /opt/sudoku/bin/sudoku-server
-rsync -a --delete path/to/web-build/ /opt/sudoku/web/
+rsync -a --delete --chown=sudoku:sudoku path/to/web-build/ /opt/sudoku/web/
 systemctl restart sudoku-server
 ```
 
@@ -143,33 +145,57 @@ Database migrations run automatically at startup. Take a backup first
 
 An admin (see "Admins") can update the server from the **Admin** page, reached
 from the About screen. It lists the GitHub releases, downloads the binary for
-this host (`sudoku-server-<os>-<arch>`), verifies it against the release's
-`SHA256SUMS`, replaces `/opt/sudoku/bin/sudoku-server` and restarts the
-service. The server exits with status 75 and systemd starts the new binary,
-which relies on `Restart=on-failure` in the unit.
+this host (`sudoku-server-<os>-<arch>`) and the web client (`sudoku-web.zip`),
+verifies both against the release's `SHA256SUMS`, unpacks the web client next
+to `/opt/sudoku/web`, replaces `/opt/sudoku/web` and
+`/opt/sudoku/bin/sudoku-server`, and restarts the service. The server exits
+with status 75 and systemd starts the new binary, which relies on
+`Restart=on-failure` in the unit. Nothing is replaced until both downloads
+are verified and unpacked, so a failed update changes nothing.
 
 Requirements:
 
-- `/opt/sudoku/bin` owned by the `sudoku` user and listed in `ReadWritePaths=`
-  in the unit (both are in the instructions above). If either is missing the
-  page reports that the directory is not writable and names it.
+- `/opt/sudoku` and the directories below it owned by the `sudoku` user, and
+  `/opt/sudoku` listed in `ReadWritePaths=` in the unit (both are in the
+  instructions above). The web directory is swapped for a staged copy, so the
+  service needs write access to its parent, not only to the directory itself.
+  If either is missing the page reports that the directory is not writable
+  and names it.
 - Outbound HTTPS to `api.github.com` and GitHub's release storage.
-- The release must have been published with a `SHA256SUMS` asset.
+- The release must have been published with `SHA256SUMS` and `sudoku-web.zip`
+  assets. Older releases without the web bundle are listed as not installable.
 
-The previous binary is kept as `/opt/sudoku/bin/sudoku-server.previous`, and
-the Admin page can roll back to it. To roll back by hand (for example if the
-new version does not start):
+The previous binary is kept as `/opt/sudoku/bin/sudoku-server.previous` and the
+previous web client as `/opt/sudoku/web.previous`. The Admin page can roll back
+to them: it restores both (or only the binary, if there is no
+`web.previous`, for example after an update made by an older version). To roll
+back by hand (for example if the new version does not start):
 
 ```sh
 mv /opt/sudoku/bin/sudoku-server.previous /opt/sudoku/bin/sudoku-server
+mv /opt/sudoku/web /opt/sudoku/web.rolledback
+mv /opt/sudoku/web.previous /opt/sudoku/web
+rm -rf /opt/sudoku/web.rolledback
 systemctl restart sudoku-server
 ```
 
-This updates the **server binary only**. The web client in `web_dir`
-(`/opt/sudoku/web`) is separate: update it with the `rsync` step above.
-Moving from an older install: copy the binary to `/opt/sudoku/bin`, update
-`ExecStart` and add `ReadWritePaths` (the unit in this directory has both),
-then `systemctl daemon-reload`.
+Only the web directory configured as `web_dir` is updated; with no `web_dir`
+the update replaces the binary alone.
+
+Moving from an older install (which could only update the binary): give the
+service user ownership of the directories and widen `ReadWritePaths`, then
+reload systemd:
+
+```sh
+chown sudoku:sudoku /opt/sudoku
+chown -R sudoku:sudoku /opt/sudoku/web
+cp deploy/sudoku-server.service /etc/systemd/system/    # ReadWritePaths=/opt/sudoku
+systemctl daemon-reload
+systemctl restart sudoku-server
+```
+
+If you edited the unit, change `ReadWritePaths=/opt/sudoku/bin` to
+`ReadWritePaths=/opt/sudoku` by hand instead of copying it over.
 
 ## Troubleshooting
 

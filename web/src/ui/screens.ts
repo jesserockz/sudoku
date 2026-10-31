@@ -367,7 +367,9 @@ export class AdminScreen extends Screen {
           h("tr", null, h("td", null, "Server version"), h("td", { class: "time" }, list.current.version)),
           h("tr", null, h("td", null, "Platform"), h("td", { class: "time" }, `${list.current.os}/${list.current.arch}`)),
         )),
-        h("p", { class: "muted" }, "This updates the server binary only. The web client is updated separately."),
+        h("p", { class: "muted" }, list.current.updatesWeb
+          ? "This updates the server binary and the web client."
+          : "This updates the server binary only. The web client is updated separately."),
       ),
       this.#progress(m),
       this.#confirm(m),
@@ -429,7 +431,7 @@ export class AdminScreen extends Screen {
     if (c.kind === "rollback") {
       return h("div", { class: "card" },
         h("h2", null, "Roll back?"),
-        h("p", null, "The server will swap the previous binary back in and restart. Sudoku is unavailable for a moment."),
+        h("p", null, `The server will swap the previous binary ${m.list?.current.updatesWeb ? "and web client " : ""}back in and restart. Sudoku is unavailable for a moment.`),
         buttons("Roll back"),
       );
     }

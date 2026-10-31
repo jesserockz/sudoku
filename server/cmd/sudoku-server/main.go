@@ -99,7 +99,7 @@ func run(parent context.Context, args []string, getenv func(string) string, onLi
 	}
 
 	apiServer := api.New(api.Deps{Config: cfg, Clock: clock.System{}, Store: st, Verifier: verifier, Web: webHandler,
-		Updater: &update.Updater{Restart: restart},
+		Updater: &update.Updater{WebDir: cfg.WebDir, Restart: restart},
 	})
 	effective, err := apiServer.SyncLevels(ctx)
 	if err != nil {

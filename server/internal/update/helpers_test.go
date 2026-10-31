@@ -1,6 +1,8 @@
 package update
 
 import (
+	"archive/zip"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -111,6 +113,9 @@ type relOpts struct {
 	binary string
 	// sums overrides the SHA256SUMS content.
 	sums string
+	// zip overrides the web bundle; the default holds index.html and
+	// assets/app.js for the tag.
+	zip []byte
 }
 
 // add publishes a release with the platform binary, SHA256SUMS and the web
@@ -120,10 +125,13 @@ func (g *fakeGH) add(tag string, o relOpts) ghRelease {
 	if o.binary == "" {
 		o.binary = "binary-" + tag
 	}
+	if o.zip == nil {
+		o.zip = makeZip(g.t, zipEntry{name: "index.html", body: "index-" + tag}, zipEntry{name: "assets/app.js", body: "app-" + tag})
+	}
 	files := map[string]string{
 		"sudoku-server-linux-amd64": o.binary,
 		"sudoku-server-linux-arm64": "arm-" + tag,
-		"sudoku-web.zip":            "zip-" + tag,
+		"sudoku-web.zip":            string(o.zip),
 	}
 	sums := o.sums
 	if sums == "" {
@@ -262,4 +270,58 @@ func setLimits(t *testing.T, sums, bin int64) {
 	oldSums, oldBin := maxSumsBytes, maxBinaryBytes
 	maxSumsBytes, maxBinaryBytes = sums, bin
 	t.Cleanup(func() { maxSumsBytes, maxBinaryBytes = oldSums, oldBin })
+}
+
+// zipEntry is one archive entry for makeZip. A name ending in "/" is a
+// directory; a non-zero mode is stored as the entry's mode (e.g. a symlink).
+type zipEntry struct {
+	name, body string
+	mode       os.FileMode
+}
+
+// makeZip builds an archive holding the entries in order.
+func makeZip(t *testing.T, entries ...zipEntry) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for _, e := range entries {
+		fh := &zip.FileHeader{Name: e.name, Method: zip.Deflate}
+		if e.mode != 0 {
+			fh.SetMode(e.mode)
+		}
+		w, err := zw.CreateHeader(fh)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write([]byte(e.body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// withWeb gives the updater a web directory holding an old index.html, and
+// returns its path. Its parent is the updater's temp dir.
+func withWeb(t *testing.T, tu *testUpdater) string {
+	t.Helper()
+	web := filepath.Join(tu.dir, "web")
+	if err := os.MkdirAll(filepath.Join(web, "old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(web, "index.html"), []byte("old-index"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tu.WebDir = web
+	return web
+}
+
+// setWebLimits lowers the web bundle limits for the test.
+func setWebLimits(t *testing.T, bytes int64, entries int) {
+	t.Helper()
+	oldBytes, oldEntries := maxWebBytes, maxWebEntries
+	maxWebBytes, maxWebEntries = bytes, entries
+	t.Cleanup(func() { maxWebBytes, maxWebEntries = oldBytes, oldEntries })
 }

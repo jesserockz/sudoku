@@ -22,13 +22,14 @@ StateDirectory=sudoku
 StateDirectoryMode=0750
 WorkingDirectory=/var/lib/sudoku
 
-# /opt/sudoku/bin must be owned by the service user: the admin self-update
-# writes the new binary next to the running one and keeps the old one as
-# sudoku-server.previous there. ProtectSystem=strict makes everything else
-# read-only, so the directory has to be listed here.
-ReadWritePaths=/opt/sudoku/bin
+# /opt/sudoku must be owned by the service user: the admin self-update writes
+# the new binary next to the running one in bin/ (keeping the old one as
+# sudoku-server.previous) and swaps the web/ directory with a staged copy
+# (keeping the old one as web.previous). ProtectSystem=strict makes everything
+# else read-only, so the directory has to be listed here.
+ReadWritePaths=/opt/sudoku
 
-# Hardening. The server only needs its state dir, its binary directory above,
+# Hardening. The server only needs its state dir, /opt/sudoku above,
 # and outbound HTTPS to Authentik for the JWKS plus, for self-update, to
 # api.github.com and GitHub's release asset storage.
 NoNewPrivileges=yes
