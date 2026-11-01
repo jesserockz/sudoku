@@ -210,10 +210,15 @@ func TestCheckFailures(t *testing.T) {
 		{"second start", func(ev []Event) []Event { ev[3].A = ActStart; ev[3].On = nil; return ev }, 0, "start appears in the middle"},
 		{"early finish", func(ev []Event) []Event { ev[3].A = ActFinish; ev[3].On = nil; return ev }, 0, "finish appears in the middle"},
 		{"timer backwards", func(ev []Event) []Event { ev[5].T = ev[4].T - 1; return ev }, 0, "went backwards"},
-		{"timer moves while stopped", func(ev []Event) []Event { ev[1].T = 7; return ev }, 0, "moved while stopped"},
+		{"timer moves while stopped", func(ev []Event) []Event { ev[1].T = resumeSlackMs + 1; return ev }, 0, "moved while stopped"},
 		{"timer moves while paused", func(ev []Event) []Event {
 			i := slices.IndexFunc(ev, func(e Event) bool { return e.A == ActPause })
-			ev[i+1].T += 100
+			ev[i+1].T += resumeSlackMs + 1
+			return ev
+		}, 0, "moved while stopped"},
+		{"other event moves while paused", func(ev []Event) []Event {
+			i := slices.IndexFunc(ev, func(e Event) bool { return e.A == ActPause })
+			ev = slices.Insert(ev, i+1, Event{T: ev[i].T + 1, W: ev[i].W, A: ActHidden})
 			return ev
 		}, 0, "moved while stopped"},
 		{"resume while running", func(ev []Event) []Event { return slices.Insert(ev, 3, Event{T: 0, W: ev[1].W, A: ActResume}) }, 0, "already running"},
@@ -292,6 +297,38 @@ func TestCheckFailures(t *testing.T) {
 				t.Errorf("error = %q, want it to contain %q", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestCheckResumeSlack(t *testing.T) {
+	// A resume may land a little after the event before it (older clients
+	// stamped it a few ms late), up to resumeSlackMs; the time after it
+	// shifts with it.
+	f := validFixture(t)
+	p := slices.IndexFunc(f.r.Events, func(e Event) bool { return e.A == ActPause })
+	i := p + slices.IndexFunc(f.r.Events[p:], func(e Event) bool { return e.A == ActResume })
+	for _, tc := range []struct {
+		late int64
+		ok   bool
+	}{{0, true}, {1, true}, {resumeSlackMs, true}, {resumeSlackMs + 1, false}} {
+		ev := slices.Clone(f.r.Events)
+		for k := i; k < len(ev); k++ {
+			ev[k].T += tc.late
+		}
+		err := Check(Replay{Version: 1, Events: ev}, f.givens, f.solution, f.elapsed+tc.late)
+		if (err == nil) != tc.ok {
+			t.Errorf("resume %d ms late: err = %v", tc.late, err)
+		}
+		if err != nil && !strings.Contains(err.Error(), "moved while stopped") {
+			t.Errorf("resume %d ms late: err = %v", tc.late, err)
+		}
+	}
+
+	// A resume can't move backwards.
+	ev := slices.Clone(f.r.Events)
+	ev[i].T--
+	if err := Check(Replay{Version: 1, Events: ev}, f.givens, f.solution, f.elapsed); err == nil || !strings.Contains(err.Error(), "backwards") {
+		t.Errorf("backwards resume: err = %v", err)
 	}
 }
 

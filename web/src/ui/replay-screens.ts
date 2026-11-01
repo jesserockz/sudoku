@@ -171,6 +171,8 @@ export class ReplayScreen extends AdminResultsScreenBase {
         h("p", { class: "small" },
           `Flagged ${flag.auto ? "by the server" : `by ${flag.flaggedBy?.displayName ?? "an admin"}`} at ${flag.flaggedAt}`,
           flag.reason && `: ${flag.reason}`),
+        // An automatic flag is admin-only until an admin confirms it, which flags the result again as themselves.
+        flag.auto && h("button", { class: "danger", disabled: m.busy, onclick: () => void m.flag(r, flag.reason ?? "") }, "Confirm flag"),
         h("button", { disabled: m.busy, onclick: () => void m.unflag(r) }, "Remove flag"),
       );
     }

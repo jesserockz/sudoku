@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { AppStorage } from "../src/data/app-storage.ts";
 import { SudokuRepository } from "../src/data/repository.ts";
 import { MemoryStore } from "../src/data/store.ts";
+import type { Game } from "../src/game/game.ts";
 import type { ReplayEvent } from "../src/game/replay.ts";
 import type { Puzzle } from "../src/generator/generator.ts";
 import type { SeedProfile } from "../src/serverless/seed-repository.ts";
@@ -62,6 +63,25 @@ test("opening a puzzle stamps a start event once", async () => {
   clock.wall = WALL + 99;
   c.openPuzzle(1);
   assert.equal(replayOf(c).length, 1);
+});
+
+test("a resume is stamped with the time the timer banked, even if the clock moves while it is recorded", async () => {
+  const { c, clock } = await env(false);
+  c.openPuzzle(1);
+  // The clock ticks past the instant the timer started before the event is stamped.
+  const resume = (g: Game): Game => {
+    const resumed = g.resume(clock.mono);
+    clock.mono += 0.6;
+    return resumed;
+  };
+  c.update(1, resume, { a: "resume" });
+  clock.mono += 1000.4;
+  c.update(1, (g) => g.pause(clock.mono), { a: "pause" });
+  c.update(1, resume, { a: "resume" });
+  assert.deepEqual(
+    replayOf(c).map((e) => [e.a, e.t]),
+    [["start", 0], ["resume", 0], ["pause", 1001], ["resume", 1001]],
+  );
 });
 
 test("an action is recorded with the game timer and the wall clock", async () => {

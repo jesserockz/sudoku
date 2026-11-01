@@ -148,7 +148,7 @@ Submit one completed puzzle.
   - `completedAt` parses as RFC 3339. It is stored as reported and is informational only — it does not affect ranking.
   - `replay`, when present, is an object with `version` `1` and at most **10000** `events`, each well-formed as described under [Replays](#replays) (`400 invalid_result` otherwise).
 - The whole request body is capped at **1 MiB** (`413 too_large`).
-- The replay is then **checked** against the day's puzzle (see [Replay checks](#replay-checks)). A replay that fails a check does **not** reject the result: it is stored with the replay and automatically flagged as suspicious, with the failed check as the reason. So is a result with no replay.
+- The replay is then **checked** against the day's puzzle (see [Replay checks](#replay-checks)). A replay that fails a check does **not** reject the result: it is stored with the replay and automatically flagged as suspicious, with the failed check as the reason. So is a result with no replay. An automatic flag is only visible to admins until one confirms it by flagging the result themselves (see the admin flag endpoint).
 
 Clients queue results offline and retry until they receive `200`/`201`. A `400` is final; the client should drop the result and not retry.
 
@@ -186,7 +186,7 @@ Defaults to today.
 - Entries are sorted by time ascending. **Ties share a rank** with no tiebreaker, using standard competition ranking (1, 2, 2, 4). Entries with equal time are ordered by `displayName` for stable display only.
 - `total` includes only users who completed **all five** levels that day.
 - `players` lists every user with at least one result that day, so clients can show partial progress (e.g. 3 of 5).
-- Every puzzle and total entry also has `"suspicious": true|false`: `true` when an admin (or the server's replay check) flagged that result, or for a total entry, any of the player's results that day. Flagged results stay listed and ranked like any other; clients show a visible marker on them. Who flagged a result and why is only shown to admins.
+- Every puzzle and total entry also has `"suspicious": true|false`: `true` when an admin flagged that result (the server's own automatic flags don't count until an admin confirms one), or for a total entry, any of the player's results that day. Flagged results stay listed and ranked like any other; clients show a visible marker on them. Who flagged a result and why is only shown to admins.
 
 ## Replays
 
@@ -237,7 +237,7 @@ Only actions that change something are recorded: a `place` of the digit already 
 The server replays the events on the day's puzzle (regenerated from the week seed) and checks, in order:
 
 1. **Shape**: `start` is first with `t` = 0, `finish` is last, and neither appears anywhere else.
-2. **Timer**: `t` never decreases, and it stays the same while the timer is stopped (after `pause` or `restore`, until `resume`), except that `restore` itself may move it forward: the time banked by the last save before the app was closed.
+2. **Timer**: `t` never decreases, and it stays the same while the timer is stopped (after `pause` or `restore`, until `resume`), except that `restore` itself may move it forward (the time banked by the last save before the app was closed) and `resume` may be up to **1 second** later than the event before it (older clients stamped it a few milliseconds late).
 3. **Moves**: every `place`, `erase`, `noteAdd`, `noteRemove`, `undo` and `clear` happens while the timer runs and is legal on the board at that point (no changing a given, no `noteAdd` of a mark already there, and so on), and `pause`/`resume` alternate.
 4. **Solved**: the board after the last move is the puzzle's solution, the solving `place` is followed directly by `finish`, and the `finish` event's `t` equals the submitted `elapsedMs`.
 5. **Wall clock**: the wall-clock time spent with the timer running (the sum of `w` gaps between consecutive events while it runs; a gap where `w` goes backwards, e.g. a clock change, counts as 0) is at least `elapsedMs` minus **2 seconds**. Equivalently, the replay's wall-clock span minus the time spent paused can't be shorter than the time claimed.
@@ -286,7 +286,7 @@ One result with everything needed to watch it back: the fields of a list item ab
 
 ### `PUT /api/v1/admin/results/{date}/{level}/{userId}/flag`
 
-Flags a result as suspicious, replacing any earlier flag (including an automatic one). Body `{ "reason": "Way faster than usual" }`; `reason` is optional, trimmed, and at most 500 characters (`400 bad_request` otherwise). Records the calling admin and the time. `200` with the updated list item, `404 not_found` if there is no such result.
+Flags a result as suspicious, replacing any earlier flag (including an automatic one, which this confirms and makes public). Body `{ "reason": "Way faster than usual" }`; `reason` is optional, trimmed, and at most 500 characters (`400 bad_request` otherwise). Records the calling admin and the time. `200` with the updated list item, `404 not_found` if there is no such result.
 
 ### `DELETE /api/v1/admin/results/{date}/{level}/{userId}/flag`
 

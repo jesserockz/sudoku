@@ -17,7 +17,11 @@ const (
 	// wallSlackMs is how much shorter than the claimed time the wall clock
 	// may be.
 	wallSlackMs = 2000
-	cells       = 81
+	// resumeSlackMs is how far a resume may move t past the event before it.
+	// Older clients stamped a resume a few ms late; moving the timer forward
+	// only lengthens the claimed time, so it gives a cheater nothing.
+	resumeSlackMs = 1000
+	cells         = 81
 )
 
 // Action names.
@@ -167,7 +171,8 @@ func checkShape(ev []Event) error {
 }
 
 // checkTimer is check 2: t never decreases and holds still while the timer is
-// stopped, except across a restore.
+// stopped, except across a restore and a resume, which may land up to
+// resumeSlackMs later.
 func checkTimer(ev []Event) error {
 	stopped := true
 	for i := 1; i < len(ev); i++ {
@@ -175,7 +180,7 @@ func checkTimer(ev []Event) error {
 		switch {
 		case e.T < prev.T:
 			return fmt.Errorf("the timer went backwards at event %d", i)
-		case stopped && e.A != ActRestore && e.T != prev.T:
+		case stopped && e.A != ActRestore && e.T != prev.T && (e.A != ActResume || e.T-prev.T > resumeSlackMs):
 			return fmt.Errorf("the timer moved while stopped at event %d", i)
 		}
 		switch e.A {

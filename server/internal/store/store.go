@@ -236,14 +236,15 @@ type DayResult struct {
 	DisplayName string
 	Level       int
 	ElapsedMs   int64
-	// Flagged is set when the result is flagged as suspicious.
+	// Flagged is set when an admin flagged the result as suspicious. The
+	// server's own flags stay admin-only until an admin confirms one.
 	Flagged bool
 }
 
 // DayResults returns every result for date, ordered by level then time.
 func (s *Store) DayResults(ctx context.Context, date string) ([]DayResult, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT r.user_id, u.display_name, r.level, r.elapsed_ms, r.flagged_at IS NOT NULL
+		SELECT r.user_id, u.display_name, r.level, r.elapsed_ms, r.flagged_at IS NOT NULL AND r.flag_auto = 0
 		FROM results r JOIN users u ON u.id = r.user_id
 		WHERE r.date = ?
 		ORDER BY r.level, r.elapsed_ms, u.display_name, r.user_id`, date)
