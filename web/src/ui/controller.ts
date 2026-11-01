@@ -577,7 +577,10 @@ export class AppController extends EventTarget {
   }
 
   #stamp(game: Game, action: ReplayInput): Game {
-    return game.record({ t: Math.round(game.elapsedMs(this.nowMs())), w: this.#host.wallMs(), ...action });
+    // A resume reads the clock again after the timer started, so it would land a hair past the pause before it; the timer
+    // reads exactly what it banked at the moment it resumed.
+    const elapsed = action.a === "resume" ? game.timer.accumulatedMs : game.elapsedMs(this.nowMs());
+    return game.record({ t: Math.round(elapsed), w: this.#host.wallMs(), ...action });
   }
 
   // Lifecycle

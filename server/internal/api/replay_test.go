@@ -189,15 +189,26 @@ func TestPostResultWithoutReplayIsFlagged(t *testing.T) {
 	for _, en := range lb.Puzzles[0].Entries {
 		got[en.DisplayName] = en.Suspicious
 	}
-	if !reflectEqual(got, map[string]bool{"Alice": true, "Bob": true, "Carol": false}) {
+	if !reflectEqual(got, map[string]bool{"Alice": false, "Bob": false, "Carol": false}) {
 		t.Errorf("puzzle suspicious = %v", got)
 	}
 	got = map[string]bool{}
 	for _, en := range lb.Total.Entries {
 		got[en.DisplayName] = en.Suspicious
 	}
-	if !reflectEqual(got, map[string]bool{"Alice": true, "Bob": true, "Carol": false}) {
+	if !reflectEqual(got, map[string]bool{"Alice": false, "Bob": false, "Carol": false}) {
 		t.Errorf("total suspicious = %v", got)
+	}
+
+	// An admin confirming Alice's automatic flag makes it public.
+	do(t, e.srv, "PUT", replayURL+e.userID(t, alice)+"/flag", adminToken, map[string]string{"reason": "No replay submitted"})
+	lb = e.leaderboard(t)
+	got = map[string]bool{}
+	for _, en := range lb.Puzzles[0].Entries {
+		got[en.DisplayName] = en.Suspicious
+	}
+	if !reflectEqual(got, map[string]bool{"Alice": true, "Bob": false, "Carol": false}) {
+		t.Errorf("puzzle suspicious after confirming = %v", got)
 	}
 	// A flagged result stays listed and ranked.
 	if lb.Puzzles[0].Entries[0].DisplayName != "Alice" || lb.Puzzles[0].Entries[0].Rank != 1 {
@@ -222,6 +233,7 @@ func TestTotalIsSuspiciousWhenAnyLevelIs(t *testing.T) {
 	rep, elapsed := solveReplay(testPuzzle(t, 1, 2))
 	e.post(t, alice, resultBody(1, elapsed, rep), http.StatusCreated)
 	e.post(t, alice, resultBody(2, 60000, nil), http.StatusCreated)
+	do(t, e.srv, "PUT", "/api/v1/admin/results/"+testDate+"/2/"+e.userID(t, alice)+"/flag", adminToken, map[string]string{"reason": "No replay submitted"})
 	lb := e.leaderboard(t)
 	if lb.Puzzles[0].Entries[0].Suspicious || !lb.Puzzles[1].Entries[0].Suspicious || !lb.Total.Entries[0].Suspicious {
 		t.Errorf("leaderboard = %+v", lb)
@@ -241,8 +253,8 @@ func TestPostResultWithInvalidReplay(t *testing.T) {
 	if r.Flag == nil || !r.Flag.Auto || r.Flag.Reason != "Replay check failed: "+r.ReplayError {
 		t.Errorf("flag = %+v", r.Flag)
 	}
-	if !e.leaderboard(t).Puzzles[0].Entries[0].Suspicious {
-		t.Error("invalid replay not suspicious on the leaderboard")
+	if e.leaderboard(t).Puzzles[0].Entries[0].Suspicious {
+		t.Error("automatically flagged result public on the leaderboard")
 	}
 	// It is still stored, to be watched back.
 	d := e.replayDetail(t, e.userID(t, alice))

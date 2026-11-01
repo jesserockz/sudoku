@@ -6,8 +6,9 @@
 //
 // Ann plays the Easy puzzle in the browser (notes, a wrong digit and undo, a pause, a reload), which
 // records a replay the server accepts. "Speedy" submits a suspiciously steady replay through the API and
-// "Nora" a result with no replay, which the server flags by itself. Ann then opens the replays as admin
-// (digits hidden until revealed), flags Speedy's result, and the leaderboard shows both markers.
+// "Nora" a result with no replay, which the server flags by itself (admin-only). Ann then opens the replays
+// as admin (digits hidden until revealed), flags Speedy's result and confirms Nora's, and the leaderboard
+// shows both markers.
 const { chromium } = require("playwright");
 
 const base = process.argv[2] || "http://localhost:8080";
@@ -171,8 +172,20 @@ async function shot(page, name) {
   const lb = await res.json();
   const easy = lb.puzzles.find((p) => p.level === 1).entries;
   const flagged = Object.fromEntries(easy.map((e) => [e.displayName, e.suspicious]));
-  check(flagged.Speedy === true && flagged.Nora === true && flagged.Ann === false, "the leaderboard marks flagged results");
+  check(flagged.Speedy === true && flagged.Nora === false && flagged.Ann === false, "the leaderboard marks only admin flags, not the server's");
   check(easy.map((e) => e.rank).join() === "1,2,3", "flagged results stay ranked");
+
+  // Ann confirms the server's flag on Nora's result, which makes it public.
+  await page.getByText("‹ Back").click();
+  await page.getByText("Nora").first().click();
+  await page.getByRole("button", { name: "Confirm flag" }).waitFor();
+  await shot(page, "replay-auto-flag");
+  await page.getByRole("button", { name: "Confirm flag" }).click();
+  await page.getByText("Flagged by Ann", { exact: false }).waitFor();
+  check(await page.getByRole("button", { name: "Confirm flag" }).count() === 0, "a confirmed flag is the admin's own");
+  res = await api(nora, `leaderboard?date=${date}`);
+  const confirmed = (await res.json()).puzzles.find((p) => p.level === 1).entries;
+  check(confirmed.find((e) => e.displayName === "Nora").suspicious === true, "a confirmed flag shows on the leaderboard");
 
   const viewer = await browser.newContext({ viewport: { width: 520, height: 900 }, deviceScaleFactor: 2 });
   const other = await viewer.newPage();

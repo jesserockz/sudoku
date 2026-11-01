@@ -103,7 +103,8 @@ results (today first, "Earlier" goes back any number of days) under each game,
 fastest first, with the player, time, how the server's [replay
 check](API.md#replay-checks) went ("Replay OK", "Replay failed", "No replay",
 or "Before replays" for results from before the server kept them) and whether
-the result is flagged as suspicious ("auto" when the server flagged it).
+the result is flagged as suspicious ("auto" when the server flagged it; only
+admins see an automatic flag until one is confirmed).
 Tapping one opens its replay:
 
 - The board as it was after each action, with the cell the last action changed
@@ -124,8 +125,10 @@ Tapping one opens its replay:
 - **Actions**: every action with its timer and wall-clock time and the wall gap
   before it. Long gaps and stretches spent paused or hidden are marked; tap a
   row to jump there.
-- **Flag as suspicious**, with an optional reason, or **Remove flag**. Flagged
-  results show a "suspicious" marker on everyone's leaderboard but stay ranked.
+- **Flag as suspicious**, with an optional reason, or **Remove flag**. A flag
+  the server added automatically also has **Confirm flag**, which flags it as
+  you. Results flagged by an admin show a "suspicious" marker on everyone's
+  leaderboard but stay ranked; automatic flags are admin-only until confirmed.
   Who flagged it, when and why is only shown here.
 
 The logic is in `src/ui/admin-results.ts` (`AdminResultsModel`) and
@@ -341,8 +344,8 @@ In dev auth mode the app instead asks for a user id and display name and sends
 - **Leaderboard**: total and per-puzzle boards with shared ranks, plus each
   player's progress (e.g. 3/5), for today and the previous 8 days. Online
   only; offline it says so, and it loads once the connection is back. Results
-  an admin (or the server's replay check) flagged carry a red "suspicious"
-  marker.
+  an admin flagged (including by confirming the server's automatic flag) carry
+  a red "suspicious" marker.
 
 ## Serverless play (a shared seed)
 

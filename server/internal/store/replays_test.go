@@ -125,8 +125,20 @@ func TestInsertResultReplayAndFlags(t *testing.T) {
 	for _, d := range day {
 		flagged = append(flagged, d.Flagged)
 	}
-	if !reflect.DeepEqual(flagged, []bool{false, true, true, false}) {
-		t.Errorf("flagged = %v", flagged)
+	if !reflect.DeepEqual(flagged, []bool{false, false, false, false}) {
+		t.Errorf("flagged with only automatic flags = %v", flagged)
+	}
+	// An admin confirming an automatic flag makes it public.
+	if err := s.FlagResult(ctx, bob.ID, date, 1, alice.ID, "confirmed", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	day, _ = s.DayResults(ctx, date)
+	flagged = nil
+	for _, d := range day {
+		flagged = append(flagged, d.Flagged)
+	}
+	if !reflect.DeepEqual(flagged, []bool{false, true, false, false}) {
+		t.Errorf("flagged after an admin flag = %v", flagged)
 	}
 
 	ev, err := s.ReplayEvents(ctx, alice.ID, date, 1)
