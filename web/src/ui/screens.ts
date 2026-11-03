@@ -160,7 +160,9 @@ export class TodayScreen extends Screen {
     };
     return [
       h("div", { class: "card" },
-        h("p", { class: "muted" }, "Numbered puzzles with no end. Everyone gets the same ones, and times count forever.",
+        h("p", { class: "muted" }, app.seed
+          ? "Numbered puzzles with no end. Everyone with your seed gets the same ones, and times count forever."
+          : "Numbered puzzles with no end. Everyone gets the same ones, and times count forever.",
           app.me && ` · ${app.me.displayName}`),
         h("ul", { class: "puzzles" }, rows),
       ),
@@ -171,7 +173,7 @@ export class TodayScreen extends Screen {
           error,
         ),
       ),
-      h("div", { class: "actions" }, h("button", { onclick: () => app.openEndlessScores(1) }, "Leaderboard")),
+      h("div", { class: "actions" }, h("button", { onclick: () => app.openEndlessScores(1) }, app.seed ? "History" : "Leaderboard")),
     ];
   }
 
@@ -421,16 +423,17 @@ export class EndlessScoresScreen extends Screen {
   }
 }
 
-/** `<sudoku-history>`: serverless play's history of solve times. */
+/** `<sudoku-history>`: serverless play's history of solve times, daily by day and then endless by difficulty. */
 export class HistoryScreen extends Screen {
   protected render(): Child {
     const app = this.app;
     const history = app.history();
+    const endless = app.endlessHistory();
     const byDate = new Map<string, typeof history>();
     for (const r of history) byDate.set(r.date, [...(byDate.get(r.date) ?? []), r]);
     return [
       topBar("History", () => app.openToday()),
-      history.length === 0
+      history.length === 0 && endless.length === 0
         ? h("div", { class: "card center" }, h("p", { class: "muted" }, "Solved puzzles show up here."))
         : [...byDate].map(([date, results]) => h("div", { class: "card" },
           h("h2", null, date === app.today ? "Today" : describeDate(date)),
@@ -445,6 +448,21 @@ export class HistoryScreen extends Screen {
             ),
           )),
         )),
+      endless.length > 0 && h("div", { class: "card", id: "history-endless" },
+        h("h2", null, ENDLESS_LABEL),
+        DIFFICULTIES.map((d, i) => {
+          const solved = endless.filter((r) => r.difficulty === i + 1);
+          return solved.length > 0 && [
+            h("p", null, h("strong", null, d.name), ` (${solved.length} solved)`),
+            h("table", { class: "board-table" }, h("tbody", null,
+              solved.map((r) => h("tr", null,
+                h("td", null, endlessTitle(r.difficulty, r.number)),
+                h("td", { class: "time" }, formatDuration(r.elapsedMs)),
+              )),
+            )),
+          ];
+        }),
+      ),
     ];
   }
 }

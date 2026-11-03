@@ -45,6 +45,15 @@ export async function weekSeed(seed: string, isoWeek: string): Promise<string> {
   return toHex(mac.subarray(0, 8));
 }
 
+/**
+ * The seed of `seed`'s endless puzzles, as 16 hex characters:
+ * `HMAC-SHA256(UTF-8(seed), "sudoku-endless")` truncated like {@link weekSeed}. A
+ * seed equal to a server's secret therefore gets that server's endless puzzles.
+ */
+export async function endlessSeed(seed: string): Promise<string> {
+  return toHex((await hmacSha256(seed, "sudoku-endless")).subarray(0, 8));
+}
+
 /** The week containing `nowMs` for `settings`, shaped like the server's `GET /api/v1/week`. */
 export async function seedWeek(settings: SeedSettings, nowMs: number = Date.now()): Promise<Week> {
   const info = weekAt(nowMs, settings.timezone);

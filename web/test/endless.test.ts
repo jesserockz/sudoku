@@ -12,7 +12,7 @@ import { Game } from "../src/game/game.ts";
 import { MAX_REPLAY_EVENTS } from "../src/game/replay.ts";
 import { generateEndless } from "../src/generator/generator.ts";
 import { parseWeekSeed } from "../src/generator/week-seed.ts";
-import { SeedRepository, type SeedProfile } from "../src/serverless/seed-repository.ts";
+import { SeedRepository } from "../src/serverless/seed-repository.ts";
 import { AppController, ENDLESS_LABEL, type EndlessRef, type Host } from "../src/ui/controller.ts";
 import { ENDLESS_SEED, FakeServer } from "./fake-server.ts";
 
@@ -397,16 +397,6 @@ test("the endless label and the tab", async () => {
   assert.equal(again.c.homeTab, "endless");
 });
 
-test("endless is not offered in serverless mode", async () => {
-  const e = await env();
-  e.c.seed = { name: "x" } as unknown as SeedProfile;
-  assert.equal(e.c.hasEndless, false);
-  e.c.openEndless(REF);
-  assert.equal(e.c.screen.kind, "today");
-  e.c.openEndlessScores(1);
-  assert.equal(e.c.screen.kind, "today");
-});
-
 test("endlessSummaries is null until the seed has synced, then counts solved puzzles", async () => {
   const e = await env({ offline: true });
   const { c, server } = e;
@@ -698,18 +688,10 @@ test("a device that starts on the endless tab gets the explainer on start, and n
   assert.equal(other.repo.endlessHelpSeen(), false);
 });
 
-test("the explainers open from the About screen; endless only with a server", async () => {
+test("the explainers open from the About screen", async () => {
   const e = await env();
   e.c.openHelp("daily");
   assert.equal(e.c.help, "daily");
   e.c.openHelp("endless");
   assert.equal(e.c.help, "endless");
-  e.c.closeHelp();
-  e.c.seed = { name: "x" } as unknown as SeedProfile;
-  e.c.openHelp("endless");
-  assert.equal(e.c.help, null);
-  e.c.showHomeTab("endless");
-  assert.equal(e.c.help, null, "no pop-up without a server");
-  e.c.openHelp("daily");
-  assert.equal(e.c.help, "daily");
 });

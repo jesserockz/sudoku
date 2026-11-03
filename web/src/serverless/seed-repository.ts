@@ -1,10 +1,12 @@
 import { type Week, weekPuzzles } from "../api/models.ts";
 import { inWeek, today, weekOf } from "../game/calendar.ts";
 import { Game, type SavedGame } from "../game/game.ts";
-import type { Puzzle } from "../generator/generator.ts";
+import type { EndlessPuzzle, Puzzle } from "../generator/generator.ts";
 import { type KeyValueStore, StoredValue, list, num, obj, optional, record, str } from "../data/store.ts";
-import { decodeSavedGame, gameKey } from "../data/app-storage.ts";
-import { fingerprint, resultsSummary, seedSettings, seedWeekFor, type SeedSettings, weekSeed } from "./seed.ts";
+import { decodeSavedGame, endlessGameKey, gameKey } from "../data/app-storage.ts";
+import { type EndlessInProgress, EndlessPuzzleCache, type EndlessSolved, type EndlessSource, endlessInProgressOf } from "../data/endless.ts";
+import { type EndlessResult, decodeEndlessResult } from "../api/models.ts";
+import { endlessSeed, fingerprint, resultsSummary, seedSettings, seedWeekFor, type SeedSettings, weekSeed } from "./seed.ts";
 
 /** The seed being played, with its fingerprint worked out once. */
 export interface SeedProfile {
@@ -42,15 +44,21 @@ function decodeResult(json: unknown): SeedResult {
  * history of solve times, in the same store as server mode. There is no
  * network: the week comes from the seed.
  *
+ * Endless puzzles come from the seed too (see {@link endlessSeed}): their games
+ * and solve times are kept per seed like the daily ones, but never pruned, as
+ * an endless puzzle can be finished at any time.
+ *
  * Games and history are kept per seed (keyed by its fingerprint), so switching
  * seeds and back resumes where you were and never mixes two groups' games.
  */
-export class SeedRepository {
+export class SeedRepository implements EndlessSource {
   readonly #store: KeyValueStore;
   readonly #now: () => number;
   readonly #active: StoredValue<SeedProfile>;
   #seedCache: { key: string; seed: string } | null = null;
   #puzzleCache: { key: string; puzzles: Puzzle[] } | null = null;
+  #endlessSeed: { seed: string; hex: string } | null = null;
+  readonly #endlessPuzzles = new EndlessPuzzleCache();
 
   constructor(store: KeyValueStore, now: () => number = Date.now) {
     this.#store = store;
@@ -147,6 +155,64 @@ export class SeedRepository {
     return resultsSummary(date, profile.fingerprint, games);
   }
 
+  /** Works out the active seed's endless seed, which {@link endlessPuzzle} needs (it can't wait for the hash). */
+  async loadEndless(): Promise<void> {
+    const { seed } = this.#requireProfile().settings;
+    if (this.#endlessSeed?.seed !== seed) this.#endlessSeed = { seed, hex: await endlessSeed(seed) };
+  }
+
+  /** Endless puzzle `number` of `difficulty`, or `null` until {@link loadEndless} has run for the active seed. */
+  endlessPuzzle(difficulty: number, number: number): EndlessPuzzle | null {
+    if (!this.#endlessSeed || this.#endlessSeed.seed !== this.profile()?.settings.seed) return null;
+    return this.#endlessPuzzles.get(this.#endlessSeed.hex, difficulty, number);
+  }
+
+  /** Every solved endless puzzle of the active seed, by {@link endlessGameKey}. */
+  endlessSolved(): Map<string, EndlessSolved> {
+    return new Map(this.endlessHistory().map((r) => [endlessGameKey(r.difficulty, r.number), { elapsedMs: r.elapsedMs, synced: true }]));
+  }
+
+  /** Every endless solve of the active seed, by difficulty then number. */
+  endlessHistory(): EndlessResult[] {
+    const profile = this.profile();
+    const results = profile ? (this.#endlessHistory(profile).read() ?? []) : [];
+    return results.sort((a, b) => a.difficulty - b.difficulty || a.number - b.number);
+  }
+
+  /** Endless games started and not solved yet, by difficulty then number. */
+  endlessInProgress(): EndlessInProgress[] {
+    return endlessInProgressOf(this.#endlessGames().read());
+  }
+
+  /** A saved game for an endless puzzle, if it still matches the puzzle. */
+  loadEndlessGame(puzzle: EndlessPuzzle): Game | null {
+    const saved = this.#endlessGames().read()?.[endlessGameKey(puzzle.tier, puzzle.number)];
+    return saved && saved.givens === puzzle.givens ? Game.restore(saved) : null;
+  }
+
+  saveEndlessGame(difficulty: number, number: number, game: Game, nowMs: number): void {
+    this.#endlessGames().update((games) => ({ ...games, [endlessGameKey(difficulty, number)]: game.save(nowMs) }));
+  }
+
+  /**
+   * Records a just-finished endless game in the history and drops its saved
+   * game, which has nothing left to resume. The first result for a puzzle counts.
+   */
+  async completeEndless(difficulty: number, number: number, game: Game): Promise<EndlessResult> {
+    const profile = this.#requireProfile();
+    if (game.completedElapsedMs === null) throw new Error("game isn't complete");
+    const key = endlessGameKey(difficulty, number);
+    this.#endlessGames().update((games) => Object.fromEntries(Object.entries(games ?? {}).filter(([k]) => k !== key)));
+    const history = this.#endlessHistory(profile);
+    const existing = (history.read() ?? []).find((r) => r.difficulty === difficulty && r.number === number);
+    if (existing) return existing;
+    const result: EndlessResult = {
+      difficulty, number, elapsedMs: game.completedElapsedMs, completedAt: new Date(this.#now()).toISOString().replace(".000Z", "Z"),
+    };
+    history.update((h) => [...(h ?? []), result]);
+    return result;
+  }
+
   #requireProfile(): SeedProfile {
     const profile = this.profile();
     if (!profile) throw new Error("no seed is active");
@@ -160,5 +226,12 @@ export class SeedRepository {
   #history(profile: SeedProfile): StoredValue<SeedResult[]> {
     return new StoredValue(this.#store, `seed-history-${profile.fingerprint.replace(/^#/, "")}`, (j) => list(j, decodeResult));
   }
-}
 
+  #endlessGames(): StoredValue<Record<string, SavedGame>> {
+    return new StoredValue(this.#store, `seed-endless-games-${this.#requireProfile().fingerprint.replace(/^#/, "")}`, (j) => record(j, decodeSavedGame));
+  }
+
+  #endlessHistory(profile: SeedProfile): StoredValue<EndlessResult[]> {
+    return new StoredValue(this.#store, `seed-endless-history-${profile.fingerprint.replace(/^#/, "")}`, (j) => list(j, decodeEndlessResult));
+  }
+}

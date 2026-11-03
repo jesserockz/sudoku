@@ -8,9 +8,13 @@ function content(app: AppController, topic: HelpTopic): { title: string; body: C
       title: `How ${ENDLESS_LABEL} works`,
       body: [
         h("p", null, "Each difficulty has its own numbered puzzles, starting at #1, and they never run out."),
-        h("p", null, "Everyone gets the same puzzle for the same number, so you can compare times on any of them. Nothing resets: every solve counts forever."),
+        h("p", null, app.seed
+          ? "Everyone playing the same seed gets the same puzzle for the same number, so you can compare times on any of them. Nothing resets: every solve counts forever."
+          : "Everyone gets the same puzzle for the same number, so you can compare times on any of them. Nothing resets: every solve counts forever."),
         h("p", null, "Your next puzzle is the lowest number you haven't solved, but you can open any number with Open a puzzle. Puzzles you've started resume where you left off."),
-        h("p", null, "The leaderboard shows how many puzzles each player has solved in each difficulty, and the times on any one puzzle."),
+        app.seed
+          ? h("p", null, "History lists your times for every puzzle you've solved, by difficulty.")
+          : h("p", null, "The leaderboard shows how many puzzles each player has solved in each difficulty, and the times on any one puzzle."),
       ],
     };
   }

@@ -4,7 +4,7 @@ import { weekPuzzles } from "../src/api/models.ts";
 import { generateDay } from "../src/generator/generator.ts";
 import { parseWeekSeed } from "../src/generator/week-seed.ts";
 import {
-  fingerprint, generateSeed, normalizeSeed, resultsSummary, seedSettings, seedWeek, weekSeed,
+  endlessSeed, fingerprint, generateSeed, normalizeSeed, resultsSummary, seedSettings, seedWeek, weekSeed,
 } from "../src/serverless/seed.ts";
 import { buildShareLink, parseShareLink, percentEncode, shareFragment } from "../src/serverless/share-link.ts";
 
@@ -18,6 +18,11 @@ test("the week seed matches the server's KDF", async () => {
   // UTF-8 seeds, and one longer than SHA-256's block (hashed first).
   assert.equal(await weekSeed("Kōwhai 🌼 whānau", "2026-W44"), "45065fa404bf2ffe");
   assert.equal(await weekSeed("a".repeat(100), "2026-W44"), "8acc740767e736a8");
+});
+
+test("the endless seed matches the server's KDF", async () => {
+  assert.equal(await endlessSeed("test-secret-0123456789"), "3242a2d84b0602b6");
+  assert.equal(await endlessSeed("dev-secret-change-me"), "fd31dd763bb00e2c");
 });
 
 test("the week matches the server's week endpoint", async () => {

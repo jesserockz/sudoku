@@ -3,7 +3,7 @@ import { beforeEach, test } from "node:test";
 import { AppStorage } from "../src/data/app-storage.ts";
 import { MemoryStore } from "../src/data/store.ts";
 import { Game } from "../src/game/game.ts";
-import { type Puzzle, generateDay, puzzleTitle } from "../src/generator/generator.ts";
+import { type Puzzle, generateDay, generateEndless, puzzleTitle } from "../src/generator/generator.ts";
 import { parseWeekSeed } from "../src/generator/week-seed.ts";
 import { seedSettings as s } from "../src/serverless/seed.ts";
 import { SeedRepository } from "../src/serverless/seed-repository.ts";
@@ -17,7 +17,7 @@ beforeEach(() => {
   store = new MemoryStore();
 });
 
-function solved(p: Puzzle, ms: number): Game {
+function solved(p: { givens: string; solution: string }, ms: number): Game {
   let g = Game.create(p.givens).resume(0);
   for (let i = 0; i < 81; i++) if (p.givens[i] === "0") g = g.place(i, Number(p.solution[i]), ms);
   return g;
@@ -122,4 +122,84 @@ test("server mode's storage is untouched", async () => {
   assert.equal(storage.week.read(), null);
   assert.equal(storage.games.read(), null);
   assert.equal(storage.pending.read(), null);
+});
+
+// Endless
+
+const ENDLESS_TEST_SEED = "3242a2d84b0602b6"; // the endless seed of "test-secret-0123456789"
+
+test("endless puzzles come from the seed's endless seed, and only once it is loaded", async () => {
+  const r = repo();
+  await r.use(s("test-secret-0123456789"));
+  assert.equal(r.endlessPuzzle(1, 1), null, "not until loaded");
+  await r.loadEndless();
+  const p = r.endlessPuzzle(2, 7)!;
+  assert.equal(p.givens, generateEndless(parseWeekSeed(ENDLESS_TEST_SEED), 2, 7).givens);
+  assert.equal(r.endlessPuzzle(2, 7), p, "cached");
+  await r.loadEndless();
+  assert.equal(r.endlessPuzzle(2, 7), p, "loading again changes nothing");
+  // Another seed has to load its own before its puzzles are offered.
+  await r.use(s("rimu"));
+  assert.equal(r.endlessPuzzle(2, 7), null);
+  await r.loadEndless();
+  assert.notEqual(r.endlessPuzzle(2, 7)!.givens, p.givens);
+  r.leave();
+  assert.equal(r.endlessPuzzle(2, 7), null, "nor without a seed");
+  assert.deepEqual(r.endlessHistory(), []);
+  assert.equal(r.endlessSolved().size, 0);
+});
+
+test("endless games resume, are never pruned, and are dropped once solved", async () => {
+  const r = repo();
+  await r.use(s("kauri"));
+  await r.loadEndless();
+  const p = r.endlessPuzzle(3, 12)!;
+  const other = r.endlessPuzzle(1, 2)!;
+  assert.equal(r.loadEndlessGame(p), null);
+  const started = Game.create(p.givens).resume(0).place(p.givens.indexOf("0"), Number(p.solution[p.givens.indexOf("0")]), 5000);
+  r.saveEndlessGame(3, 12, started, 5000);
+  r.saveEndlessGame(1, 2, Game.create(other.givens).resume(0), 0);
+  assert.equal(r.loadEndlessGame(p)?.elapsedMs(5000), 5000);
+  assert.deepEqual(r.endlessInProgress().map((g) => [g.difficulty, g.number]), [[1, 2], [3, 12]]);
+  // A game saved for different givens isn't loaded.
+  assert.equal(r.loadEndlessGame(Object.assign(Object.create(Object.getPrototypeOf(p)), p, { givens: other.givens })), null);
+  // A week later they are all still there.
+  now += 14 * 24 * 3_600_000;
+  assert.equal(r.endlessInProgress().length, 2);
+
+  const finished = solved(p, 70_000);
+  r.saveEndlessGame(3, 12, finished, 70_000);
+  const result = await r.completeEndless(3, 12, finished);
+  assert.deepEqual(result, { difficulty: 3, number: 12, elapsedMs: 70_000, completedAt: new Date(now).toISOString().replace(".000Z", "Z") });
+  assert.equal(r.loadEndlessGame(p), null, "the finished game is dropped");
+  assert.deepEqual(r.endlessInProgress().map((g) => [g.difficulty, g.number]), [[1, 2]]);
+  assert.deepEqual([...r.endlessSolved()], [["3/12", { elapsedMs: 70_000, synced: true }]]);
+});
+
+test("the first endless result for a puzzle counts, and an unfinished game is refused", async () => {
+  const r = repo();
+  await r.use(s("kauri"));
+  await r.loadEndless();
+  const p = r.endlessPuzzle(1, 1)!;
+  const first = await r.completeEndless(1, 1, solved(p, 60_000));
+  assert.deepEqual(await r.completeEndless(1, 1, solved(p, 30_000)), first);
+  assert.deepEqual(r.endlessHistory().map((h) => h.elapsedMs), [60_000]);
+  await assert.rejects(r.completeEndless(1, 2, Game.create(p.givens)), /isn't complete/);
+  r.leave();
+  await assert.rejects(r.completeEndless(1, 1, solved(p, 1)), /no seed is active/);
+});
+
+test("endless history is sorted, and kept per seed", async () => {
+  const r = repo();
+  await r.use(s("kauri"));
+  await r.loadEndless();
+  await r.completeEndless(2, 3, solved(r.endlessPuzzle(2, 3)!, 62_000));
+  await r.completeEndless(1, 5, solved(r.endlessPuzzle(1, 5)!, 63_000));
+  await r.completeEndless(1, 2, solved(r.endlessPuzzle(1, 2)!, 64_000));
+  assert.deepEqual(r.endlessHistory().map((h) => [h.difficulty, h.number]), [[1, 2], [1, 5], [2, 3]]);
+  assert.ok(store.get(`seed-endless-history-${r.profile()!.fingerprint.slice(1)}`));
+  await r.use(s("totara"));
+  assert.deepEqual(r.endlessHistory(), []);
+  await r.use(s("kauri"));
+  assert.equal(r.endlessHistory().length, 3);
 });
