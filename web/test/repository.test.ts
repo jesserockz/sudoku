@@ -5,7 +5,7 @@ import type { GameResult } from "../src/api/models.ts";
 import { OidcException, TokenSession, defaultLock, type TokenResponse } from "../src/api/oidc.ts";
 import { AppStorage, type StoredTokens } from "../src/data/app-storage.ts";
 import { SudokuRepository, SignInError, normalizeUrl } from "../src/data/repository.ts";
-import { ResultSync, isUnauthorized } from "../src/data/result-sync.ts";
+import { ResultSync, dailyKey, isUnauthorized } from "../src/data/result-sync.ts";
 import { MemoryStore, StoredValue, list } from "../src/data/store.ts";
 import { Game } from "../src/game/game.ts";
 import { generateDay } from "../src/generator/generator.ts";
@@ -238,7 +238,7 @@ test("the result queue keeps one result per puzzle, in order, until the server t
     sent.push(r.level);
     if (fail.has(r.level)) throw new TypeError("offline");
     return { kind: "created", result: r };
-  });
+  }, dailyKey);
   await sync.enqueue(result(1));
   await sync.enqueue({ ...result(1), elapsedMs: 5 });
   await sync.enqueue(result(2));

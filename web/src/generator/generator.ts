@@ -28,6 +28,10 @@ export const MAX_LEVELS = 10;
 
 /** "sudoku" in ASCII; separates this seed derivation from any other use of the week seed. */
 const DOMAIN = 0x7375646f6b75n;
+/** "endless" in ASCII: endless puzzles' derivation, so they never coincide with a daily puzzle's. */
+const ENDLESS_DOMAIN = 0x656e646c657373n;
+/** The highest endless puzzle number: there's no real limit, but it must stay an exact integer in JSON. */
+export const MAX_ENDLESS_NUMBER = Number.MAX_SAFE_INTEGER;
 
 /**
  * The tier of game `level` (`1..levels`) on a day with `levels` games.
@@ -120,9 +124,13 @@ export function generate(weekSeed: bigint, dayOfWeek: number, level: number, lev
   if (!(Number.isInteger(dayOfWeek) && dayOfWeek >= 1 && dayOfWeek <= 7)) {
     throw new RangeError(`dayOfWeek must be 1 (Monday) to 7 (Sunday): ${dayOfWeek}`);
   }
-  const { targetGivens } = difficultyFor(level, levels);
-  const random = new Xoshiro256StarStar(puzzleSeed(weekSeed, dayOfWeek, level));
+  const { givens, solution } = build(puzzleSeed(weekSeed, dayOfWeek, level), difficultyFor(level, levels).targetGivens);
+  return new Puzzle(weekSeed, dayOfWeek, level, levels, givens, solution);
+}
 
+/** Steps 2 to 4 of {@link generate}, from a puzzle seed and a target given count. */
+function build(seed: bigint, targetGivens: number): { givens: string; solution: string } {
+  const random = new Xoshiro256StarStar(seed);
   let best: { givens: number[]; solution: number[]; count: number } | null = null;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const solution = randomSolution(new Array<number>(CELLS).fill(0), random)!;
@@ -131,7 +139,67 @@ export function generate(weekSeed: bigint, dayOfWeek: number, level: number, lev
     if (!best || count < best.count) best = { givens, solution, count };
     if (count <= targetGivens) break;
   }
-  return new Puzzle(weekSeed, dayOfWeek, level, levels, best!.givens.join(""), best!.solution.join(""));
+  return { givens: best!.givens.join(""), solution: best!.solution.join("") };
+}
+
+/** An endless puzzle: number `number` (from 1, no upper limit) of difficulty tier `difficulty` (1 = Easy .. 5 = Diabolical). */
+export class EndlessPuzzle {
+  readonly seed: bigint;
+  readonly tier: number;
+  readonly number: number;
+  readonly difficulty: Difficulty;
+  readonly givens: string;
+  readonly solution: string;
+
+  constructor(seed: bigint, tier: number, number: number, givens: string, solution: string) {
+    this.seed = seed;
+    this.tier = tier;
+    this.number = number;
+    this.difficulty = DIFFICULTIES[tier - 1]!;
+    this.givens = givens;
+    this.solution = solution;
+  }
+
+  get givenCount(): number {
+    return [...this.givens].filter((c) => c !== "0").length;
+  }
+
+  get title(): string {
+    return endlessTitle(this.tier, this.number);
+  }
+
+  board(): Board {
+    return Board.parse(this.givens);
+  }
+}
+
+/** "Hard #12". */
+export function endlessTitle(tier: number, number: number): string {
+  return `${DIFFICULTIES[tier - 1]!.name} #${number}`;
+}
+
+/** The seed for one endless puzzle. Its own domain keeps it apart from every daily puzzle's seed. */
+export function endlessPuzzleSeed(endlessSeed: bigint, tier: number, number: number): bigint {
+  let h = SplitMix64.mix(ENDLESS_DOMAIN + BigInt(GENERATOR_VERSION));
+  h = SplitMix64.mix(h ^ BigInt.asUintN(64, endlessSeed));
+  h = SplitMix64.mix(h + BigInt(tier));
+  h = SplitMix64.mix(h + BigInt(number));
+  return h;
+}
+
+/** Whether `number` is a valid endless puzzle number. */
+export const isEndlessNumber = (number: number): boolean => Number.isSafeInteger(number) && number >= 1;
+
+/**
+ * Endless puzzle `number` of tier `tier` (1..5): a pure function of the
+ * server's endless seed, the tier and the number, generated exactly as
+ * {@link generate} does from {@link endlessPuzzleSeed} and the tier's target.
+ */
+export function generateEndless(endlessSeed: bigint, tier: number, number: number): EndlessPuzzle {
+  if (!(Number.isInteger(tier) && tier >= 1 && tier <= DIFFICULTIES.length)) throw new RangeError(`difficulty must be 1..${DIFFICULTIES.length}: ${tier}`);
+  if (!isEndlessNumber(number)) throw new RangeError(`number must be 1..${MAX_ENDLESS_NUMBER}: ${number}`);
+  const { givens, solution } = build(endlessPuzzleSeed(endlessSeed, tier, number), DIFFICULTIES[tier - 1]!.targetGivens);
+  return new EndlessPuzzle(endlessSeed, tier, number, givens, solution);
 }
 
 /** All games for a day, in order (easiest first). */

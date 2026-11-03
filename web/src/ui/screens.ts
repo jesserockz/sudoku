@@ -1,11 +1,11 @@
 import { addDays, DEFAULT_TIMEZONE, describeDate, isValidZone } from "../game/calendar.ts";
 import { formatDuration } from "../game/timer.ts";
-import { DEFAULT_LEVELS, MAX_LEVELS, puzzleTitle } from "../generator/generator.ts";
+import { DEFAULT_LEVELS, DIFFICULTIES, endlessTitle, MAX_LEVELS, puzzleTitle } from "../generator/generator.ts";
 import { generateSeed, normalizeSeed, seedSettings, type SeedSettings } from "../serverless/seed.ts";
 import { parseShareLink } from "../serverless/share-link.ts";
 import { WEB_VERSION } from "../version.ts";
 import { type AdminModel, actionLabel, flavourOf, formatBytes, progressFraction } from "./admin.ts";
-import type { AppController, Phase, ServerInfo } from "./controller.ts";
+import { type AppController, ENDLESS_LABEL, type Phase, type ServerInfo } from "./controller.ts";
 import { type Child, Component, h, topBar } from "./dom.ts";
 import { actionButton, canShare, copyText, share, shareResultsButton } from "./share.ts";
 
@@ -103,9 +103,80 @@ export class SignInScreen extends Screen {
   }
 }
 
-/** `<sudoku-today>`: the day's games, and either the leaderboard or the seed's sharing options. */
+/** `<sudoku-today>`: the day's games, and either the leaderboard or the seed's sharing options; with a server, also the endless tab. */
 export class TodayScreen extends Screen {
+  // Made once, so a half-typed number survives the app's changes (e.g. a sync finishing).
+  readonly #difficulty = h("select", { id: "endless-difficulty", "aria-label": "Difficulty" },
+    DIFFICULTIES.map((d, i) => h("option", { value: i + 1 }, d.name))) as HTMLSelectElement;
+  readonly #number = h("input", {
+    id: "endless-number", type: "number", min: 1, step: 1, inputmode: "numeric", placeholder: "Number", "aria-label": "Puzzle number",
+  }) as HTMLInputElement;
+
   protected render(): Child {
+    const app = this.app;
+    const tabs = app.hasEndless && h("div", { class: "tabs home-tabs", role: "tablist" },
+      (["daily", "endless"] as const).map((tab) => h("button", {
+        role: "tab", class: app.homeTab === tab && "active", "aria-selected": String(app.homeTab === tab),
+        onclick: () => app.showHomeTab(tab),
+      }, tab === "daily" ? "Daily" : ENDLESS_LABEL)));
+    const [header, body] = this.#daily();
+    return [header, tabs, app.hasEndless && app.homeTab === "endless" ? this.#endless() : body];
+  }
+
+  /** The endless tab: each difficulty's progress and next puzzle, and a way to open any number. */
+  #endless(): Child {
+    const app = this.app;
+    const summaries = app.endlessSummaries();
+    if (!summaries) {
+      return h("div", { class: "card center" },
+        h("p", null, `The ${ENDLESS_LABEL.toLowerCase()} puzzles haven't been downloaded yet.`),
+        h("p", { class: "muted" }, "Connect to the internet once to get them; after that they play offline."),
+        h("button", { class: "primary", disabled: app.syncing, onclick: () => app.sync() }, app.syncing ? "Checking…" : "Try again"),
+      );
+    }
+    const rows = summaries.map((d) => {
+      const name = DIFFICULTIES[d.difficulty - 1]!.name;
+      const resumingNext = d.inProgress.some((g) => g.number === d.next);
+      const others = d.inProgress.filter((g) => g.number !== d.next);
+      return h("li", null,
+        h("div", null,
+          h("div", { class: "name" }, name),
+          h("div", { class: ["status", d.solved > 0 && "done"] },
+            d.solved === 0 ? "None solved yet" : `${d.solved} solved${d.highest > d.solved ? ` · up to #${d.highest}` : ""}`),
+          others.length > 0 && h("div", { class: "status in-progress" }, "In progress: ",
+            others.map((g) => h("button", { class: "link", onclick: () => app.openEndless({ difficulty: d.difficulty, number: g.number }) },
+              `#${g.number} (${formatDuration(g.elapsedMs)})`))),
+        ),
+        h("button", { class: "primary", onclick: () => app.openEndless({ difficulty: d.difficulty, number: d.next }) },
+          `${resumingNext ? "Resume" : "Play"} #${d.next}`),
+      );
+    });
+    const error = h("p", { class: "error", hidden: true }, "Enter a puzzle number: 1 or more.");
+    const open = (e: Event) => {
+      e.preventDefault();
+      const number = Number(this.#number.value);
+      error.hidden = Number.isSafeInteger(number) && number >= 1;
+      if (error.hidden) app.openEndless({ difficulty: Number(this.#difficulty.value), number });
+    };
+    return [
+      h("div", { class: "card" },
+        h("p", { class: "muted" }, "Numbered puzzles with no end. Everyone gets the same ones, and times count forever.",
+          app.me && ` · ${app.me.displayName}`),
+        h("ul", { class: "puzzles" }, rows),
+      ),
+      h("div", { class: "card" },
+        h("h2", null, "Open a puzzle"),
+        h("form", { class: "login endless-open", onsubmit: open },
+          h("div", { class: "inline" }, this.#difficulty, this.#number, h("button", { type: "submit" }, "Open")),
+          error,
+        ),
+      ),
+      h("div", { class: "actions" }, h("button", { onclick: () => app.openEndlessScores(1) }, "Leaderboard")),
+    ];
+  }
+
+  /** The header (shared by both tabs) and the daily tab. */
+  #daily(): [Child, Child] {
     const app = this.app;
     const serverless = app.seed !== null;
     const header = [
@@ -153,8 +224,7 @@ export class TodayScreen extends Screen {
         action,
       );
     });
-    return [
-      header,
+    return [header, [
       h("div", { class: "card" },
         h("p", { class: "muted" }, describeDate(app.today), app.me && ` · ${app.me.displayName}`),
         h("ul", { class: "puzzles" }, rows),
@@ -168,7 +238,7 @@ export class TodayScreen extends Screen {
           this.#seedCard(),
         ]
         : h("div", { class: "actions" }, h("button", { onclick: () => app.openScores(0) }, "Leaderboard")),
-    ];
+    ]];
   }
 
   /** The seed's details and ways to bring others in. */
@@ -274,6 +344,83 @@ export class ScoresScreen extends Screen {
   }
 }
 
+/** `<sudoku-endless-scores>`: per difficulty, how many endless puzzles everyone has solved, or one puzzle's times. */
+export class EndlessScoresScreen extends Screen {
+  readonly #number = h("input", {
+    id: "endless-board-number", type: "number", min: 1, step: 1, inputmode: "numeric", placeholder: "Number", "aria-label": "Puzzle number",
+  }) as HTMLInputElement;
+
+  protected render(): Child {
+    const app = this.app;
+    if (app.screen.kind !== "endless-scores") return null;
+    const { difficulty, number } = app.screen;
+    const meId = app.me?.id;
+    const suspiciousBadge = (suspicious: boolean) =>
+      suspicious && h("span", { class: "badge suspicious", title: "An admin flagged this result as suspicious" }, "suspicious");
+
+    let body: Child;
+    if (app.leaderboardError !== null) {
+      body = h("p", { class: "error" }, app.leaderboardError);
+    } else if (number === null) {
+      const players = app.endlessProgress?.difficulties.find((d) => d.difficulty === difficulty)?.players;
+      body = !app.endlessProgress
+        ? h("p", { class: "muted" }, "Loading…")
+        : !players?.length
+          ? h("p", { class: "muted" }, "No one has solved one of these yet.")
+          : h("table", { class: "board-table" }, h("tbody", null, players.map((p) =>
+            h("tr", { class: [p.userId === meId && "me", p.suspicious && "flagged"] },
+              h("td", { class: "rank" }, String(p.rank)),
+              h("td", null, p.displayName, suspiciousBadge(p.suspicious)),
+              h("td", { class: "time" }, `${p.completed} solved`, h("div", { class: "muted small" }, `up to #${p.highest}`)),
+            ))));
+    } else {
+      const board = app.endlessBoard?.difficulty === difficulty && app.endlessBoard.number === number ? app.endlessBoard : null;
+      body = !board
+        ? h("p", { class: "muted" }, "Loading…")
+        : board.entries.length === 0
+          ? h("p", { class: "muted" }, "No one has solved this one yet.")
+          : h("table", { class: "board-table" }, h("tbody", null, board.entries.map((e) =>
+            h("tr", { class: [e.userId === meId && "me", e.suspicious && "flagged"] },
+              h("td", { class: "rank" }, String(e.rank)),
+              h("td", null, e.displayName, suspiciousBadge(e.suspicious)),
+              h("td", { class: "time" }, formatDuration(e.elapsedMs)),
+            ))));
+    }
+
+    const open = (e: Event) => {
+      e.preventDefault();
+      const n = Number(this.#number.value);
+      if (Number.isSafeInteger(n) && n >= 1) app.openEndlessScores(difficulty, n);
+    };
+    return [
+      topBar(`${ENDLESS_LABEL} leaderboard`, () => app.openToday()),
+      h("div", { class: "tabs" },
+        DIFFICULTIES.map((d, i) => h("button", {
+          class: difficulty === i + 1 && "active", onclick: () => app.openEndlessScores(i + 1, number),
+        }, d.name))),
+      number === null
+        ? h("div", { class: "card" }, h("h2", null, `${DIFFICULTIES[difficulty - 1]!.name}: puzzles solved`), body)
+        : [
+          h("div", { class: "date-nav" },
+            h("button", { class: "link", disabled: number <= 1, onclick: () => app.openEndlessScores(difficulty, number - 1) }, `‹ #${number - 1}`),
+            h("span", null, endlessTitle(difficulty, number)),
+            h("button", { class: "link", onclick: () => app.openEndlessScores(difficulty, number + 1) }, `#${number + 1} ›`),
+          ),
+          h("div", { class: "card" }, body),
+          h("div", { class: "actions" },
+            h("button", { onclick: () => app.openEndless({ difficulty, number }) }, "Play this puzzle"),
+            h("button", { class: "link", onclick: () => app.openEndlessScores(difficulty) }, "Everyone's progress"),
+          ),
+        ],
+      h("div", { class: "card" },
+        h("h2", null, "A puzzle's times"),
+        h("form", { class: "login", onsubmit: open },
+          h("div", { class: "inline" }, this.#number, h("button", { type: "submit" }, "Show"))),
+      ),
+    ];
+  }
+}
+
 /** `<sudoku-history>`: serverless play's history of solve times. */
 export class HistoryScreen extends Screen {
   protected render(): Child {
@@ -324,6 +471,10 @@ export class AboutScreen extends Screen {
           h("tr", null, h("td", null, "Web version"), h("td", { class: "time" }, WEB_VERSION)),
           h("tr", null, h("td", null, "Server version"), h("td", { class: "time" }, describeServer(app.serverInfo))),
         )),
+      ),
+      h("div", { class: "actions" },
+        h("button", { onclick: () => app.openHelp("daily") }, "How Daily works"),
+        app.hasEndless && h("button", { onclick: () => app.openHelp("endless") }, `How ${ENDLESS_LABEL} works`),
       ),
       app.me?.admin && !app.seed && h("div", { class: "actions" },
         h("button", { onclick: () => app.openAdmin() }, "Admin"),
@@ -540,6 +691,7 @@ customElements.define("sudoku-failed", FailedScreen);
 customElements.define("sudoku-sign-in", SignInScreen);
 customElements.define("sudoku-today", TodayScreen);
 customElements.define("sudoku-scores", ScoresScreen);
+customElements.define("sudoku-endless-scores", EndlessScoresScreen);
 customElements.define("sudoku-history", HistoryScreen);
 customElements.define("sudoku-about", AboutScreen);
 customElements.define("sudoku-admin", AdminScreen);

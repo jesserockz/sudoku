@@ -1,11 +1,12 @@
 import { ApiException } from "../api/client.ts";
-import type { AppConfig, Leaderboard, Me } from "../api/models.ts";
+import type { AppConfig, EndlessBoard, EndlessProgress, Leaderboard, Me } from "../api/models.ts";
+import type { HomeTab } from "../data/app-storage.ts";
 import { OidcException } from "../api/oidc.ts";
 import { SignInError, type SudokuRepository } from "../data/repository.ts";
 import { addDays } from "../game/calendar.ts";
 import { Game } from "../game/game.ts";
 import type { ReplayInput } from "../game/replay.ts";
-import type { Puzzle } from "../generator/generator.ts";
+import { DIFFICULTIES, type EndlessPuzzle, isEndlessNumber, type Puzzle } from "../generator/generator.ts";
 import { fingerprint, sameSettings, type SeedSettings } from "../serverless/seed.ts";
 import type { SeedProfile, SeedRepository, SeedResult } from "../serverless/seed-repository.ts";
 import { buildShareLink, parseShareLink } from "../serverless/share-link.ts";
@@ -30,9 +31,37 @@ export type Phase =
   | { kind: "confirm-seed"; incoming: SeedSettings; incomingFingerprint: string; current: SeedProfile | null }
   | { kind: "ready" };
 
+/** The home page tab for endless puzzles. One constant, so it's easy to rename. */
+export const ENDLESS_LABEL = "Endless";
+
+/** Which "how it works" explainer is open over the screen. */
+export type HelpTopic = HomeTab;
+
+/** An endless puzzle: `number` (from 1) of difficulty tier `difficulty` (1 = Easy .. 5 = Diabolical). */
+export interface EndlessRef {
+  difficulty: number;
+  number: number;
+}
+
+/** A puzzle being played: today's game `level`, or an endless puzzle. */
+export type PuzzleRef = number | EndlessRef;
+
+/** One difficulty on the endless tab. `next` is the lowest number not solved yet. */
+export interface EndlessSummary {
+  difficulty: number;
+  solved: number;
+  highest: number;
+  next: number;
+  /** Games started on this device and not solved, lowest number first. */
+  inProgress: { number: number; elapsedMs: number }[];
+}
+
 export type Screen =
   | { kind: "today" }
   | { kind: "play"; level: number }
+  | { kind: "endless-play"; difficulty: number; number: number }
+  /** The endless leaderboard: everyone's progress in `difficulty`, or with `number` that puzzle's times. */
+  | { kind: "endless-scores"; difficulty: number; number: number | null }
   | { kind: "scores"; date: string; tab: number }
   /** Serverless play's local history of solve times. */
   | { kind: "history" }
@@ -107,6 +136,13 @@ export class AppController extends EventTarget {
   needsSignIn = false;
   leaderboard: Leaderboard | null = null;
   leaderboardError: string | null = null;
+  /** The home page tab; remembered on this device. */
+  homeTab: HomeTab;
+  /** The endless leaderboard screen's data (whichever of the two it shows). */
+  endlessProgress: EndlessProgress | null = null;
+  endlessBoard: EndlessBoard | null = null;
+  /** The "how it works" explainer showing over the screen, or `null`. */
+  help: HelpTopic | null = null;
   /** A transient problem worth showing (e.g. offline, results not uploaded yet). */
   notice: string | null = null;
   /** What the About screen shows for the server; fetched when it's opened. */
@@ -123,6 +159,8 @@ export class AppController extends EventTarget {
   readonly #host: Host;
   readonly #serverDone = new Map<number, number>();
   readonly #queued = new Map<number, number>();
+  /** The endless game being played (or last played), so the play screen and its updates share one `Game`. */
+  #endless: { ref: EndlessRef; puzzle: EndlessPuzzle; game: Game } | null = null;
   /** The last sync couldn't reach the server: retried periodically, as `online` events aren't reliable. */
   #offline = false;
   #leaderboardRequest = 0;
@@ -133,6 +171,7 @@ export class AppController extends EventTarget {
     this.#seeds = seeds;
     this.#host = host;
     this.today = repo.today();
+    this.homeTab = repo.homeTab();
   }
 
   get origin(): string {
@@ -147,7 +186,7 @@ export class AppController extends EventTarget {
     this.dispatchEvent(new Event("change"));
   }
 
-  #set(changes: Partial<Pick<AppController, "phase" | "screen" | "notice" | "me" | "seed" | "puzzles" | "needsSignIn" | "serverInfo">>): void {
+  #set(changes: Partial<Pick<AppController, "phase" | "screen" | "notice" | "me" | "seed" | "puzzles" | "needsSignIn" | "serverInfo" | "help">>): void {
     Object.assign(this, changes);
     this.#changed();
   }
@@ -189,6 +228,7 @@ export class AppController extends EventTarget {
     this.seed = null;
     this.#loadLocal();
     this.#set({ needsSignIn: this.#repo.needsSignIn, phase: { kind: "ready" } });
+    this.#firstEndlessVisit();
   }
 
   /** Reloads the day from local state (no network). */
@@ -248,10 +288,11 @@ export class AppController extends EventTarget {
         this.syncing = false;
         this.needsSignIn = this.#repo.needsSignIn;
         // Keep an open game as it is; otherwise pick up the new week, results and day.
-        if (this.screen.kind !== "play") this.#loadLocal();
+        if (this.screen.kind !== "play" && this.screen.kind !== "endless-play") this.#loadLocal();
         else this.#refreshQueued();
         // A leaderboard that failed (e.g. offline) tries again.
         if (this.screen.kind === "scores" && this.leaderboardError !== null) this.#loadLeaderboard(this.screen.date);
+        if (this.screen.kind === "endless-scores" && this.leaderboardError !== null) this.openEndlessScores(this.screen.difficulty, this.screen.number);
         this.#changed();
       }
     })();
@@ -491,6 +532,126 @@ export class AppController extends EventTarget {
     this.#changed();
   }
 
+  /** Switches the home page between today's puzzles and the endless ones. */
+  showHomeTab(tab: HomeTab): void {
+    this.#repo.setHomeTab(tab);
+    this.homeTab = tab;
+    this.#changed();
+    this.#firstEndlessVisit();
+  }
+
+  /** Opens the explainer for `topic` (from the About screen, or the first endless visit). */
+  openHelp(topic: HelpTopic): void {
+    if (topic === "endless" && !this.hasEndless) return;
+    this.#set({ help: topic });
+  }
+
+  closeHelp(): void {
+    this.#set({ help: null });
+  }
+
+  /** The endless explainer pops up once per device, the first time the endless tab is shown. */
+  #firstEndlessVisit(): void {
+    if (!this.hasEndless || this.homeTab !== "endless" || this.screen.kind !== "today" || this.#repo.endlessHelpSeen()) return;
+    this.#repo.markEndlessHelpSeen();
+    this.openHelp("endless");
+  }
+
+  /** Whether the endless tab is offered: only with a server, which keeps everyone's endless results. */
+  get hasEndless(): boolean {
+    return !this.seed;
+  }
+
+  /** The endless tab, per difficulty, or `null` until the endless seed has been downloaded once. */
+  endlessSummaries(): EndlessSummary[] | null {
+    if (!this.#repo.endlessPuzzle(1, 1)) return null;
+    const solved = this.#repo.endlessSolved();
+    const inProgress = this.#repo.endlessInProgress();
+    return DIFFICULTIES.map((_, i) => {
+      const difficulty = i + 1;
+      const numbers = [...solved.keys()].filter((k) => k.startsWith(`${difficulty}/`)).map((k) => Number(k.split("/")[1]));
+      let next = 1;
+      while (solved.has(`${difficulty}/${next}`)) next++;
+      return {
+        difficulty, solved: numbers.length, highest: Math.max(0, ...numbers), next,
+        inProgress: inProgress.filter((g) => g.difficulty === difficulty).map((g) => ({ number: g.number, elapsedMs: g.elapsedMs })),
+      };
+    });
+  }
+
+  /** An endless puzzle's state, as {@link statusOf} for today's. */
+  endlessStatusOf(ref: EndlessRef): PuzzleStatus {
+    const open = this.#endless && sameEndless(this.#endless.ref, ref) ? this.#endless.game : null;
+    const game = open ?? this.#loadEndless(ref)?.game ?? null;
+    const solved = this.#repo.endlessSolved().get(`${ref.difficulty}/${ref.number}`);
+    if (solved) return { kind: "done", elapsedMs: solved.elapsedMs, synced: solved.synced };
+    if (!game) return { kind: "new" };
+    if (game.completedElapsedMs !== null) return { kind: "done", elapsedMs: game.completedElapsedMs, synced: false };
+    return { kind: "in-progress", elapsedMs: game.elapsedMs(this.nowMs()) };
+  }
+
+  /** Plays an endless puzzle, resuming it if it was started here. One solved elsewhere opens its leaderboard. */
+  openEndless(ref: EndlessRef): void {
+    if (!this.hasEndless || !DIFFICULTIES[ref.difficulty - 1] || !isEndlessNumber(ref.number)) return;
+    const loaded = this.#endless && sameEndless(this.#endless.ref, ref) ? this.#endless : this.#loadEndless(ref);
+    if (!loaded) return;
+    if (this.endlessStatusOf(ref).kind === "done" && !loaded.game.isComplete) {
+      this.openEndlessScores(ref.difficulty, ref.number);
+      return;
+    }
+    this.#endless = loaded;
+    this.#set({ screen: { kind: "endless-play", difficulty: ref.difficulty, number: ref.number } });
+  }
+
+  /** The endless puzzle and its game (a new one if it wasn't started here), or `null` without the endless seed. */
+  #loadEndless(ref: EndlessRef): { ref: EndlessRef; puzzle: EndlessPuzzle; game: Game } | null {
+    const puzzle = this.#repo.endlessPuzzle(ref.difficulty, ref.number);
+    if (!puzzle) return null;
+    const game = this.#repo.loadEndlessGame(puzzle) ?? this.#stamp(Game.create(puzzle.givens), { a: "start" });
+    return { ref: { difficulty: ref.difficulty, number: ref.number }, puzzle, game };
+  }
+
+  /** The endless leaderboard: progress in `difficulty`, or one puzzle's times with `number`. */
+  openEndlessScores(difficulty: number, number: number | null = null): void {
+    if (!this.hasEndless) return;
+    this.screen = { kind: "endless-scores", difficulty, number };
+    const request = ++this.#leaderboardRequest;
+    this.endlessProgress = null;
+    this.endlessBoard = null;
+    this.leaderboardError = null;
+    this.#changed();
+    const load: Promise<unknown> = number === null ? this.#repo.endlessProgress() : this.#repo.endlessBoard(difficulty, number);
+    load.then(
+      (data) => {
+        if (request !== this.#leaderboardRequest) return;
+        if (number === null) this.endlessProgress = data as EndlessProgress;
+        else this.endlessBoard = data as EndlessBoard;
+      },
+      (e) => {
+        if (request !== this.#leaderboardRequest) return;
+        this.leaderboardError = e instanceof ApiException ? describe(e) : "You're offline. The leaderboard needs a connection to the server.";
+      },
+    ).finally(() => this.#changed());
+  }
+
+  /** The game for `ref`, if it's open (today's games, or the endless puzzle on screen). */
+  gameOf(ref: PuzzleRef): Game | null {
+    if (typeof ref === "number") return this.games.get(ref) ?? null;
+    return this.#endless && sameEndless(this.#endless.ref, ref) ? this.#endless.game : null;
+  }
+
+  /** The puzzle for `ref`. */
+  puzzleOf(ref: PuzzleRef): Puzzle | EndlessPuzzle | null {
+    if (typeof ref === "number") return this.puzzle(ref);
+    return this.#endless && sameEndless(this.#endless.ref, ref) ? this.#endless.puzzle : null;
+  }
+
+  /** "See scores" after solving `ref`. */
+  openScoresFor(ref: PuzzleRef): void {
+    if (typeof ref === "number") this.openScores(ref);
+    else this.openEndlessScores(ref.difficulty, ref.number);
+  }
+
   openPuzzle(level: number): void {
     // Finished on another device (or this one before storage was cleared): nothing to play.
     if (this.statusOf(level).kind === "done" && !this.games.get(level)?.isComplete) {
@@ -548,8 +709,8 @@ export class AppController extends EventTarget {
    * if the change did something (for `pause` and `resume`: if the timer
    * stopped or started), persists it, and handles completion.
    */
-  update(level: number, change: (game: Game) => Game, action?: ReplayInput): void {
-    const before = this.games.get(level);
+  update(ref: PuzzleRef, change: (game: Game) => Game, action?: ReplayInput): void {
+    const before = this.gameOf(ref);
     if (!before) return;
     let after = change(before);
     if (after === before) return;
@@ -557,6 +718,14 @@ export class AppController extends EventTarget {
     const timerOnly = action?.a === "pause" || action?.a === "resume";
     if (action && !before.isComplete && (!timerOnly || after.timer.isRunning !== before.timer.isRunning)) after = this.#stamp(after, action);
     if (finished) after = this.#stamp(after, { a: "finish" });
+    if (typeof ref !== "number") {
+      this.#endless!.game = after;
+      this.#repo.saveEndlessGame(ref.difficulty, ref.number, after, this.nowMs());
+      if (finished) void this.#repo.completeEndless(ref.difficulty, ref.number, after).then(() => this.sync());
+      this.#changed();
+      return;
+    }
+    const level = ref;
     this.games.set(level, after);
     if (this.seed) {
       this.#seeds.saveGame(this.today, level, after, this.nowMs());
@@ -572,8 +741,8 @@ export class AppController extends EventTarget {
   }
 
   /** Records an action that changes nothing on the board (notes mode, the app hidden or shown). Not after the game is solved. */
-  log(level: number, action: ReplayInput): void {
-    if (this.games.get(level)?.isComplete === false) this.update(level, (g) => this.#stamp(g, action));
+  log(ref: PuzzleRef, action: ReplayInput): void {
+    if (this.gameOf(ref)?.isComplete === false) this.update(ref, (g) => this.#stamp(g, action));
   }
 
   #stamp(game: Game, action: ReplayInput): Game {
@@ -607,7 +776,7 @@ export class AppController extends EventTarget {
   tick(): void {
     if (this.phase.kind !== "ready") return;
     // Don't pull the board out from under someone mid-puzzle; openToday() catches up.
-    if (this.screen.kind !== "play" && this.#currentDay() !== this.today) {
+    if (this.screen.kind !== "play" && this.screen.kind !== "endless-play" && this.#currentDay() !== this.today) {
       this.#loadLocal();
       this.sync();
     } else if (this.#offline && this.#host.isVisible()) {
@@ -619,6 +788,8 @@ export class AppController extends EventTarget {
     return this.seed ? this.#seeds.today() : this.#repo.today();
   }
 }
+
+const sameEndless = (a: EndlessRef, b: EndlessRef) => a.difficulty === b.difficulty && a.number === b.number;
 
 function describe(e: unknown): string {
   if (e instanceof SignInError) return e.message || "Sign-in failed.";

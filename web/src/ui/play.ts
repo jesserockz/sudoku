@@ -1,7 +1,7 @@
 import { colOf, index, rowOf } from "../core/geometry.ts";
 import { formatDuration } from "../game/timer.ts";
 import { SudokuBoard, SudokuKeypad } from "./board.ts";
-import type { AppController } from "./controller.ts";
+import { ENDLESS_LABEL, type AppController, type PuzzleRef } from "./controller.ts";
 import { type Child, Component, h, topBar } from "./dom.ts";
 import { shareResultsButton } from "./share.ts";
 import { ScreenWakeLock } from "./wake-lock.ts";
@@ -14,7 +14,8 @@ import { ScreenWakeLock } from "./wake-lock.ts";
  */
 export class PlayScreen extends Component {
   app!: AppController;
-  level = 0;
+  /** Today's game number, or the endless puzzle. */
+  ref: PuzzleRef = 0;
   #selected = -1;
   #notesMode = false;
   #paused = false;
@@ -31,7 +32,7 @@ export class PlayScreen extends Component {
   }
 
   override connectedCallback(): void {
-    this.app.update(this.level, (g) => g.resume(this.app.nowMs()), { a: "resume" });
+    this.app.update(this.ref, (g) => g.resume(this.app.nowMs()), { a: "resume" });
     document.addEventListener("visibilitychange", this.#onVisibility);
     window.addEventListener("keydown", this.#onKey);
     this.#tick = window.setInterval(() => this.#showTime(), 250);
@@ -43,11 +44,11 @@ export class PlayScreen extends Component {
     window.removeEventListener("keydown", this.#onKey);
     clearInterval(this.#tick);
     this.#wakeLock.set(false);
-    this.app.update(this.level, (g) => g.pause(this.app.nowMs()), { a: "pause" });
+    this.app.update(this.ref, (g) => g.pause(this.app.nowMs()), { a: "pause" });
   }
 
   get #game() {
-    return this.app.games.get(this.level);
+    return this.app.gameOf(this.ref);
   }
 
   #showTime(): void {
@@ -61,14 +62,14 @@ export class PlayScreen extends Component {
   }
 
   #pause(): void {
-    this.app.update(this.level, (g) => g.pause(this.app.nowMs()), { a: "pause" });
+    this.app.update(this.ref, (g) => g.pause(this.app.nowMs()), { a: "pause" });
     if (this.#game?.isComplete === false) this.#paused = true;
     this.update();
   }
 
   #resume(): void {
     this.#paused = false;
-    this.app.update(this.level, (g) => g.resume(this.app.nowMs()), { a: "resume" });
+    this.app.update(this.ref, (g) => g.resume(this.app.nowMs()), { a: "resume" });
     this.update();
   }
 
@@ -76,23 +77,23 @@ export class PlayScreen extends Component {
     const g = this.#game;
     const i = this.#selected;
     if (!g || i < 0 || this.#paused || g.board.isGiven(i)) return;
-    if (this.#notesMode) this.app.update(this.level, (game) => game.toggleNote(i, digit), { a: g.notes.has(i, digit) ? "noteRemove" : "noteAdd", c: i, d: digit });
-    else if (g.board.get(i) === digit) this.app.update(this.level, (game) => game.erase(i), { a: "erase", c: i });
-    else this.app.update(this.level, (game) => game.place(i, digit, this.app.nowMs()), { a: "place", c: i, d: digit });
+    if (this.#notesMode) this.app.update(this.ref, (game) => game.toggleNote(i, digit), { a: g.notes.has(i, digit) ? "noteRemove" : "noteAdd", c: i, d: digit });
+    else if (g.board.get(i) === digit) this.app.update(this.ref, (game) => game.erase(i), { a: "erase", c: i });
+    else this.app.update(this.ref, (game) => game.place(i, digit, this.app.nowMs()), { a: "place", c: i, d: digit });
   }
 
   #erase(): void {
     const i = this.#selected;
-    if (i >= 0 && !this.#paused) this.app.update(this.level, (g) => g.erase(i), { a: "erase", c: i });
+    if (i >= 0 && !this.#paused) this.app.update(this.ref, (g) => g.erase(i), { a: "erase", c: i });
   }
 
   #undo(): void {
-    if (!this.#paused) this.app.update(this.level, (g) => g.undo(), { a: "undo" });
+    if (!this.#paused) this.app.update(this.ref, (g) => g.undo(), { a: "undo" });
   }
 
   #toggleNotes(): void {
     this.#notesMode = !this.#notesMode;
-    this.app.log(this.level, { a: "notes", on: this.#notesMode });
+    this.app.log(this.ref, { a: "notes", on: this.#notesMode });
     this.update();
   }
 
@@ -102,7 +103,7 @@ export class PlayScreen extends Component {
   }
 
   readonly #onVisibility = (): void => {
-    this.app.log(this.level, { a: document.hidden ? "hidden" : "visible" });
+    this.app.log(this.ref, { a: document.hidden ? "hidden" : "visible" });
     if (document.hidden) this.#pause();
   };
 
@@ -128,7 +129,8 @@ export class PlayScreen extends Component {
 
   protected render(): Child {
     const app = this.app;
-    const puzzle = app.puzzle(this.level);
+    const puzzle = app.puzzleOf(this.ref);
+    const ref = this.ref;
     const game = this.#game;
     if (!puzzle || !game) return null;
     const paused = this.#paused && !game.isComplete;
@@ -144,8 +146,13 @@ export class PlayScreen extends Component {
         h("div", { class: "actions" },
           app.seed
             ? shareResultsButton(() => app.resultsSummary(), true)
-            : h("button", { class: "primary", onclick: () => app.openScores(this.level) }, "See scores"),
-          h("button", { onclick: () => app.openToday() }, "Today's puzzles"),
+            : h("button", { class: "primary", onclick: () => app.openScoresFor(ref) }, "See scores"),
+          typeof ref === "number"
+            ? h("button", { onclick: () => app.openToday() }, "Today's puzzles")
+            : [
+              h("button", { onclick: () => app.openEndless({ difficulty: ref.difficulty, number: ref.number + 1 }) }, `Play #${ref.number + 1}`),
+              h("button", { onclick: () => app.openToday() }, `${ENDLESS_LABEL} puzzles`),
+            ],
         ),
       );
     } else {
@@ -158,7 +165,7 @@ export class PlayScreen extends Component {
           h("button", { disabled: paused, onclick: () => this.#erase() }, "Erase"),
           h("button", {
             disabled: !game.canClearAll || paused, "aria-label": "Clear board",
-            onclick: () => app.update(this.level, (g) => g.clearAll(), { a: "clear" }),
+            onclick: () => app.update(this.ref, (g) => g.clearAll(), { a: "clear" }),
           }, "Clear"),
           h("button", {
             class: this.#notesMode && "active", "aria-pressed": String(this.#notesMode),

@@ -25,6 +25,14 @@ const maxAttempts = 8
 // use of the week seed.
 const domain uint64 = 0x7375646f6b75
 
+// endlessDomain is "endless" in ASCII; keeps endless puzzles' seeds apart from
+// every daily puzzle's.
+const endlessDomain uint64 = 0x656e646c657373
+
+// MaxEndlessNumber is the highest endless puzzle number: 2^53-1, the largest
+// integer JSON numbers carry exactly in JavaScript.
+const MaxEndlessNumber int64 = 1<<53 - 1
+
 type difficulty struct {
 	name         string
 	targetGivens int
@@ -38,6 +46,9 @@ var difficulties = [...]difficulty{
 	{"Expert", 28},
 	{"Diabolical", 24},
 }
+
+// Tiers is the number of difficulty tiers: endless difficulties are 1..Tiers.
+const Tiers = len(difficulties)
 
 // Puzzle is a generated puzzle as 81-character strings ('0' = empty).
 type Puzzle struct {
@@ -125,13 +136,43 @@ func Generate(weekSeed uint64, dayOfWeek, level, levels int) (Puzzle, error) {
 	if err != nil {
 		return Puzzle{}, err
 	}
-	random := newXoshiro(puzzleSeed(weekSeed, dayOfWeek, level))
+	return build(puzzleSeed(weekSeed, dayOfWeek, level), d.targetGivens), nil
+}
+
+// endlessPuzzleSeed is the seed for one endless puzzle: every input passes
+// through a full SplitMix64 mix.
+func endlessPuzzleSeed(endlessSeed uint64, difficulty int, number int64) uint64 {
+	h := mix(endlessDomain + GeneratorVersion)
+	h = mix(h ^ endlessSeed)
+	h = mix(h + uint64(difficulty))
+	h = mix(h + uint64(number))
+	return h
+}
+
+// GenerateEndless is endless puzzle number (1..MaxEndlessNumber) of tier
+// difficulty (1 = Easy to 5 = Diabolical): a pure function of
+// (endlessSeed, difficulty, number), generated exactly as Generate does from
+// its own puzzle seed and the tier's target.
+func GenerateEndless(endlessSeed uint64, difficulty int, number int64) (Puzzle, error) {
+	if difficulty < 1 || difficulty > Tiers {
+		return Puzzle{}, fmt.Errorf("difficulty must be 1..%d: %d", Tiers, difficulty)
+	}
+	if number < 1 || number > MaxEndlessNumber {
+		return Puzzle{}, fmt.Errorf("number must be 1..%d: %d", MaxEndlessNumber, number)
+	}
+	return build(endlessPuzzleSeed(endlessSeed, difficulty, number), difficulties[difficulty-1].targetGivens), nil
+}
+
+// build is steps 2 to 4 of Generate, from a puzzle seed and a target given
+// count.
+func build(seed uint64, targetGivens int) Puzzle {
+	random := newXoshiro(seed)
 
 	var bestGivens, bestSolution [cells]int
 	bestCount := -1
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		solution := randomSolution(make([]int, cells), random)
-		givens := removeCells(solution, d.targetGivens, random)
+		givens := removeCells(solution, targetGivens, random)
 		count := 0
 		for _, v := range givens {
 			if v != 0 {
@@ -141,11 +182,11 @@ func Generate(weekSeed uint64, dayOfWeek, level, levels int) (Puzzle, error) {
 		if bestCount < 0 || count < bestCount {
 			bestGivens, bestSolution, bestCount = givens, solution, count
 		}
-		if count <= d.targetGivens {
+		if count <= targetGivens {
 			break
 		}
 	}
-	return Puzzle{Givens: gridString(bestGivens), Solution: gridString(bestSolution)}, nil
+	return Puzzle{Givens: gridString(bestGivens), Solution: gridString(bestSolution)}
 }
 
 func gridString(g [cells]int) string {

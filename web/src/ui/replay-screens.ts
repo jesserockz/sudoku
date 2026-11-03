@@ -1,8 +1,8 @@
-import type { AdminResult, ReplayStatus } from "../api/models.ts";
+import type { AdminEndlessResult, AdminResult, ReplayStatus } from "../api/models.ts";
 import { CELLS, colOf, rowOf } from "../core/geometry.ts";
 import { formatDuration } from "../game/timer.ts";
-import { puzzleTitle } from "../generator/generator.ts";
-import type { AdminResultsModel } from "./admin-results.ts";
+import { DIFFICULTIES, endlessTitle, puzzleTitle } from "../generator/generator.ts";
+import { ENDLESS_DIFFICULTIES, type AdminResultsModel, type ResultsMode } from "./admin-results.ts";
 import type { AppController } from "./controller.ts";
 import { type Child, Component, h, topBar } from "./dom.ts";
 import { MIN_STRETCH_MS, SPEEDS, type ReplayViewer, formatGap, formatWall } from "./replay-viewer.ts";
@@ -37,7 +37,7 @@ const REPLAY_LABELS: Record<ReplayStatus, string> = {
   valid: "Replay OK", invalid: "Replay failed", missing: "No replay", none: "Before replays",
 };
 
-function statusBadges(r: AdminResult): Child {
+function statusBadges(r: Pick<AdminResult, "replay" | "flag">): Child {
   return [
     h("span", { class: ["badge", r.replay === "valid" && "current", r.replay === "invalid" && "warn"] }, REPLAY_LABELS[r.replay]),
     r.flag && h("span", { class: "badge suspicious" }, r.flag.auto ? "Suspicious (auto)" : "Suspicious"),
@@ -51,6 +51,8 @@ export class AdminResultsScreen extends AdminResultsScreenBase {
     const m = this.model;
     if (!m) return topBar("Results", back);
     const levels = m.data?.levels ?? 0;
+    const tab = (mode: ResultsMode, label: string) =>
+      h("button", { class: m.mode === mode && "active", disabled: m.loading, onclick: () => void m.setMode(mode) }, label);
     return [
       topBar("Results", back),
       h("div", { class: "date-nav" },
@@ -58,9 +60,10 @@ export class AdminResultsScreen extends AdminResultsScreenBase {
         h("span", null, m.date === m.today ? "Today" : m.date),
         h("button", { class: "link", disabled: m.loading || m.date >= m.today, onclick: () => void m.shiftDate(1) }, "Later ›"),
       ),
+      h("div", { class: "tabs" }, tab("daily", "Daily"), tab("endless", "Endless")),
       m.loadError && h("div", { class: "notice" }, m.loadError),
       m.loading && h("p", { class: "boot" }, "Loading…"),
-      Array.from({ length: levels }, (_, i) => i + 1).map((level) => {
+      m.mode === "endless" ? this.#endless(m) : Array.from({ length: levels }, (_, i) => i + 1).map((level) => {
         const results = m.resultsFor(level);
         return h("div", { class: "card" },
           h("h2", null, puzzleTitle(level, levels)),
@@ -69,6 +72,25 @@ export class AdminResultsScreen extends AdminResultsScreenBase {
             : h("table", { class: "board-table results-table" }, h("tbody", null, results.map((r) =>
               h("tr", { class: "clickable", onclick: () => this.app.openReplay(r) },
                 h("td", null, r.displayName, h("div", { class: "small" }, statusBadges(r))),
+                h("td", { class: "time" }, formatDuration(r.elapsedMs)),
+              )))),
+        );
+      }),
+    ];
+  }
+
+  #endless(m: AdminResultsModel): Child {
+    return [
+      h("p", { class: "muted small" }, "Endless results are listed by the day they were submitted."),
+      ENDLESS_DIFFICULTIES.map((difficulty) => {
+        const results = m.endlessResultsFor(difficulty);
+        return h("div", { class: "card" },
+          h("h2", null, DIFFICULTIES[difficulty - 1]!.name),
+          results.length === 0
+            ? h("p", { class: "muted" }, "No results.")
+            : h("table", { class: "board-table results-table" }, h("tbody", null, results.map((r) =>
+              h("tr", { class: "clickable", onclick: () => this.app.openReplay(r) },
+                h("td", null, `#${r.number} `, r.displayName, h("div", { class: "small" }, statusBadges(r))),
                 h("td", { class: "time" }, formatDuration(r.elapsedMs)),
               )))),
         );
@@ -149,11 +171,14 @@ export class ReplayScreen extends AdminResultsScreenBase {
     }
     const d = v.detail;
     const result = m.find(d) ?? d;
+    const heading = "difficulty" in d
+      ? `${d.displayName}, ${endlessTitle(d.difficulty, d.number)}, submitted ${d.submittedAt.slice(0, 10)}`
+      : `${d.displayName}, ${puzzleTitle(d.level, d.levels)} on ${d.date}`;
     return [
       topBar("Replay", back),
       m.error && h("div", { class: "notice" }, m.error),
       h("div", { class: "card" },
-        h("h2", null, `${d.displayName}, ${puzzleTitle(d.level, d.levels)} on ${d.date}`),
+        h("h2", null, heading),
         h("p", null, `Time ${formatDuration(d.elapsedMs)}. `, statusBadges(result)),
         d.replayError && h("p", { class: "error small" }, d.replayError),
         this.#flag(m, result),
@@ -164,7 +189,7 @@ export class ReplayScreen extends AdminResultsScreenBase {
     ];
   }
 
-  #flag(m: AdminResultsModel, r: AdminResult): Child {
+  #flag(m: AdminResultsModel, r: AdminResult | AdminEndlessResult): Child {
     const flag = r.flag;
     if (flag) {
       return h("div", { class: "flag" },

@@ -1,6 +1,7 @@
 package puzzle
 
 import (
+	"fmt"
 	"slices"
 	"testing"
 )
@@ -283,5 +284,74 @@ func TestPeers(t *testing.T) {
 	want := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 18, 19, 20, 27, 36, 45, 54, 63, 72}
 	if got := Peers(0); !slices.Equal(got, want) {
 		t.Errorf("Peers(0) = %v, want %v", got, want)
+	}
+}
+
+// Golden endless puzzles, shared with the web generator's tests. Same rule as the daily goldens.
+func TestGenerateEndlessGoldens(t *testing.T) {
+	tests := []struct {
+		seed       string
+		difficulty int
+		number     int64
+		puzzleSeed string
+		givens     string
+		solution   string
+	}{
+		{"9f2c4a1b7e30d5c8", 1, 1, "45e399388c9d16e9",
+			"608007201942051768000862490203700080871600520050080000060120005007040030020000046",
+			"638497251942351768715862493293715684871634529456289317364128975587946132129573846"},
+		{"9f2c4a1b7e30d5c8", 5, 1, "0e552db1aa008165",
+			"000006004310400000000501002000200038700060040000008006520600000003000000008190700",
+			"259786314316429857847531692694217538782365149135948276521674983973852461468193725"},
+		{"0123456789abcdef", 3, 2, "e1e47b90e6f7744f",
+			"090010000516002070000507000000041060003009204041600700300100800000780032085300107",
+			"792418653516932478834567921978241365653879214241653789327195846169784532485326197"},
+		{"0123456789abcdef", 2, 1000000, "91861766ec2934e3",
+			"090000034538004206000300708000146903316090000984000002460089307700060020000001600",
+			"197628534538974216642315798275146983316892475984537162461289357759463821823751649"},
+		{"ffffffffffffffff", 4, 9007199254740991, "494cf19e7268c89e",
+			"800005010007000004030000090004150002701409060600800000003200000100008320078010600",
+			"862945713917623584435781296384156972721439865659872431593267148146598327278314659"},
+	}
+	for _, tt := range tests {
+		seed, err := ParseWeekSeed(tt.seed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := fmt.Sprintf("%016x", endlessPuzzleSeed(seed, tt.difficulty, tt.number)); got != tt.puzzleSeed {
+			t.Errorf("puzzle seed for %s d%d #%d = %s, want %s", tt.seed, tt.difficulty, tt.number, got, tt.puzzleSeed)
+		}
+		p, err := GenerateEndless(seed, tt.difficulty, tt.number)
+		if err != nil {
+			t.Fatalf("%s d%d #%d: %v", tt.seed, tt.difficulty, tt.number, err)
+		}
+		if p.Givens != tt.givens {
+			t.Errorf("givens for %s d%d #%d = %s, want %s", tt.seed, tt.difficulty, tt.number, p.Givens, tt.givens)
+		}
+		if p.Solution != tt.solution {
+			t.Errorf("solution for %s d%d #%d = %s, want %s", tt.seed, tt.difficulty, tt.number, p.Solution, tt.solution)
+		}
+	}
+}
+
+func TestGenerateEndlessArgumentErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		difficulty int
+		number     int64
+	}{
+		{"difficulty zero", 0, 1},
+		{"difficulty six", 6, 1},
+		{"difficulty negative", -1, 1},
+		{"number zero", 1, 0},
+		{"number negative", 1, -5},
+		{"number above max", 1, MaxEndlessNumber + 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := GenerateEndless(1, tt.difficulty, tt.number); err == nil {
+				t.Error("expected error")
+			}
+		})
 	}
 }

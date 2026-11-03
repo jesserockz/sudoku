@@ -1,6 +1,6 @@
 import {
-  type DayResult, type GameResult, type Me, type OidcConfig, type Week,
-  decodeDayResult, decodeGameResult, decodeMe, decodeOidcConfig, decodeWeek,
+  type DayResult, type EndlessInfo, type EndlessResult, type GameResult, type Me, type OidcConfig, type Week,
+  decodeDayResult, decodeEndlessInfo, decodeEndlessResult, decodeGameResult, decodeMe, decodeOidcConfig, decodeWeek,
 } from "../api/models.ts";
 import type { SavedGame } from "../game/game.ts";
 import { decodeReplayEvent } from "../game/replay.ts";
@@ -38,6 +38,16 @@ export interface PendingAuth {
 }
 
 export const gameKey = (date: string, level: number): string => `${date}/${level}`;
+/** Where an endless game is kept: its difficulty and number. */
+export const endlessGameKey = (difficulty: number, number: number): string => `${difficulty}/${number}`;
+
+/** The home page's tabs. */
+export type HomeTab = "daily" | "endless";
+
+const decodeHomeTab = (json: unknown): HomeTab => {
+  if (json !== "daily" && json !== "endless") throw new TypeError(`unknown tab: ${String(json)}`);
+  return json;
+};
 
 export function decodeSavedGame(json: unknown): SavedGame {
   const o = obj(json);
@@ -87,6 +97,18 @@ export class AppStorage {
   readonly serverResults: StoredValue<Record<string, DayResult[]>>;
   /** The offline result queue. */
   readonly pending: StoredValue<GameResult[]>;
+  /** The server's endless seed: it never changes, so it's fetched once. */
+  readonly endless: StoredValue<EndlessInfo>;
+  /** Endless games in progress or finished, keyed by {@link endlessGameKey}. Kept until solved and uploaded. */
+  readonly endlessGames: StoredValue<Record<string, SavedGame>>;
+  /** The server's record of the user's endless results. */
+  readonly endlessResults: StoredValue<EndlessResult[]>;
+  /** The offline queue of endless results. */
+  readonly endlessPending: StoredValue<EndlessResult[]>;
+  /** The home page tab last shown on this device. */
+  readonly homeTab: StoredValue<HomeTab>;
+  /** Set once the endless explainer has popped up on this device, so it only does so once. */
+  readonly endlessHelpSeen: StoredValue<boolean>;
 
   constructor(store: KeyValueStore) {
     this.settings = new StoredValue(store, "settings", decodeSettings);
@@ -97,6 +119,12 @@ export class AppStorage {
     this.games = new StoredValue(store, "games", (j) => record(j, decodeSavedGame));
     this.serverResults = new StoredValue(store, "results", (j) => record(j, (r) => list(r, decodeDayResult)));
     this.pending = new StoredValue(store, "pending", (j) => list(j, decodeGameResult));
+    this.endless = new StoredValue(store, "endless", decodeEndlessInfo);
+    this.endlessGames = new StoredValue(store, "endless-games", (j) => record(j, decodeSavedGame));
+    this.endlessResults = new StoredValue(store, "endless-results", (j) => list(j, decodeEndlessResult));
+    this.endlessPending = new StoredValue(store, "endless-pending", (j) => list(j, decodeEndlessResult));
+    this.homeTab = new StoredValue(store, "home-tab", decodeHomeTab);
+    this.endlessHelpSeen = new StoredValue(store, "endless-help-seen", bool);
   }
 
   /** Forgets everything tied to the signed-in user, keeping the server URL. */
@@ -112,5 +140,8 @@ export class AppStorage {
     this.games.write(null);
     this.serverResults.write(null);
     this.pending.write(null);
+    this.endlessGames.write(null);
+    this.endlessResults.write(null);
+    this.endlessPending.write(null);
   }
 }

@@ -168,6 +168,61 @@ export interface ReplayDetail extends AdminResult {
   events: ReplayEvent[];
 }
 
+/** `GET /api/v1/endless`: the seed every endless puzzle on this server comes from. Never changes. */
+export interface EndlessInfo {
+  seed: string;
+}
+
+/**
+ * One endless result: the body of `POST /api/v1/endless/results` and its response. `difficulty` is the tier
+ * (1 = Easy .. 5 = Diabolical) and `number` the puzzle's number within it. `replay` is only sent, never returned.
+ */
+export interface EndlessResult {
+  difficulty: number;
+  number: number;
+  elapsedMs: number;
+  completedAt: string;
+  replay?: Replay;
+}
+
+/** `GET /api/v1/me/endless` */
+export interface MyEndlessResults {
+  results: EndlessResult[];
+}
+
+/** `GET /api/v1/endless/leaderboard`: per difficulty, how many puzzles each player has solved. */
+export interface EndlessProgress {
+  difficulties: {
+    difficulty: number;
+    players: { rank: number; userId: string; displayName: string; completed: number; highest: number; suspicious: boolean }[];
+  }[];
+}
+
+/** `GET /api/v1/endless/leaderboard/{difficulty}/{number}`: one endless puzzle's times. */
+export interface EndlessBoard {
+  difficulty: number;
+  number: number;
+  entries: { rank: number; userId: string; displayName: string; elapsedMs: number; suspicious: boolean }[];
+}
+
+/** One endless result as admins see it: an {@link AdminResult} keyed by difficulty and number instead of a game of the day. */
+export interface AdminEndlessResult extends Omit<AdminResult, "level"> {
+  difficulty: number;
+  number: number;
+}
+
+/** `GET /api/v1/admin/endless/results`: the endless results submitted on `date`. */
+export interface AdminEndlessResults {
+  date: string;
+  results: AdminEndlessResult[];
+}
+
+/** `GET /api/v1/admin/endless/results/{difficulty}/{number}/{userId}/replay` */
+export interface EndlessReplayDetail extends AdminEndlessResult {
+  givens: string;
+  events: ReplayEvent[];
+}
+
 /** The day's games for `date`, which must be in `week`. */
 export function weekPuzzles(week: Week, date: string = week.today): Puzzle[] {
   if (!inWeek(week, date)) throw new RangeError(`${date} is outside ${week.isoWeek}`);
@@ -261,9 +316,13 @@ export function decodeResultFlag(json: unknown): ResultFlag {
 }
 
 export function decodeAdminResult(json: unknown): AdminResult {
+  return { level: num(obj(json).level), ...decodeAdminResultBase(json) };
+}
+
+function decodeAdminResultBase(json: unknown): Omit<AdminResult, "level"> {
   const o = obj(json);
   return {
-    userId: str(o.userId), displayName: str(o.displayName), level: num(o.level), elapsedMs: num(o.elapsedMs),
+    userId: str(o.userId), displayName: str(o.displayName), elapsedMs: num(o.elapsedMs),
     completedAt: str(o.completedAt), submittedAt: optional(o.submittedAt, str) ?? "",
     replay: oneOf("replay status", ["valid", "invalid", "missing", "none"] as const)(o.replay),
     replayError: optional(o.replayError, str) ?? "", flag: optional(o.flag, decodeResultFlag),
@@ -277,12 +336,77 @@ export function decodeAdminResults(json: unknown): AdminResults {
 
 export function decodeReplayDetail(json: unknown): ReplayDetail {
   const o = obj(json);
+  return { ...decodeAdminResult(json), date: date(o.date), levels: num(o.levels), ...decodeReplayGame(o) };
+}
+
+function decodeReplayGame(o: Record<string, unknown>): { givens: string; events: ReplayEvent[] } {
   const givens = str(o.givens);
   if (!/^[0-9]{81}$/.test(givens)) throw new TypeError("givens must be 81 digits");
+  return { givens, events: optional(o.events, (e) => list(e, decodeReplayEvent)) ?? [] };
+}
+
+export function decodeAdminEndlessResult(json: unknown): AdminEndlessResult {
+  const o = obj(json);
+  return { difficulty: num(o.difficulty), number: num(o.number), ...decodeAdminResultBase(json) };
+}
+
+export function decodeAdminEndlessResults(json: unknown): AdminEndlessResults {
+  const o = obj(json);
+  return { date: date(o.date), results: list(o.results, decodeAdminEndlessResult) };
+}
+
+export function decodeEndlessReplayDetail(json: unknown): EndlessReplayDetail {
+  return { ...decodeAdminEndlessResult(json), ...decodeReplayGame(obj(json)) };
+}
+
+export function decodeEndlessInfo(json: unknown): EndlessInfo {
+  const seed = str(obj(json).seed).toLowerCase();
+  parseWeekSeed(seed);
+  return { seed };
+}
+
+export function decodeEndlessResult(json: unknown): EndlessResult {
+  const o = obj(json);
+  const replay = optional(o.replay, decodeReplay);
   return {
-    ...decodeAdminResult(json), date: date(o.date), levels: num(o.levels), givens,
-    events: optional(o.events, (e) => list(e, decodeReplayEvent)) ?? [],
+    difficulty: num(o.difficulty), number: num(o.number), elapsedMs: num(o.elapsedMs), completedAt: str(o.completedAt),
+    ...(replay ? { replay } : {}),
   };
+}
+
+export function decodeMyEndlessResults(json: unknown): MyEndlessResults {
+  return { results: list(obj(json).results, decodeEndlessResult) };
+}
+
+const decodeTimeEntry = (e: unknown): EndlessBoard["entries"][number] => {
+  const x = obj(e);
+  return {
+    rank: num(x.rank), userId: str(x.userId), displayName: str(x.displayName), elapsedMs: num(x.elapsedMs),
+    suspicious: optional(x.suspicious, bool) ?? false,
+  };
+};
+
+export function decodeEndlessProgress(json: unknown): EndlessProgress {
+  return {
+    difficulties: list(obj(json).difficulties, (d) => {
+      const b = obj(d);
+      return {
+        difficulty: num(b.difficulty),
+        players: list(b.players, (p) => {
+          const x = obj(p);
+          return {
+            rank: num(x.rank), userId: str(x.userId), displayName: str(x.displayName), completed: num(x.completed),
+            highest: num(x.highest), suspicious: optional(x.suspicious, bool) ?? false,
+          };
+        }),
+      };
+    }),
+  };
+}
+
+export function decodeEndlessBoard(json: unknown): EndlessBoard {
+  const o = obj(json);
+  return { difficulty: num(o.difficulty), number: num(o.number), entries: list(o.entries, decodeTimeEntry) };
 }
 
 export function decodeDayResult(json: unknown): DayResult {
@@ -308,13 +432,7 @@ export function decodeLeaderboard(json: unknown): Leaderboard {
       const b = obj(p);
       return {
         level: num(b.level),
-        entries: list(b.entries, (e) => {
-          const x = obj(e);
-          return {
-            rank: num(x.rank), userId: str(x.userId), displayName: str(x.displayName), elapsedMs: num(x.elapsedMs),
-            suspicious: optional(x.suspicious, bool) ?? false,
-          };
-        }),
+        entries: list(b.entries, decodeTimeEntry),
       };
     }),
     total: {

@@ -1,15 +1,25 @@
 // An in-memory v1 server and OIDC provider behind a fetch function, following docs/API.md.
-import type { GameResult } from "../src/api/models.ts";
+import type { EndlessResult, GameResult } from "../src/api/models.ts";
 import { createPkce } from "../src/api/oidc.ts";
 import { weekAt } from "../src/game/calendar.ts";
 import { weekSeed } from "../src/serverless/seed.ts";
 
 export const ISSUER = "https://auth.test/o/sudoku/";
 export const SECRET = "test-secret-0123456789";
+/** `HMAC-SHA256(SECRET, "sudoku-endless")`, first 8 bytes: the server's endless seed (docs/API.md). */
+export const ENDLESS_SEED = "3242a2d84b0602b6";
 
 export class FakeServer {
   online = true;
   rejectAll = false;
+  /** When set, result uploads (daily and endless) answer this status instead of storing. */
+  resultsStatus: number | null = null;
+  /** When set, only endless result uploads answer this status. */
+  endlessResultsStatus: number | null = null;
+  /** When set, the endless leaderboard endpoints answer this status. */
+  endlessBoardStatus: number | null = null;
+  /** When set, the endless leaderboard endpoints wait for this promise before answering. */
+  endlessBoardGate: Promise<void> | null = null;
   levels = 5;
   /** Whether `/me` reports the user as an admin; when false the admin endpoints answer 403. */
   admin: boolean | undefined = undefined;
@@ -24,6 +34,10 @@ export class FakeServer {
   adminResultsList: unknown = { date: "2026-10-27", levels: 5, results: [] };
   adminReplayDetail: unknown = null;
   adminFlagResult: unknown = null;
+  /** The same for the endless admin results endpoints. */
+  adminEndlessList: unknown = { date: "2026-10-27", results: [] };
+  adminEndlessReplayDetail: unknown = null;
+  adminEndlessFlagResult: unknown = null;
   readonly authMode: "dev" | "oidc";
   readonly now: () => number;
 
@@ -52,6 +66,7 @@ export class FakeServer {
 
   readonly requests: { method: string; url: URL; headers: Headers; body: string }[] = [];
   readonly stored: GameResult[] = [];
+  readonly storedEndless: EndlessResult[] = [];
 
   constructor(now: () => number, authMode: "dev" | "oidc" = "dev") {
     this.now = now;
@@ -105,6 +120,23 @@ export class FakeServer {
     }
     const user = this.#user(r.headers.get("Authorization"));
     if (!user) return json({ error: { code: "unauthorized", message: "bad token" } }, 401);
+    if (r.url.pathname.startsWith("/api/v1/admin/endless/results")) {
+      if (!this.admin) return json({ error: { code: "forbidden", message: "admin access required" } }, 403);
+      if (r.url.pathname === "/api/v1/admin/endless/results") return json(this.adminEndlessList);
+      return json(r.url.pathname.endsWith("/replay") ? this.adminEndlessReplayDetail : this.adminEndlessFlagResult);
+    }
+    if (r.url.pathname.startsWith("/api/v1/endless/leaderboard")) {
+      await this.endlessBoardGate;
+      if (this.endlessBoardStatus !== null) return json({ error: { code: "boom", message: "board broke" } }, this.endlessBoardStatus);
+    }
+    const board = /^\/api\/v1\/endless\/leaderboard\/(\d+)\/(\d+)$/.exec(r.url.pathname);
+    if (board) {
+      const [difficulty, number] = [Number(board[1]), Number(board[2])];
+      const entries = this.storedEndless.filter((s) => s.difficulty === difficulty && s.number === number)
+        .sort((a, b) => a.elapsedMs - b.elapsedMs)
+        .map((s, i) => ({ rank: i + 1, userId: "alice", displayName: "Alice", elapsedMs: s.elapsedMs, suspicious: false }));
+      return json({ difficulty, number, entries });
+    }
     if (r.url.pathname.startsWith("/api/v1/admin/results")) {
       if (!this.admin) return json({ error: { code: "forbidden", message: "admin access required" } }, 403);
       if (r.url.pathname === "/api/v1/admin/results") return json(this.adminResultsList);
@@ -131,6 +163,7 @@ export class FakeServer {
         return json({ date, results: this.stored.filter((s) => s.date === date).map(({ date: _, ...rest }) => rest) });
       }
       case "/api/v1/results": {
+        if (this.resultsStatus !== null) return json({ error: { code: "boom", message: "" } }, this.resultsStatus);
         if (this.rejectAll) return json({ error: { code: "invalid_result", message: "nope" } }, 400);
         const result = JSON.parse(r.body) as GameResult;
         const existing = this.stored.find((s) => s.date === result.date && s.level === result.level);
@@ -138,6 +171,34 @@ export class FakeServer {
         this.stored.push(result);
         return json(result, 201);
       }
+      case "/api/v1/endless":
+        return json({ seed: ENDLESS_SEED });
+      case "/api/v1/me/endless":
+        return json({ results: this.storedEndless.map(({ replay: _, ...rest }) => rest) });
+      case "/api/v1/endless/results": {
+        if (this.resultsStatus !== null || this.endlessResultsStatus !== null) {
+          return json({ error: { code: "boom", message: "" } }, this.endlessResultsStatus ?? this.resultsStatus!);
+        }
+        if (this.rejectAll) return json({ error: { code: "invalid_result", message: "nope" } }, 400);
+        const result = JSON.parse(r.body) as EndlessResult;
+        const existing = this.storedEndless.find((s) => s.difficulty === result.difficulty && s.number === result.number);
+        if (existing) return json(existing, 200);
+        this.storedEndless.push(result);
+        return json(result, 201);
+      }
+      case "/api/v1/endless/leaderboard":
+        return json({
+          difficulties: [1, 2, 3, 4, 5].map((difficulty) => {
+            const mine = this.storedEndless.filter((s) => s.difficulty === difficulty);
+            return {
+              difficulty,
+              players: mine.length === 0 ? [] : [{
+                rank: 1, userId: "alice", displayName: "Alice", completed: mine.length,
+                highest: Math.max(...mine.map((s) => s.number)), suspicious: false,
+              }],
+            };
+          }),
+        });
       case "/api/v1/leaderboard":
         return json({ date: r.url.searchParams.get("date"), puzzles: [], total: { entries: [] }, players: [] });
     }

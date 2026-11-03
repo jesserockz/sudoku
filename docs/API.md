@@ -58,6 +58,23 @@ e.g. `Bearer dev:alice:Alice`. Dev tokens carry only the claims `sub` and `name`
 - Hex (not a JSON number) because JS cannot represent 64-bit integers exactly. Clients parse it into a 64-bit value (`ULong`/`Long` bit pattern).
 - How a client turns `(weekSeed, dayOfWeek, level)` into a puzzle is defined by the client (`web/src/generator/`). The server has a bit-identical Go port (`server/internal/puzzle/`, pinned by the same golden puzzles) so it can check [replays](#replays) against the day's puzzle; it never stores puzzles.
 
+## Endless seed
+
+Endless puzzles are numbered puzzles per difficulty, unlimited and shared by everyone, kept forever. `difficulty` is the tier `1..5` (Easy 40, Medium 36, Hard 32, Expert 28, Diabolical 24 givens), which is not the daily `level`. `number` is `1..9007199254740991` (2^53-1, the largest integer JavaScript represents exactly).
+
+- `endlessSeed = HMAC-SHA256(key = serverSecret, message = "sudoku-endless")`, truncated to the **first 8 bytes**, encoded as **16 lowercase hex characters**, exactly as the weekly seed is. It never changes for a given server secret, so a client can fetch it once.
+- The puzzle seed is derived with SplitMix64 (all arithmetic on unsigned 64-bit integers, wrapping), then fed to the same generator as the dailies (grid, cell removal to the tier's target, up to 8 attempts):
+
+```
+ENDLESS_DOMAIN = 0x656e646c657373   // "endless" in ASCII
+h = mix(ENDLESS_DOMAIN + GeneratorVersion)
+h = mix(h ^ endlessSeed)
+h = mix(h + difficulty)
+h = mix(h + number)
+```
+
+- The web client (`web/src/generator/`, `generateEndless`) and the server's Go port (`server/internal/puzzle/`, `GenerateEndless`) are pinned by the same golden puzzles. The server regenerates an endless puzzle to check [replays](#replays) and never stores puzzles.
+
 ## Endpoints
 
 ### `GET /healthz`
@@ -188,6 +205,98 @@ Defaults to today.
 - `players` lists every user with at least one result that day, so clients can show partial progress (e.g. 3 of 5).
 - Every puzzle and total entry also has `"suspicious": true|false`: `true` when an admin flagged that result (the server's own automatic flags don't count until an admin confirms one), or for a total entry, any of the player's results that day. Flagged results stay listed and ranked like any other; clients show a visible marker on them. Who flagged a result and why is only shown to admins.
 
+### `GET /api/v1/endless`
+
+The [endless seed](#endless-seed).
+
+```json
+{ "seed": "3242a2d84b0602b6" }
+```
+
+### `GET /api/v1/me/endless`
+
+All of the caller's endless results, ordered by difficulty then number. Lets a fresh device know which puzzles are already solved.
+
+```json
+{
+  "results": [
+    { "difficulty": 1, "number": 12, "elapsedMs": 183000, "completedAt": "2026-10-26T09:15:00+13:00" }
+  ]
+}
+```
+
+### `POST /api/v1/endless/results`
+
+Submit one completed endless puzzle.
+
+```json
+{
+  "difficulty": 1,
+  "number": 12,
+  "elapsedMs": 183000,
+  "completedAt": "2026-10-26T09:15:00+13:00",
+  "replay": { "version": 1, "events": [{ "t": 0, "w": 1761423000000, "a": "start" }, "..."] }
+}
+```
+
+- The rules are those of `POST /api/v1/results`, with `difficulty` and `number` in place of `date` and `level`, and no date limits: an endless puzzle can be solved at any time.
+- **Idempotent**: one result per `(user, difficulty, number)`. The first accepted submission wins; later ones are ignored.
+  - `201 Created` - stored.
+  - `200 OK` - a result already existed; the body is the **stored** result, which may differ from the one submitted.
+  - Both return the result object `{ "difficulty", "number", "elapsedMs", "completedAt" }` (never the replay).
+- **Sanity caps** (`400 invalid_result` on failure):
+  - `difficulty` in `1..5`.
+  - `number` in `1..9007199254740991`.
+  - `elapsedMs` in `[5000, 86400000]` (5 s to 24 h).
+  - `completedAt` parses as RFC 3339. It is stored as reported and is informational only.
+  - `replay`, when present, is well-formed as described under [Replays](#replays) (`400 invalid_result` otherwise).
+- A missing required field or a malformed body is `400 bad_request`. The whole request body is capped at **1 MiB** (`413 too_large`).
+- The replay is **checked** against the endless puzzle (see [Replay checks](#replay-checks)). As for the dailies, a replay that fails a check does not reject the result: it is stored and automatically flagged as suspicious with the failed check as the reason, as is a result with no replay ("No replay submitted"). An automatic flag is only visible to admins until one confirms it.
+
+Clients queue results offline and retry until they receive `200`/`201`. A `400` is final; the client should drop the result and not retry.
+
+### `GET /api/v1/endless/leaderboard`
+
+Every player's progress in each difficulty.
+
+```json
+{
+  "difficulties": [
+    {
+      "difficulty": 1,
+      "players": [
+        { "rank": 1, "userId": "2", "displayName": "Bob", "completed": 12, "highest": 14, "suspicious": false },
+        { "rank": 2, "userId": "1", "displayName": "Alice", "completed": 9, "highest": 9, "suspicious": false },
+        { "rank": 2, "userId": "3", "displayName": "Carol", "completed": 9, "highest": 30, "suspicious": true }
+      ]
+    }
+  ]
+}
+```
+
+- `difficulties` always contains all five tiers in order `1..5`; `players` may be empty.
+- `players` lists every user with at least one result in that difficulty, ranked by `completed` (puzzles solved) descending. **Ties share a rank** with no tiebreaker, using standard competition ranking (1, 2, 2, 4). Equal players are ordered by `displayName`, then `userId`, for stable display only.
+- `highest` is the highest puzzle number the player has solved in that difficulty.
+- `suspicious` is `true` when an admin flagged any of the player's results in that difficulty (the server's own automatic flags don't count until an admin confirms one). Flagged results still count towards `completed`.
+
+### `GET /api/v1/endless/leaderboard/{difficulty}/{number}`
+
+The times on one endless puzzle, laid out as a puzzle in the daily leaderboard.
+
+```json
+{
+  "difficulty": 1,
+  "number": 12,
+  "entries": [
+    { "rank": 1, "userId": "2", "displayName": "Bob", "elapsedMs": 150000, "suspicious": false },
+    { "rank": 2, "userId": "1", "displayName": "Alice", "elapsedMs": 183000, "suspicious": false }
+  ]
+}
+```
+
+- Entries are sorted by time ascending, with the same ranking, tie ordering and `suspicious` rules as a daily puzzle. `entries` is empty when nobody has solved the puzzle.
+- `400 bad_request` if `difficulty` is not `1..5` or `number` is not `1..9007199254740991`.
+
 ## Replays
 
 A replay records every action of a game, so the server can check a result and an admin can watch it back. Clients record it while playing, keep it with the in-progress game (so a reload doesn't lose it) and send it with the result.
@@ -234,7 +343,7 @@ Only actions that change something are recorded: a `place` of the digit already 
 
 ### Replay checks
 
-The server replays the events on the day's puzzle (regenerated from the week seed) and checks, in order:
+The server replays the events on the puzzle (a daily regenerated from the week seed, an endless one from the endless seed) and checks, in order:
 
 1. **Shape**: `start` is first with `t` = 0, `finish` is last, and neither appears anywhere else.
 2. **Timer**: `t` never decreases, and it stays the same while the timer is stopped (after `pause` or `restore`, until `resume`), except that `restore` itself may move it forward (the time banked by the last save before the app was closed) and `resume` may be up to **1 second** later than the event before it (older clients stamped it a few milliseconds late).
@@ -289,6 +398,54 @@ One result with everything needed to watch it back: the fields of a list item ab
 Flags a result as suspicious, replacing any earlier flag (including an automatic one, which this confirms and makes public). Body `{ "reason": "Way faster than usual" }`; `reason` is optional, trimmed, and at most 500 characters (`400 bad_request` otherwise). Records the calling admin and the time. `200` with the updated list item, `404 not_found` if there is no such result.
 
 ### `DELETE /api/v1/admin/results/{date}/{level}/{userId}/flag`
+
+Removes the flag (automatic or not). `200` with the updated list item; also `200` if it wasn't flagged. `404 not_found` if there is no such result.
+
+## Admin endpoints (endless results)
+
+The same anti-cheat tools for [endless](#endless-seed) results, with the same access rules as the admin endpoints above.
+
+### `GET /api/v1/admin/endless/results?date=YYYY-MM-DD`
+
+Every endless result **submitted** on a day (defaults to today, any past date allowed), where the day runs from midnight to midnight in the game timezone. Endless puzzles have no date of their own, so the submission time is what places a result on a day. Ordered by difficulty, then number, then time.
+
+```json
+{
+  "date": "2026-10-26",
+  "results": [
+    {
+      "userId": "2",
+      "displayName": "Bob",
+      "difficulty": 5,
+      "number": 12,
+      "elapsedMs": 120000,
+      "completedAt": "2026-10-26T09:15:00+13:00",
+      "submittedAt": "2026-10-25T20:15:01.123Z",
+      "replay": "invalid",
+      "replayError": "the wall clock ran 41 s while the timer ran 120 s",
+      "flag": {
+        "reason": "Replay check failed: the wall clock ran 41 s while the timer ran 120 s",
+        "auto": true,
+        "flaggedBy": null,
+        "flaggedAt": "2026-10-25T20:15:01.123Z"
+      }
+    }
+  ]
+}
+```
+
+- `replay` is `valid`, `invalid` (see `replayError`) or `missing` (submitted without one).
+- `flag` is as for the daily admin results.
+
+### `GET /api/v1/admin/endless/results/{difficulty}/{number}/{userId}/replay`
+
+One result with everything needed to watch it back: the fields of a list item above, plus `givens` (the puzzle's starting grid as 81 digits, `0` = empty; never the solution) and `events` (the stored replay's events, `[]` when there is none). `400 bad_request` for a bad path value, `404 not_found` if there is no such result.
+
+### `PUT /api/v1/admin/endless/results/{difficulty}/{number}/{userId}/flag`
+
+Flags a result as suspicious, with the same body, limits and replacement semantics as the daily flag endpoint. `200` with the updated list item, `404 not_found` if there is no such result.
+
+### `DELETE /api/v1/admin/endless/results/{difficulty}/{number}/{userId}/flag`
 
 Removes the flag (automatic or not). `200` with the updated list item; also `200` if it wasn't flagged. `404 not_found` if there is no such result.
 

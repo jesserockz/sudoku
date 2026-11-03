@@ -59,6 +59,13 @@ body { padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
   padding: 8px 12px; margin-bottom: 12px;
 }
 
+.help-overlay {
+  position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center;
+  padding: 16px; background: rgb(0 0 0 / 45%);
+}
+.help-overlay .help { width: 100%; max-width: 440px; max-height: calc(100vh - 32px); overflow-y: auto; margin: 0; }
+.help-overlay .help p { margin: 0 0 10px; line-height: 1.45; }
+
 .boot { text-align: center; color: var(--muted); margin-top: 30vh; }
 
 sudoku-app { display: block; max-width: 520px; margin: 0 auto; padding: 12px 16px 32px; }
@@ -208,6 +215,11 @@ sudoku-play > header.bar { flex: none; margin-bottom: 0; }
 /* Leaderboard */
 .tabs { display: flex; gap: 4px; overflow-x: auto; margin-bottom: 12px; padding-bottom: 2px; }
 .tabs button { flex: 0 0 auto; padding: 6px 12px; min-height: 36px; font-size: 0.9rem; }
+.home-tabs { margin: 0 0 12px; }
+.home-tabs button { flex: 1 1 0; }
+.puzzles .status.in-progress button.link { padding: 0 4px; min-height: 0; font-size: inherit; }
+form.login.endless-open select { width: auto; flex: none; }
+form.login.endless-open input { width: auto; }
 .date-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 table.board-table { width: 100%; border-collapse: collapse; }
 table.board-table td { padding: 8px 4px; border-bottom: 1px solid var(--line); }
