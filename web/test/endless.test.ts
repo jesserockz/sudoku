@@ -19,8 +19,13 @@ import { ENDLESS_SEED, FakeServer } from "./fake-server.ts";
 const NOW = Date.parse("2026-10-27T01:00:00Z");
 const REDIRECT = "https://sudoku.test/auth/callback";
 const settled = () => new Promise<void>((resolve) => setImmediate(resolve));
-async function until(done: () => boolean): Promise<void> {
-  for (let i = 0; i < 200 && !done(); i++) await settled();
+/**
+ * Waits for `done`, by the clock rather than a count of event loop turns: a sync waits on WebCrypto (the fake
+ * server's week seed), which finishes on a worker thread and can take many turns on a slow CI runner.
+ */
+async function until(done: () => boolean, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!done() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 1));
   assert.ok(done(), "condition never became true");
 }
 
