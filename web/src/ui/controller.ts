@@ -1,6 +1,7 @@
 import { ApiException } from "../api/client.ts";
-import type { AppConfig, EndlessBoard, EndlessProgress, Leaderboard, Me } from "../api/models.ts";
+import type { AppConfig, EndlessBoard, EndlessProgress, EndlessResult, Leaderboard, Me } from "../api/models.ts";
 import type { HomeTab } from "../data/app-storage.ts";
+import type { EndlessSource } from "../data/endless.ts";
 import { OidcException } from "../api/oidc.ts";
 import { SignInError, type SudokuRepository } from "../data/repository.ts";
 import { addDays } from "../game/calendar.ts";
@@ -368,15 +369,18 @@ export class AppController extends EventTarget {
   leaveSeed(): void {
     this.#seeds.leave();
     this.games.clear();
+    this.#endless = null;
     Object.assign(this, { seed: null, puzzles: null, notice: null, screen: { kind: "today" } });
     this.start();
   }
 
   async #startSeed(profile: SeedProfile): Promise<void> {
+    this.#endless = null;
     this.#set({ seed: profile, phase: { kind: "loading" } });
     try {
       await this.#loadSeedDay();
       this.#set({ phase: { kind: "ready" } });
+      this.#firstEndlessVisit();
     } catch (e) {
       // E.g. a stored timezone this browser doesn't know: let the player pick again.
       this.#seeds.leave();
@@ -392,6 +396,7 @@ export class AppController extends EventTarget {
   async #loadSeedDay(): Promise<void> {
     const day = this.#seeds.today();
     const list = await this.#seeds.puzzles(day);
+    await this.#seeds.loadEndless();
     this.today = day;
     this.puzzles = list;
     this.me = null;
@@ -557,16 +562,26 @@ export class AppController extends EventTarget {
     this.openHelp("endless");
   }
 
-  /** Whether the endless tab is offered: only with a server, which keeps everyone's endless results. */
+  /** Whether the endless tab is offered: with a server or a seed, so always. */
   get hasEndless(): boolean {
-    return !this.seed;
+    return true;
+  }
+
+  /** Where endless puzzles, games and results live: the seed's repository in serverless play. */
+  get #endlessSource(): EndlessSource {
+    return this.seed ? this.#seeds : this.#repo;
+  }
+
+  /** Serverless play's endless solve times, by difficulty then number. */
+  endlessHistory(): EndlessResult[] {
+    return this.#seeds.endlessHistory();
   }
 
   /** The endless tab, per difficulty, or `null` until the endless seed has been downloaded once. */
   endlessSummaries(): EndlessSummary[] | null {
-    if (!this.#repo.endlessPuzzle(1, 1)) return null;
-    const solved = this.#repo.endlessSolved();
-    const inProgress = this.#repo.endlessInProgress();
+    if (!this.#endlessSource.endlessPuzzle(1, 1)) return null;
+    const solved = this.#endlessSource.endlessSolved();
+    const inProgress = this.#endlessSource.endlessInProgress();
     return DIFFICULTIES.map((_, i) => {
       const difficulty = i + 1;
       const numbers = [...solved.keys()].filter((k) => k.startsWith(`${difficulty}/`)).map((k) => Number(k.split("/")[1]));
@@ -583,7 +598,7 @@ export class AppController extends EventTarget {
   endlessStatusOf(ref: EndlessRef): PuzzleStatus {
     const open = this.#endless && sameEndless(this.#endless.ref, ref) ? this.#endless.game : null;
     const game = open ?? this.#loadEndless(ref)?.game ?? null;
-    const solved = this.#repo.endlessSolved().get(`${ref.difficulty}/${ref.number}`);
+    const solved = this.#endlessSource.endlessSolved().get(`${ref.difficulty}/${ref.number}`);
     if (solved) return { kind: "done", elapsedMs: solved.elapsedMs, synced: solved.synced };
     if (!game) return { kind: "new" };
     if (game.completedElapsedMs !== null) return { kind: "done", elapsedMs: game.completedElapsedMs, synced: false };
@@ -605,15 +620,19 @@ export class AppController extends EventTarget {
 
   /** The endless puzzle and its game (a new one if it wasn't started here), or `null` without the endless seed. */
   #loadEndless(ref: EndlessRef): { ref: EndlessRef; puzzle: EndlessPuzzle; game: Game } | null {
-    const puzzle = this.#repo.endlessPuzzle(ref.difficulty, ref.number);
+    const puzzle = this.#endlessSource.endlessPuzzle(ref.difficulty, ref.number);
     if (!puzzle) return null;
-    const game = this.#repo.loadEndlessGame(puzzle) ?? this.#stamp(Game.create(puzzle.givens), { a: "start" });
+    const game = this.#endlessSource.loadEndlessGame(puzzle) ?? this.#stamp(Game.create(puzzle.givens), { a: "start" });
     return { ref: { difficulty: ref.difficulty, number: ref.number }, puzzle, game };
   }
 
-  /** The endless leaderboard: progress in `difficulty`, or one puzzle's times with `number`. */
+  /** The endless leaderboard: progress in `difficulty`, or one puzzle's times with `number`. In serverless play, the history. */
   openEndlessScores(difficulty: number, number: number | null = null): void {
-    if (!this.hasEndless) return;
+    // No leaderboard without a server: serverless play's history lists endless solves too.
+    if (this.seed) {
+      this.openHistory();
+      return;
+    }
     this.screen = { kind: "endless-scores", difficulty, number };
     const request = ++this.#leaderboardRequest;
     this.endlessProgress = null;
@@ -720,8 +739,8 @@ export class AppController extends EventTarget {
     if (finished) after = this.#stamp(after, { a: "finish" });
     if (typeof ref !== "number") {
       this.#endless!.game = after;
-      this.#repo.saveEndlessGame(ref.difficulty, ref.number, after, this.nowMs());
-      if (finished) void this.#repo.completeEndless(ref.difficulty, ref.number, after).then(() => this.sync());
+      this.#endlessSource.saveEndlessGame(ref.difficulty, ref.number, after, this.nowMs());
+      if (finished) void this.#endlessSource.completeEndless(ref.difficulty, ref.number, after).then(() => this.sync());
       this.#changed();
       return;
     }

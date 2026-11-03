@@ -344,8 +344,8 @@ In dev auth mode the app instead asks for a user id and display name and sends
   records them (`AppController.update` with the action, `log` for actions that
   don't change the board); `Game` only keeps the list. A replay over the
   server's 10000-event cap is left out, and the result is then flagged.
-- **Endless** (with a server; the home page's second tab, next to **Daily**):
-  see [Endless puzzles](#endless-puzzles).
+- **Endless** (the home page's second tab, next to **Daily**; with a server or
+  a seed): see [Endless puzzles](#endless-puzzles).
 - **Leaderboard**: total and per-puzzle boards with shared ranks, plus each
   player's progress (e.g. 3/5), for today and the previous 8 days. Online
   only; offline it says so, and it loads once the connection is back. Results
@@ -354,7 +354,7 @@ In dev auth mode the app instead asks for a user id and display name and sends
 
 ## Endless puzzles
 
-With a server, the home page has two tabs, **Daily** (the day's games, as
+The home page has two tabs, **Daily** (the day's games, as
 above) and **Endless**; the one last shown is remembered on the device
 (`home-tab` in `localStorage`). The tab's name is `ENDLESS_LABEL` in
 `src/ui/controller.ts`.
@@ -393,7 +393,8 @@ everyone gets the same puzzles and the server can check their replays.
   that open the same kind of dialog; the Daily one never pops up by itself.
   The texts are in `src/ui/help.ts`.
 
-Endless needs a server, so seed play has no Endless tab.
+Seed play has the Endless tab too, see [Serverless play](#serverless-play-a-shared-seed):
+the puzzles are the same, but without a server there is no leaderboard.
 
 ## Serverless play (a shared seed)
 
@@ -416,12 +417,21 @@ passphrase, or a generated one) and gets the same daily games
   `&tz=<IANA zone>` when it isn't Pacific/Auckland. Anything else in the
   fragment is ignored; a bad escape, empty seed, out-of-range `levels` or
   unknown zone makes the link invalid.
+- **Endless seed**: `HMAC-SHA256(key = UTF-8(seed), "sudoku-endless")`, first
+  8 bytes, as 16 lowercase hex characters: the server's endless seed with the
+  seed as its secret (so a seed equal to a server's secret also gets that
+  server's [Endless puzzles](#endless-puzzles)). Everyone with the same seed
+  gets the same puzzle for a difficulty and number; the settings other than
+  the seed don't matter to it. Tests check the server's vectors.
 - **Share results** copies a summary of the day to paste into a message, tagged
   with a short fingerprint of the seed (e.g. `#287caf`) instead of the seed.
 - **Storage**: the active seed (`seed`), and per seed (keyed by its
   fingerprint) games in progress (`seed-games-<fp>`, current week only) and the
-  history of solve times (`seed-history-<fp>`). Switching seeds and back
-  resumes where you were.
+  history of solve times (`seed-history-<fp>`). Endless puzzles are kept
+  per seed the same way: games in progress (`seed-endless-games-<fp>`, never
+  pruned, and dropped once solved) and solve times
+  (`seed-endless-history-<fp>`: difficulty, number, elapsed time, when).
+  Switching seeds and back resumes where you were.
 
 In the app:
 
@@ -438,9 +448,16 @@ In the app:
   server).
 - **Today** works as with a server (offline, timer, notes) but with no sign-in,
   uploads or leaderboard. Under the games: **Share results**, **History**
-  (every solved game, newest day first), and the seed's card with the share
-  link, **Copy link**, **Share…** (the system share sheet, where the browser
-  has one), **Copy seed** and **Leave seed**.
+  (every solved game, newest day first, then an **Endless** section with the
+  solve times of each difficulty by puzzle number), and the seed's card with
+  the share link, **Copy link**, **Share…** (the system share sheet, where the
+  browser has one), **Copy seed** and **Leave seed**.
+- **Endless** works as with a server (next puzzle, resume, open any number,
+  the first-visit explainer and About's "How Endless works", whose text leaves
+  out the leaderboard), with the endless seed above, and nothing is uploaded.
+  There is no endless leaderboard: after a solve the button reads **History**
+  instead of "See scores", and the tab's button is **History** instead of
+  "Leaderboard"; both open History. Only your own device's solves count.
 
 ### Hosting without a server
 
@@ -479,8 +496,9 @@ node web/e2e/serverless.cjs http://localhost:8091/sudoku/
 ```
 
 It generates a seed and solves a puzzle, opens the share link in a fresh
-browser and checks the puzzles are identical, switches seeds and back, round
-trips a Unicode seed, and starts offline. The e2e scripts need Playwright with
+browser and checks the puzzles are identical, solves an Endless puzzle (it
+shows in History, and the other browser gets the same one), switches seeds and
+back, round trips a Unicode seed, and starts offline. The e2e scripts need Playwright with
 Chromium (`npm i -g playwright && npx playwright install chromium`).
 
 `web/e2e/update.cjs` checks the "new version available" banner. It simulates a

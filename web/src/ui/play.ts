@@ -144,9 +144,9 @@ export class PlayScreen extends Component {
       footer = h("div", { class: "solved" },
         h("p", { class: "big" }, `Solved in ${formatDuration(game.completedElapsedMs ?? 0)}`),
         h("div", { class: "actions" },
-          app.seed
+          app.seed && typeof ref === "number"
             ? shareResultsButton(() => app.resultsSummary(), true)
-            : h("button", { class: "primary", onclick: () => app.openScoresFor(ref) }, "See scores"),
+            : h("button", { class: "primary", onclick: () => app.openScoresFor(ref) }, app.seed ? "History" : "See scores"),
           typeof ref === "number"
             ? h("button", { onclick: () => app.openToday() }, "Today's puzzles")
             : [

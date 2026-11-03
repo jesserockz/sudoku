@@ -7,24 +7,11 @@ import { OidcClient, TokenSession, type TokenResponse, createPkce } from "../api
 import { formatTimestamp, inWeek, today } from "../game/calendar.ts";
 import { Game } from "../game/game.ts";
 import { MAX_REPLAY_EVENTS, REPLAY_VERSION } from "../game/replay.ts";
-import { type EndlessPuzzle, type Puzzle, generateEndless } from "../generator/generator.ts";
-import { parseWeekSeed } from "../generator/week-seed.ts";
+import { type EndlessPuzzle, type Puzzle } from "../generator/generator.ts";
 import { type AppStorage, type HomeTab, type Settings, endlessGameKey, gameKey } from "./app-storage.ts";
 import { randomToken } from "./crypto.ts";
+import { type EndlessInProgress, EndlessPuzzleCache, type EndlessSolved, type EndlessSource, endlessInProgressOf } from "./endless.ts";
 import { type FlushReport, ResultSync, dailyKey, endlessKey } from "./result-sync.ts";
-
-/** A solved endless puzzle. `synced` is false while its result waits in the offline queue. */
-export interface EndlessSolved {
-  elapsedMs: number;
-  synced: boolean;
-}
-
-/** An endless game started on this device and not solved yet. */
-export interface EndlessInProgress {
-  difficulty: number;
-  number: number;
-  elapsedMs: number;
-}
 
 /** Sign-in failed; the message is fit to show. */
 export class SignInError extends Error {}
@@ -45,7 +32,7 @@ export function normalizeUrl(url: string): string {
  * Pacific/Auckland. A new week needs a connection. Finished puzzles queue
  * results that upload whenever the server is reachable.
  */
-export class SudokuRepository {
+export class SudokuRepository implements EndlessSource {
   readonly sync: ResultSync;
   readonly endlessSync: ResultSync<EndlessResult>;
   readonly tokens: TokenProvider;
@@ -59,7 +46,7 @@ export class SudokuRepository {
   #api: { url: string; api: SudokuApi } | null = null;
   #oidc: { key: string; client: OidcClient } | null = null;
   #puzzleCache: { key: string; puzzles: Puzzle[] } | null = null;
-  #endlessCache: { key: string; puzzle: EndlessPuzzle } | null = null;
+  readonly #endlessPuzzles = new EndlessPuzzleCache();
 
   constructor(
     storage: AppStorage,
@@ -290,9 +277,7 @@ export class SudokuRepository {
   endlessPuzzle(difficulty: number, number: number): EndlessPuzzle | null {
     const seed = this.#storage.endless.read()?.seed;
     if (!seed) return null;
-    const key = JSON.stringify([seed, difficulty, number]);
-    if (this.#endlessCache?.key !== key) this.#endlessCache = { key, puzzle: generateEndless(parseWeekSeed(seed), difficulty, number) };
-    return this.#endlessCache.puzzle;
+    return this.#endlessPuzzles.get(seed, difficulty, number);
   }
 
   /** Every solved endless puzzle, by {@link endlessGameKey}: the server's record, then the offline queue. */
@@ -305,13 +290,7 @@ export class SudokuRepository {
 
   /** Endless games started on this device and not solved yet, by difficulty then number. */
   endlessInProgress(): EndlessInProgress[] {
-    return Object.entries(this.#storage.endlessGames.read() ?? {})
-      .filter(([, g]) => !g.completed)
-      .map(([key, g]) => {
-        const [difficulty, number] = key.split("/").map(Number) as [number, number];
-        return { difficulty, number, elapsedMs: g.elapsedMs };
-      })
-      .sort((a, b) => a.difficulty - b.difficulty || a.number - b.number);
+    return endlessInProgressOf(this.#storage.endlessGames.read());
   }
 
   /** A saved game for an endless puzzle, if it still matches the puzzle. */

@@ -7,8 +7,9 @@
 //   node web/e2e/serverless.cjs http://localhost:8090/
 //
 // Generates a seed and solves a puzzle, opens the share link in a fresh
-// browser and checks it gets the identical puzzle, checks switching seeds
-// keeps each seed's progress, round-trips an awkward Unicode seed, and starts
+// browser and checks it gets the identical puzzle, plays an Endless puzzle (no
+// leaderboard, so it lands in History) and checks the other browser gets the
+// same one, checks switching seeds keeps each seed's progress, round-trips an awkward Unicode seed, and starts
 // offline from the service worker.
 const { chromium } = require("playwright");
 
@@ -53,6 +54,31 @@ async function peekGrid(page, index = 0) {
   await page.getByRole("button", { name: "‹ Back", exact: true }).click();
   await page.locator(".puzzles").waitFor();
   return grid;
+}
+
+/** Plays the open puzzle to the end: reads its grid, solves it and types the missing digits. */
+async function solveOpen(page) {
+  const grid = await readGrid(page);
+  const solution = grid.slice();
+  if (!solve(solution)) throw new Error("FAILED: puzzle has no solution");
+  const cells = page.locator("[role=gridcell]");
+  for (let i = 0; i < 81; i++) {
+    if (grid[i] !== 0) continue;
+    await cells.nth(i).click();
+    await page.keyboard.press(String(solution[i]));
+  }
+  await page.getByText("Solved in", { exact: false }).first().waitFor();
+  return grid;
+}
+
+async function openEndlessTab(page) {
+  await page.getByRole("tab", { name: "Endless" }).click();
+  const help = page.getByRole("dialog", { name: "How Endless works" });
+  if (await help.count()) {
+    check(!(await help.innerText()).toLowerCase().includes("leaderboard"), "the Endless explainer doesn't mention a leaderboard");
+    await page.getByRole("button", { name: "Got it" }).click();
+  }
+  await page.getByText("None solved yet", { exact: false }).first().waitFor();
 }
 
 async function newPage(browser) {
@@ -121,6 +147,33 @@ async function start(page, seed) {
   check(true, "History lists the solved game");
   await a.page.getByRole("button", { name: "‹ Back", exact: true }).click();
 
+  // 2b. Endless: solve Easy #1. There is no leaderboard, so scores go to History.
+  await openEndlessTab(a.page);
+  check(await a.page.getByText("None solved yet").count() === 5, "every Endless difficulty starts unsolved");
+  check(await a.page.getByRole("button", { name: "Leaderboard", exact: true }).count() === 0, "the Endless tab has no leaderboard button");
+  await a.page.getByRole("button", { name: "Play #1" }).first().click();
+  await a.page.getByText("Easy #1").first().waitFor();
+  const endless = await solveOpen(a.page);
+  check(await a.page.getByRole("button", { name: "Share results", exact: true }).count() === 0, "an Endless solve doesn't offer the daily summary");
+  await a.page.getByRole("button", { name: "History", exact: true }).click();
+  await a.page.locator("#history-endless").waitFor();
+  const history = await a.page.locator("#history-endless").innerText();
+  check(/Easy \(1 solved\)/.test(history) && /Easy #1\s+\d+:\d\d/.test(history), "History lists the Endless solve under Easy:\n" + history);
+  check(await a.page.getByText("Total (1/5)").count() === 1, "the daily history is still there");
+  await a.page.getByRole("button", { name: "‹ Back", exact: true }).click();
+  check(await a.page.getByRole("tab", { name: "Endless", selected: true }).count() === 1, "back on the Endless tab");
+  await a.page.getByText("1 solved").first().waitFor();
+  await a.page.getByRole("button", { name: "Play #2" }).first().waitFor();
+  check(true, "the tab shows one solved and offers #2");
+  await a.page.reload();
+  await a.page.getByRole("button", { name: "Play #2" }).first().waitFor();
+  check(true, "the Endless solve survives a reload");
+  await a.page.getByRole("button", { name: "History", exact: true }).last().click(); // the tab's own button, not the header's
+  await a.page.locator("#history-endless").waitFor();
+  await a.page.getByRole("button", { name: "‹ Back", exact: true }).click();
+  await a.page.getByRole("tab", { name: "Daily" }).click();
+  await a.page.getByRole("button", { name: "Leave seed" }).waitFor();
+
   // 3. A fresh browser opening the share link gets the identical puzzles, and the fragment is cleared.
   const b = await newPage(browser);
   await b.page.goto(link);
@@ -129,6 +182,13 @@ async function start(page, seed) {
   check(JSON.stringify(await peekGrid(b.page, 0)) === JSON.stringify(easy), "the share link gives the identical Easy puzzle");
   check(JSON.stringify(await peekGrid(b.page, 4)) === JSON.stringify(await peekGrid(a.page, 4)), "and the identical Diabolical puzzle");
   check(await b.page.inputValue("#share-link") === link, "the receiver's share link is the same");
+
+  // 3b. The same link gives the same Endless puzzle, and nothing is solved there.
+  await openEndlessTab(b.page);
+  await b.page.getByRole("button", { name: "Play #1" }).first().click();
+  check(JSON.stringify(await readGrid(b.page)) === JSON.stringify(endless), "the share link gives the identical Endless puzzle");
+  await b.page.getByRole("button", { name: "‹ Back", exact: true }).click();
+  await b.page.getByRole("tab", { name: "Daily" }).click();
 
   // 4. A link to another seed asks first; each seed keeps its own progress.
   const other = `${base}#seed=another-group&levels=3`;
