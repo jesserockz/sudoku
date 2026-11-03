@@ -387,6 +387,12 @@ everyone gets the same puzzles and the server can check their replays.
   are listed by the day they were submitted, under their tier, and open,
   flag and unflag like daily ones.
 
+- **How it works**: the first time the Endless tab is shown on a device, a
+  dialog explains it (`endless-help-seen` in `localStorage` keeps it to once).
+  The About screen has **How Daily works** and **How Endless works** buttons
+  that open the same kind of dialog; the Daily one never pops up by itself.
+  The texts are in `src/ui/help.ts`.
+
 Endless needs a server, so seed play has no Endless tab.
 
 ## Serverless play (a shared seed)

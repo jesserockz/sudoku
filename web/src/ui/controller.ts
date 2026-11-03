@@ -34,6 +34,9 @@ export type Phase =
 /** The home page tab for endless puzzles. One constant, so it's easy to rename. */
 export const ENDLESS_LABEL = "Endless";
 
+/** Which "how it works" explainer is open over the screen. */
+export type HelpTopic = HomeTab;
+
 /** An endless puzzle: `number` (from 1) of difficulty tier `difficulty` (1 = Easy .. 5 = Diabolical). */
 export interface EndlessRef {
   difficulty: number;
@@ -138,6 +141,8 @@ export class AppController extends EventTarget {
   /** The endless leaderboard screen's data (whichever of the two it shows). */
   endlessProgress: EndlessProgress | null = null;
   endlessBoard: EndlessBoard | null = null;
+  /** The "how it works" explainer showing over the screen, or `null`. */
+  help: HelpTopic | null = null;
   /** A transient problem worth showing (e.g. offline, results not uploaded yet). */
   notice: string | null = null;
   /** What the About screen shows for the server; fetched when it's opened. */
@@ -181,7 +186,7 @@ export class AppController extends EventTarget {
     this.dispatchEvent(new Event("change"));
   }
 
-  #set(changes: Partial<Pick<AppController, "phase" | "screen" | "notice" | "me" | "seed" | "puzzles" | "needsSignIn" | "serverInfo">>): void {
+  #set(changes: Partial<Pick<AppController, "phase" | "screen" | "notice" | "me" | "seed" | "puzzles" | "needsSignIn" | "serverInfo" | "help">>): void {
     Object.assign(this, changes);
     this.#changed();
   }
@@ -223,6 +228,7 @@ export class AppController extends EventTarget {
     this.seed = null;
     this.#loadLocal();
     this.#set({ needsSignIn: this.#repo.needsSignIn, phase: { kind: "ready" } });
+    this.#firstEndlessVisit();
   }
 
   /** Reloads the day from local state (no network). */
@@ -531,6 +537,24 @@ export class AppController extends EventTarget {
     this.#repo.setHomeTab(tab);
     this.homeTab = tab;
     this.#changed();
+    this.#firstEndlessVisit();
+  }
+
+  /** Opens the explainer for `topic` (from the About screen, or the first endless visit). */
+  openHelp(topic: HelpTopic): void {
+    if (topic === "endless" && !this.hasEndless) return;
+    this.#set({ help: topic });
+  }
+
+  closeHelp(): void {
+    this.#set({ help: null });
+  }
+
+  /** The endless explainer pops up once per device, the first time the endless tab is shown. */
+  #firstEndlessVisit(): void {
+    if (!this.hasEndless || this.homeTab !== "endless" || this.screen.kind !== "today" || this.#repo.endlessHelpSeen()) return;
+    this.#repo.markEndlessHelpSeen();
+    this.openHelp("endless");
   }
 
   /** Whether the endless tab is offered: only with a server, which keeps everyone's endless results. */

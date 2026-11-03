@@ -661,3 +661,50 @@ test("tick leaves an open endless puzzle alone when the day rolls over", async (
   c.tick();
   assert.notEqual(c.today, today);
 });
+
+// The "how it works" explainers
+
+test("the endless explainer pops up the first time the tab is shown, once per device", async () => {
+  const e = await env();
+  assert.equal(e.c.help, null);
+  assert.equal(e.repo.endlessHelpSeen(), false);
+  e.c.showHomeTab("endless");
+  assert.equal(e.c.help, "endless");
+  assert.equal(e.repo.endlessHelpSeen(), true);
+  e.c.closeHelp();
+  assert.equal(e.c.help, null);
+  e.c.showHomeTab("daily");
+  e.c.showHomeTab("endless");
+  assert.equal(e.c.help, null, "only the first visit");
+  const again = await startController(e.repo, e.clock);
+  assert.equal(again.c.help, null, "nor after a reload");
+});
+
+test("a device that starts on the endless tab gets the explainer on start, and not over another screen", async () => {
+  const e = await env();
+  e.repo.setHomeTab("endless");
+  const fresh = await startController(e.repo, e.clock);
+  assert.equal(fresh.c.help, "endless");
+
+  const other = await env();
+  other.c.screen = { kind: "about" };
+  other.c.showHomeTab("endless");
+  assert.equal(other.c.help, null);
+  assert.equal(other.repo.endlessHelpSeen(), false);
+});
+
+test("the explainers open from the About screen; endless only with a server", async () => {
+  const e = await env();
+  e.c.openHelp("daily");
+  assert.equal(e.c.help, "daily");
+  e.c.openHelp("endless");
+  assert.equal(e.c.help, "endless");
+  e.c.closeHelp();
+  e.c.seed = { name: "x" } as unknown as SeedProfile;
+  e.c.openHelp("endless");
+  assert.equal(e.c.help, null);
+  e.c.showHomeTab("endless");
+  assert.equal(e.c.help, null, "no pop-up without a server");
+  e.c.openHelp("daily");
+  assert.equal(e.c.help, "daily");
+});

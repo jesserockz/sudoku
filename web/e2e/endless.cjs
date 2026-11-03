@@ -4,7 +4,7 @@
 //   SUDOKU_ADMIN_CLAIM=sub SUDOKU_ADMIN_VALUES=ann ... server/sudoku-server &
 //   node web/e2e/endless.cjs [http://localhost:8080] [screenshot dir]
 //
-// A fresh player opens the Endless tab (remembered across a reload), plays Easy #1 with a reload part
+// A fresh player opens the Endless tab, which explains itself once (remembered across a reload), plays Easy #1 with a reload part
 // way, and solves it. The result uploads with a replay the server accepts; the tab then offers #2, and
 // the endless leaderboards list the player. A second player gets the same puzzle, and the admin results
 // screen lists the result under Endless.
@@ -69,12 +69,32 @@ const readGrid = async (cells) =>
   await shot(page, "home-daily");
 
   await page.getByRole("tab", { name: "Endless" }).click();
+  await page.getByRole("dialog", { name: "How Endless works" }).waitFor();
+  check(true, "the first visit to Endless explains it");
+  await shot(page, "help-endless");
+  await page.getByRole("button", { name: "Got it" }).click();
+  check(await page.getByRole("dialog").count() === 0, "the explainer closes");
   await page.getByRole("button", { name: "Play #1" }).first().waitFor();
   check(await page.getByText("None solved yet").count() === 5, "every difficulty starts with nothing solved");
   await shot(page, "home-endless");
   await page.reload();
   await page.getByRole("button", { name: "Play #1" }).first().waitFor();
   check(await page.getByRole("tab", { name: "Endless", selected: true }).count() === 1, "the tab is remembered after a reload");
+  await page.waitForTimeout(300);
+  check(await page.getByRole("dialog").count() === 0, "the explainer only pops up once");
+
+  // Both explainers are on the About screen; Escape closes one.
+  await page.getByRole("button", { name: "About" }).click();
+  await page.getByRole("button", { name: "How Daily works" }).click();
+  await page.getByRole("dialog", { name: "How Daily works" }).waitFor();
+  await shot(page, "help-daily");
+  await page.keyboard.press("Escape");
+  check(await page.getByRole("dialog").count() === 0, "Escape closes the explainer");
+  await page.getByRole("button", { name: "How Endless works" }).click();
+  await page.getByRole("dialog", { name: "How Endless works" }).waitFor();
+  await page.mouse.click(5, 5);
+  check(await page.getByRole("dialog").count() === 0, "a tap outside closes the explainer");
+  await page.getByText("‹ Back").click();
 
   // Easy #1, with a reload part way: it resumes like a daily.
   await page.getByRole("button", { name: "Play #1" }).first().click();
@@ -139,6 +159,7 @@ const readGrid = async (cells) =>
   // Everyone gets the same puzzle.
   const other = await signIn(browser, { sub: "other" + run, name: "Otto" + run });
   await other.getByRole("tab", { name: "Endless" }).click();
+  await other.getByRole("button", { name: "Got it" }).click();
   await other.getByRole("button", { name: "Play #1" }).first().click();
   await other.locator("[role=gridcell]").first().waitFor();
   check((await readGrid(other.locator("[role=gridcell]"))).join("") === grid.join(""), "another player gets the same Easy #1");

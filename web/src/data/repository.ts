@@ -277,6 +277,15 @@ export class SudokuRepository {
     this.#storage.homeTab.write(tab);
   }
 
+  /** Whether the endless explainer has already popped up on this device. */
+  endlessHelpSeen(): boolean {
+    return this.#storage.endlessHelpSeen.read() ?? false;
+  }
+
+  markEndlessHelpSeen(): void {
+    this.#storage.endlessHelpSeen.write(true);
+  }
+
   /** Endless puzzle `number` of `difficulty`, or `null` until the endless seed has been fetched once. */
   endlessPuzzle(difficulty: number, number: number): EndlessPuzzle | null {
     const seed = this.#storage.endless.read()?.seed;

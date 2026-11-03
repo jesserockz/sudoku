@@ -59,6 +59,13 @@ body { padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
   padding: 8px 12px; margin-bottom: 12px;
 }
 
+.help-overlay {
+  position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center;
+  padding: 16px; background: rgb(0 0 0 / 45%);
+}
+.help-overlay .help { width: 100%; max-width: 440px; max-height: calc(100vh - 32px); overflow-y: auto; margin: 0; }
+.help-overlay .help p { margin: 0 0 10px; line-height: 1.45; }
+
 .boot { text-align: center; color: var(--muted); margin-top: 30vh; }
 
 sudoku-app { display: block; max-width: 520px; margin: 0 auto; padding: 12px 16px 32px; }

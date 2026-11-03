@@ -107,6 +107,8 @@ export class AppStorage {
   readonly endlessPending: StoredValue<EndlessResult[]>;
   /** The home page tab last shown on this device. */
   readonly homeTab: StoredValue<HomeTab>;
+  /** Set once the endless explainer has popped up on this device, so it only does so once. */
+  readonly endlessHelpSeen: StoredValue<boolean>;
 
   constructor(store: KeyValueStore) {
     this.settings = new StoredValue(store, "settings", decodeSettings);
@@ -122,6 +124,7 @@ export class AppStorage {
     this.endlessResults = new StoredValue(store, "endless-results", (j) => list(j, decodeEndlessResult));
     this.endlessPending = new StoredValue(store, "endless-pending", (j) => list(j, decodeEndlessResult));
     this.homeTab = new StoredValue(store, "home-tab", decodeHomeTab);
+    this.endlessHelpSeen = new StoredValue(store, "endless-help-seen", bool);
   }
 
   /** Forgets everything tied to the signed-in user, keeping the server URL. */
