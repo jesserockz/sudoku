@@ -1,8 +1,11 @@
 import {
-  type AdminResult, type AdminResults, type ApiError, type AppConfig, type GameResult, type Leaderboard, type Me, type MyResults,
-  type ReleaseList, type ReplayDetail, type UpdateStatus, type Week,
-  decodeAdminResult, decodeAdminResults, decodeApiError, decodeAppConfig, decodeGameResult, decodeLeaderboard, decodeMe, decodeMyResults,
-  decodeReleaseList, decodeReplayDetail, decodeUpdateStatus, decodeWeek,
+  type AdminEndlessResult, type AdminEndlessResults, type AdminResult, type AdminResults, type ApiError, type AppConfig,
+  type EndlessBoard, type EndlessInfo, type EndlessProgress, type EndlessReplayDetail, type EndlessResult, type GameResult,
+  type Leaderboard, type Me, type MyEndlessResults, type MyResults, type ReleaseList, type ReplayDetail, type UpdateStatus, type Week,
+  decodeAdminEndlessResult, decodeAdminEndlessResults, decodeAdminResult, decodeAdminResults, decodeApiError, decodeAppConfig,
+  decodeEndlessBoard, decodeEndlessInfo, decodeEndlessProgress, decodeEndlessReplayDetail, decodeEndlessResult, decodeGameResult,
+  decodeLeaderboard, decodeMe, decodeMyEndlessResults, decodeMyResults, decodeReleaseList, decodeReplayDetail, decodeUpdateStatus,
+  decodeWeek,
 } from "./models.ts";
 
 /** A non-2xx API response. `error` is the parsed error envelope, when there was one. */
@@ -26,9 +29,9 @@ export class ApiException extends Error {
  * `stored` (200, a result already existed) or `rejected` (400, failed
  * validation: final, so drop it and don't retry).
  */
-export type SubmitOutcome =
-  | { kind: "created"; result: GameResult }
-  | { kind: "stored"; result: GameResult }
+export type SubmitOutcome<T = GameResult> =
+  | { kind: "created"; result: T }
+  | { kind: "stored"; result: T }
   | { kind: "rejected"; error: ApiError | null };
 
 /**
@@ -86,10 +89,38 @@ export class SudokuApi {
     return decodeLeaderboard(await this.#get("leaderboard" + (date ? `?date=${date}` : "")));
   }
 
-  async submitResult(result: GameResult): Promise<SubmitOutcome> {
-    const response = await this.#request("POST", "results", true, result);
-    if (response.status === 201) return { kind: "created", result: decodeGameResult(await response.json()) };
-    if (response.status === 200) return { kind: "stored", result: decodeGameResult(await response.json()) };
+  submitResult(result: GameResult): Promise<SubmitOutcome> {
+    return this.#submit("results", result, decodeGameResult);
+  }
+
+  /** The seed every endless puzzle comes from. */
+  async endless(): Promise<EndlessInfo> {
+    return decodeEndlessInfo(await this.#get("endless"));
+  }
+
+  /** Every endless puzzle the caller has solved. */
+  async myEndlessResults(): Promise<MyEndlessResults> {
+    return decodeMyEndlessResults(await this.#get("me/endless"));
+  }
+
+  submitEndlessResult(result: EndlessResult): Promise<SubmitOutcome<EndlessResult>> {
+    return this.#submit("endless/results", result, decodeEndlessResult);
+  }
+
+  /** How many endless puzzles of each difficulty everyone has solved. */
+  async endlessProgress(): Promise<EndlessProgress> {
+    return decodeEndlessProgress(await this.#get("endless/leaderboard"));
+  }
+
+  /** One endless puzzle's leaderboard. */
+  async endlessBoard(difficulty: number, number: number): Promise<EndlessBoard> {
+    return decodeEndlessBoard(await this.#get(`endless/leaderboard/${difficulty}/${number}`));
+  }
+
+  async #submit<T>(path: string, result: T, decode: (json: unknown) => T): Promise<SubmitOutcome<T>> {
+    const response = await this.#request("POST", path, true, result);
+    if (response.status === 201) return { kind: "created", result: decode(await response.json()) };
+    if (response.status === 200) return { kind: "stored", result: decode(await response.json()) };
     if (response.status === 400) return { kind: "rejected", error: await errorOf(response) };
     throw new ApiException(response.status, await errorOf(response));
   }
@@ -134,6 +165,26 @@ export class SudokuApi {
     return decodeAdminResult(await this.#send("DELETE", `${resultPath(date, level, userId)}/flag`));
   }
 
+  /** Admin only: every endless result submitted on `date`, with replay checks and flags. */
+  async adminEndlessResults(date: string): Promise<AdminEndlessResults> {
+    return decodeAdminEndlessResults(await this.#get(`admin/endless/results?date=${date}`));
+  }
+
+  /** Admin only: one endless result's replay, with the puzzle's givens. */
+  async adminEndlessReplay(difficulty: number, number: number, userId: string): Promise<EndlessReplayDetail> {
+    return decodeEndlessReplayDetail(await this.#get(`${endlessResultPath(difficulty, number, userId)}/replay`));
+  }
+
+  /** Admin only: flags an endless result as suspicious, replacing any earlier flag. */
+  async flagEndlessResult(difficulty: number, number: number, userId: string, reason: string): Promise<AdminEndlessResult> {
+    return decodeAdminEndlessResult(await this.#send("PUT", `${endlessResultPath(difficulty, number, userId)}/flag`, { reason }));
+  }
+
+  /** Admin only: removes an endless result's flag. */
+  async unflagEndlessResult(difficulty: number, number: number, userId: string): Promise<AdminEndlessResult> {
+    return decodeAdminEndlessResult(await this.#send("DELETE", `${endlessResultPath(difficulty, number, userId)}/flag`));
+  }
+
   async #post(path: string, body?: unknown): Promise<UpdateStatus> {
     return decodeUpdateStatus(await this.#send("POST", path, body));
   }
@@ -173,6 +224,9 @@ export class SudokuApi {
 }
 
 const resultPath = (date: string, level: number, userId: string) => `admin/results/${date}/${level}/${encodeURIComponent(userId)}`;
+
+const endlessResultPath = (difficulty: number, number: number, userId: string) =>
+  `admin/endless/results/${difficulty}/${number}/${encodeURIComponent(userId)}`;
 
 async function errorOf(response: Response): Promise<ApiError | null> {
   try {

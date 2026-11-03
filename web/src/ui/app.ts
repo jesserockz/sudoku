@@ -1,10 +1,10 @@
-import type { AppController } from "./controller.ts";
+import type { AppController, PuzzleRef } from "./controller.ts";
 import { h } from "./dom.ts";
 import "./play.ts";
 import "./replay-screens.ts";
 import "./screens.ts";
 
-type ScreenElement = HTMLElement & { app: AppController; level?: number; update(): void };
+type ScreenElement = HTMLElement & { app: AppController; ref?: PuzzleRef; update(): void };
 
 /**
  * `<sudoku-app>`: shows the screen for the app's phase and screen, and updates
@@ -33,14 +33,17 @@ export class SudokuApp extends HTMLElement {
       ? [`sudoku-${phase.kind}`, phase.kind]
       : screen.kind === "play"
         ? ["sudoku-play", `play-${screen.level}`]
-        : [`sudoku-${screen.kind}`, screen.kind];
+        : screen.kind === "endless-play"
+          ? ["sudoku-play", `endless-play-${screen.difficulty}-${screen.number}`]
+          : [`sudoku-${screen.kind}`, screen.kind];
     if (key === this.#key && this.#screen) {
       this.#screen.update();
       return;
     }
     const next = document.createElement(tag) as ScreenElement;
     next.app = app;
-    if (screen.kind === "play") next.level = screen.level;
+    if (screen.kind === "play") next.ref = screen.level;
+    else if (screen.kind === "endless-play") next.ref = { difficulty: screen.difficulty, number: screen.number };
     // Set before swapping: the old screen may change the app as it leaves (e.g. pausing its game).
     this.#key = key;
     this.#screen = next;

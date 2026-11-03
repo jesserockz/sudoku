@@ -34,3 +34,18 @@ func TestForWeekShape(t *testing.T) {
 		t.Errorf("seeds should differ by secret and week: %s %s %s", a, b, c)
 	}
 }
+
+func TestForEndlessVectors(t *testing.T) {
+	tests := []struct{ secret, want string }{
+		{"test-secret-0123456789", "3242a2d84b0602b6"},
+		{"dev-secret-change-me", "fd31dd763bb00e2c"},
+	}
+	for _, tt := range tests {
+		if got := ForEndless([]byte(tt.secret)); got != tt.want {
+			t.Errorf("ForEndless(%q) = %q, want %q", tt.secret, got, tt.want)
+		}
+	}
+	if ForEndless([]byte("a-secret-0123456789")) == ForWeek([]byte("a-secret-0123456789"), "2026-W44") {
+		t.Error("endless seed should differ from a week seed")
+	}
+}

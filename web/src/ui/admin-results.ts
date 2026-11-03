@@ -1,6 +1,8 @@
 // The admin results page's logic, free of the DOM: a day's results by level with their replay check and
 // flag, opening one in the replay viewer, and flagging or unflagging it.
-import type { AdminResult, AdminResults, ReplayDetail } from "../api/models.ts";
+import type {
+  AdminEndlessResult, AdminEndlessResults, AdminResult, AdminResults, EndlessReplayDetail, ReplayDetail,
+} from "../api/models.ts";
 import { addDays } from "../game/calendar.ts";
 import { describeError } from "./admin.ts";
 import { ReplayViewer } from "./replay-viewer.ts";
@@ -11,20 +13,54 @@ export interface ResultsApi {
   adminReplay(date: string, level: number, userId: string): Promise<ReplayDetail>;
   flagResult(date: string, level: number, userId: string, reason: string): Promise<AdminResult>;
   unflagResult(date: string, level: number, userId: string): Promise<AdminResult>;
+  adminEndlessResults(date: string): Promise<AdminEndlessResults>;
+  adminEndlessReplay(difficulty: number, number: number, userId: string): Promise<EndlessReplayDetail>;
+  flagEndlessResult(difficulty: number, number: number, userId: string, reason: string): Promise<AdminEndlessResult>;
+  unflagEndlessResult(difficulty: number, number: number, userId: string): Promise<AdminEndlessResult>;
 }
 
-/** Which result a {@link ResultKey} names. */
-export interface ResultKey {
+/** Which list the page shows: the day's games, or the endless puzzles submitted that day. */
+export type ResultsMode = "daily" | "endless";
+
+/** Names a daily result. */
+export interface DailyResultKey {
   level: number;
   userId: string;
 }
 
-const same = (a: ResultKey, b: ResultKey) => a.level === b.level && a.userId === b.userId;
+/** Names an endless result. */
+export interface EndlessResultKey {
+  difficulty: number;
+  number: number;
+  userId: string;
+}
+
+/** Which result a key names: a daily one, or an endless one. */
+export type ResultKey = DailyResultKey | EndlessResultKey;
+
+const isEndlessKey = (k: ResultKey): k is EndlessResultKey => "difficulty" in k;
+
+const same = (a: ResultKey, b: ResultKey): boolean => {
+  if (isEndlessKey(a) || isEndlessKey(b)) {
+    return isEndlessKey(a) && isEndlessKey(b) && a.difficulty === b.difficulty && a.number === b.number && a.userId === b.userId;
+  }
+  return a.level === b.level && a.userId === b.userId;
+};
+
+const copyKey = (k: ResultKey): ResultKey =>
+  isEndlessKey(k) ? { difficulty: k.difficulty, number: k.number, userId: k.userId } : { level: k.level, userId: k.userId };
+
+/** The difficulties an endless list is grouped by. */
+export const ENDLESS_DIFFICULTIES: readonly number[] = [1, 2, 3, 4, 5];
 
 /** State of the admin results page and the replay opened from it. Fires `change` whenever anything does. */
 export class AdminResultsModel extends EventTarget {
   date: string;
+  /** Daily mode's list. */
   data: AdminResults | null = null;
+  /** Endless mode's list. */
+  endlessData: AdminEndlessResults | null = null;
+  mode: ResultsMode = "daily";
   loading = false;
   /** Loading the list failed (the message), or `null`. */
   loadError: string | null = null;
@@ -60,9 +96,21 @@ export class AdminResultsModel extends EventTarget {
     return this.data?.results.filter((r) => r.level === level) ?? [];
   }
 
+  /** The day's endless results for `difficulty`, in the server's order (by puzzle number, then fastest). */
+  endlessResultsFor(difficulty: number): AdminEndlessResult[] {
+    return this.endlessData?.results.filter((r) => r.difficulty === difficulty) ?? [];
+  }
+
   /** The listed result for `key`, if loaded. */
-  find(key: ResultKey): AdminResult | null {
-    return this.data?.results.find((r) => same(r, key)) ?? null;
+  find(key: ResultKey): AdminResult | AdminEndlessResult | null {
+    const list: (AdminResult | AdminEndlessResult)[] = (isEndlessKey(key) ? this.endlessData?.results : this.data?.results) ?? [];
+    return list.find((r) => same(r, key)) ?? null;
+  }
+
+  /** Switches between the daily and endless lists, reloading the current date's list for the new mode. */
+  setMode(mode: ResultsMode): Promise<void> {
+    this.mode = mode;
+    return this.load();
   }
 
   async load(date: string = this.date): Promise<void> {
@@ -70,11 +118,18 @@ export class AdminResultsModel extends EventTarget {
     this.date = date;
     this.loading = true;
     this.data = null;
+    this.endlessData = null;
     this.#changed();
     try {
-      const data = await this.#api.adminResults(date);
-      if (request !== this.#request) return;
-      this.data = data;
+      if (this.mode === "endless") {
+        const endless = await this.#api.adminEndlessResults(date);
+        if (request !== this.#request) return;
+        this.endlessData = endless;
+      } else {
+        const data = await this.#api.adminResults(date);
+        if (request !== this.#request) return;
+        this.data = data;
+      }
       this.loadError = null;
     } catch (e) {
       if (request !== this.#request) return;
@@ -93,12 +148,14 @@ export class AdminResultsModel extends EventTarget {
   /** Loads `key`'s replay into a fresh viewer (digits hidden). */
   async open(key: ResultKey): Promise<void> {
     this.close();
-    const opened = { level: key.level, userId: key.userId };
+    const opened = copyKey(key);
     this.opened = opened;
     this.viewerError = null;
     this.#changed();
     try {
-      const detail = await this.#api.adminReplay(this.date, key.level, key.userId);
+      const detail = isEndlessKey(key)
+        ? await this.#api.adminEndlessReplay(key.difficulty, key.number, key.userId)
+        : await this.#api.adminReplay(this.date, key.level, key.userId);
       if (this.opened !== opened) return;
       const viewer = new ReplayViewer(detail);
       // The screens listen here only.
@@ -123,21 +180,31 @@ export class AdminResultsModel extends EventTarget {
 
   /** Flags `key` as suspicious with an optional `reason`. */
   flag(key: ResultKey, reason: string): Promise<void> {
-    return this.#change(() => this.#api.flagResult(this.date, key.level, key.userId, reason.trim()));
+    const text = reason.trim();
+    return this.#change(() => isEndlessKey(key)
+      ? this.#api.flagEndlessResult(key.difficulty, key.number, key.userId, text)
+      : this.#api.flagResult(this.date, key.level, key.userId, text));
   }
 
   unflag(key: ResultKey): Promise<void> {
-    return this.#change(() => this.#api.unflagResult(this.date, key.level, key.userId));
+    return this.#change(() => isEndlessKey(key)
+      ? this.#api.unflagEndlessResult(key.difficulty, key.number, key.userId)
+      : this.#api.unflagResult(this.date, key.level, key.userId));
   }
 
-  async #change(send: () => Promise<AdminResult>): Promise<void> {
+  async #change(send: () => Promise<AdminResult | AdminEndlessResult>): Promise<void> {
     if (this.busy) return;
     this.busy = true;
     this.error = null;
     this.#changed();
     try {
       const updated = await send();
-      if (this.data) this.data = { ...this.data, results: this.data.results.map((r) => (same(r, updated) ? updated : r)) };
+      if ("difficulty" in updated) {
+        const list = this.endlessData;
+        if (list) this.endlessData = { ...list, results: list.results.map((r) => (same(r, updated) ? updated : r)) };
+      } else if (this.data) {
+        this.data = { ...this.data, results: this.data.results.map((r) => (same(r, updated) ? updated : r)) };
+      }
       const viewer = this.viewer;
       if (viewer && same(viewer.detail, updated)) viewer.detail.flag = updated.flag;
     } catch (e) {

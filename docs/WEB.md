@@ -271,6 +271,9 @@ node web/e2e/serverless-on-server.cjs http://localhost:8080 dev-secret-change-me
 `web/e2e/replay.cjs` checks replays and the admin tools the same way, against
 a server started with `SUDOKU_ADMIN_CLAIM=sub SUDOKU_ADMIN_VALUES=ann` and an
 empty database: `node web/e2e/replay.cjs http://localhost:8080 [screenshot dir]`.
+`web/e2e/endless.cjs` (same server, any database) plays and submits an endless
+puzzle with a reload part way, and checks the tab, the leaderboards, that a
+second player gets the same puzzle and the admin list.
 
 The first signs in, goes offline and reloads, solves a puzzle offline, checks
 the result reaches `GET /api/v1/me/results` once back online, and covers the
@@ -341,11 +344,50 @@ In dev auth mode the app instead asks for a user id and display name and sends
   records them (`AppController.update` with the action, `log` for actions that
   don't change the board); `Game` only keeps the list. A replay over the
   server's 10000-event cap is left out, and the result is then flagged.
+- **Endless** (with a server; the home page's second tab, next to **Daily**):
+  see [Endless puzzles](#endless-puzzles).
 - **Leaderboard**: total and per-puzzle boards with shared ranks, plus each
   player's progress (e.g. 3/5), for today and the previous 8 days. Online
   only; offline it says so, and it loads once the connection is back. Results
   an admin flagged (including by confirming the server's automatic flag) carry
   a red "suspicious" marker.
+
+## Endless puzzles
+
+With a server, the home page has two tabs, **Daily** (the day's games, as
+above) and **Endless**; the one last shown is remembered on the device
+(`home-tab` in `localStorage`). The tab's name is `ENDLESS_LABEL` in
+`src/ui/controller.ts`.
+
+Endless puzzles are numbered from 1 within each of the five difficulty tiers,
+with no upper limit (up to 2^53 - 1, so numbers stay exact in JSON). Puzzle
+`n` of a tier comes from the server's endless seed (fetched once with
+`GET /api/v1/endless` and kept, as it never changes), the tier and `n`:
+`generateEndless(seed, tier, n)` in `src/generator/generator.ts`, the daily
+generator with its own seed derivation (a separate domain constant, so no
+endless puzzle shares a daily one's seed). The goldens in
+`test/generator.test.ts` are the same vectors as the server's Go port, so
+everyone gets the same puzzles and the server can check their replays.
+
+- **The tab** lists each tier with how many the player has solved (and the
+  highest number, when there are gaps) and a button for the lowest number not
+  solved yet ("Play #13", or "Resume #13"). Other games in progress are linked
+  under it. **Open a puzzle** picks any tier and number.
+- **Playing** works exactly as for dailies: games are saved on every move
+  (`endless-games`) and resume after a reload, replays are recorded, and a
+  solved puzzle's result is queued (`endless-pending`) and uploaded with
+  `POST /api/v1/endless/results` whenever the server is reachable. Finished
+  games are dropped from storage once `GET /api/v1/me/endless` has them. A
+  number solved on another device opens its leaderboard instead.
+- **Leaderboard**: per tier, everyone's count of solved puzzles and highest
+  number (ties share a rank), and any one puzzle's times, with Prev and Next
+  by number. Admin flags show the same "suspicious" marker as on the daily
+  boards.
+- **Admin**: Results and replays has a Daily / Endless switch; endless results
+  are listed by the day they were submitted, under their tier, and open,
+  flag and unflag like daily ones.
+
+Endless needs a server, so seed play has no Endless tab.
 
 ## Serverless play (a shared seed)
 

@@ -1,13 +1,30 @@
 import { type Fetch, SudokuApi, type TokenProvider, devToken } from "../api/client.ts";
-import { type AppConfig, type DayResult, type GameResult, type Leaderboard, type Me, type OidcConfig, type Week, weekPuzzles } from "../api/models.ts";
+import {
+  type AppConfig, type DayResult, type EndlessBoard, type EndlessProgress, type EndlessResult, type GameResult, type Leaderboard, type Me,
+  type OidcConfig, type Week, weekPuzzles,
+} from "../api/models.ts";
 import { OidcClient, TokenSession, type TokenResponse, createPkce } from "../api/oidc.ts";
 import { formatTimestamp, inWeek, today } from "../game/calendar.ts";
 import { Game } from "../game/game.ts";
 import { MAX_REPLAY_EVENTS, REPLAY_VERSION } from "../game/replay.ts";
-import type { Puzzle } from "../generator/generator.ts";
-import { type AppStorage, type Settings, gameKey } from "./app-storage.ts";
+import { type EndlessPuzzle, type Puzzle, generateEndless } from "../generator/generator.ts";
+import { parseWeekSeed } from "../generator/week-seed.ts";
+import { type AppStorage, type HomeTab, type Settings, endlessGameKey, gameKey } from "./app-storage.ts";
 import { randomToken } from "./crypto.ts";
-import { type FlushReport, ResultSync } from "./result-sync.ts";
+import { type FlushReport, ResultSync, dailyKey, endlessKey } from "./result-sync.ts";
+
+/** A solved endless puzzle. `synced` is false while its result waits in the offline queue. */
+export interface EndlessSolved {
+  elapsedMs: number;
+  synced: boolean;
+}
+
+/** An endless game started on this device and not solved yet. */
+export interface EndlessInProgress {
+  difficulty: number;
+  number: number;
+  elapsedMs: number;
+}
 
 /** Sign-in failed; the message is fit to show. */
 export class SignInError extends Error {}
@@ -30,6 +47,7 @@ export function normalizeUrl(url: string): string {
  */
 export class SudokuRepository {
   readonly sync: ResultSync;
+  readonly endlessSync: ResultSync<EndlessResult>;
   readonly tokens: TokenProvider;
   readonly #storage: AppStorage;
   /** Where the identity provider sends the browser back to after sign-in. */
@@ -41,6 +59,7 @@ export class SudokuRepository {
   #api: { url: string; api: SudokuApi } | null = null;
   #oidc: { key: string; client: OidcClient } | null = null;
   #puzzleCache: { key: string; puzzles: Puzzle[] } | null = null;
+  #endlessCache: { key: string; puzzle: EndlessPuzzle } | null = null;
 
   constructor(
     storage: AppStorage,
@@ -70,7 +89,8 @@ export class SudokuRepository {
       if (s.oidc) return this.#session.token(rejected);
       return null;
     };
-    this.sync = new ResultSync(storage.pending, (r) => this.#client().submitResult(r));
+    this.sync = new ResultSync(storage.pending, (r) => this.#client().submitResult(r), dailyKey);
+    this.endlessSync = new ResultSync(storage.endlessPending, (r) => this.#client().submitEndlessResult(r), endlessKey);
   }
 
   settings(): Settings {
@@ -221,22 +241,102 @@ export class SudokuRepository {
 
   /**
    * Brings local state up to date with the server: identity, the current week
-   * (replacing the cached one), queued results, and today's results. Network
-   * and HTTP failures propagate; queued results stay queued.
+   * (replacing the cached one), the endless seed (once), queued results, and
+   * today's and the endless results. Network and HTTP failures propagate;
+   * queued results stay queued.
    */
-  async refresh(): Promise<FlushReport> {
+  async refresh(): Promise<FlushReport<GameResult | EndlessResult>> {
     const api = this.#client();
     this.#storage.me.write(await api.me());
     this.#storeWeek(await api.week());
     const report = await this.sync.flush();
     const mine = await api.myResults(this.today());
     this.#storage.serverResults.write({ [mine.date]: mine.results });
-    return report;
+    if (!this.#storage.endless.read()) this.#storage.endless.write(await api.endless());
+    const endless = await this.endlessSync.flush();
+    this.#storeEndlessResults((await api.myEndlessResults()).results);
+    return {
+      accepted: [...report.accepted, ...endless.accepted],
+      rejected: [...report.rejected, ...endless.rejected],
+      remaining: [...report.remaining, ...endless.remaining],
+      failure: report.failure ?? endless.failure,
+    };
   }
 
   /** Uploads queued results only. */
   flush(): Promise<FlushReport> {
     return this.sync.flush();
+  }
+
+  /** The home page tab last shown on this device. */
+  homeTab(): HomeTab {
+    return this.#storage.homeTab.read() ?? "daily";
+  }
+
+  setHomeTab(tab: HomeTab): void {
+    this.#storage.homeTab.write(tab);
+  }
+
+  /** Endless puzzle `number` of `difficulty`, or `null` until the endless seed has been fetched once. */
+  endlessPuzzle(difficulty: number, number: number): EndlessPuzzle | null {
+    const seed = this.#storage.endless.read()?.seed;
+    if (!seed) return null;
+    const key = JSON.stringify([seed, difficulty, number]);
+    if (this.#endlessCache?.key !== key) this.#endlessCache = { key, puzzle: generateEndless(parseWeekSeed(seed), difficulty, number) };
+    return this.#endlessCache.puzzle;
+  }
+
+  /** Every solved endless puzzle, by {@link endlessGameKey}: the server's record, then the offline queue. */
+  endlessSolved(): Map<string, EndlessSolved> {
+    const solved = new Map<string, EndlessSolved>();
+    for (const r of this.endlessSync.pending()) solved.set(endlessKey(r), { elapsedMs: r.elapsedMs, synced: false });
+    for (const r of this.#storage.endlessResults.read() ?? []) solved.set(endlessKey(r), { elapsedMs: r.elapsedMs, synced: true });
+    return solved;
+  }
+
+  /** Endless games started on this device and not solved yet, by difficulty then number. */
+  endlessInProgress(): EndlessInProgress[] {
+    return Object.entries(this.#storage.endlessGames.read() ?? {})
+      .filter(([, g]) => !g.completed)
+      .map(([key, g]) => {
+        const [difficulty, number] = key.split("/").map(Number) as [number, number];
+        return { difficulty, number, elapsedMs: g.elapsedMs };
+      })
+      .sort((a, b) => a.difficulty - b.difficulty || a.number - b.number);
+  }
+
+  /** A saved game for an endless puzzle, if it still matches the puzzle. */
+  loadEndlessGame(puzzle: EndlessPuzzle): Game | null {
+    const saved = this.#storage.endlessGames.read()?.[endlessGameKey(puzzle.tier, puzzle.number)];
+    return saved && saved.givens === puzzle.givens ? Game.restore(saved) : null;
+  }
+
+  saveEndlessGame(difficulty: number, number: number, game: Game, nowMs: number): void {
+    this.#storage.endlessGames.update((games) => ({ ...games, [endlessGameKey(difficulty, number)]: game.save(nowMs) }));
+  }
+
+  /** Queues the result of a just-finished endless game. */
+  async completeEndless(difficulty: number, number: number, game: Game): Promise<EndlessResult> {
+    if (game.completedElapsedMs === null) throw new Error("game isn't complete");
+    const result: EndlessResult = { difficulty, number, elapsedMs: game.completedElapsedMs, completedAt: formatTimestamp(this.#now()) };
+    if (game.replay.length <= MAX_REPLAY_EVENTS) result.replay = { version: REPLAY_VERSION, events: game.replay.slice() };
+    await this.endlessSync.enqueue(result);
+    return result;
+  }
+
+  endlessProgress(): Promise<EndlessProgress> {
+    return this.#client().endlessProgress();
+  }
+
+  endlessBoard(difficulty: number, number: number): Promise<EndlessBoard> {
+    return this.#client().endlessBoard(difficulty, number);
+  }
+
+  /** Keeps the server's endless results, and drops finished games it has: they'd otherwise pile up forever. */
+  #storeEndlessResults(results: EndlessResult[]): void {
+    this.#storage.endlessResults.write(results);
+    const done = new Set(results.map(endlessKey));
+    this.#storage.endlessGames.update((games) => games && Object.fromEntries(Object.entries(games).filter(([k, g]) => !(g.completed && done.has(k)))));
   }
 
   pending(): GameResult[] {

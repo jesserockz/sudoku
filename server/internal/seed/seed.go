@@ -15,3 +15,12 @@ func ForWeek(secret []byte, isoWeek string) string {
 	mac.Write([]byte("sudoku-week:" + isoWeek))
 	return hex.EncodeToString(mac.Sum(nil)[:8])
 }
+
+// ForEndless returns HMAC-SHA256(secret, "sudoku-endless"), truncated to the
+// first 8 bytes, as 16 lowercase hex characters: the seed of every endless
+// puzzle. It never changes for a given secret.
+func ForEndless(secret []byte) string {
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte("sudoku-endless"))
+	return hex.EncodeToString(mac.Sum(nil)[:8])
+}

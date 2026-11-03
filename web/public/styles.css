@@ -208,6 +208,11 @@ sudoku-play > header.bar { flex: none; margin-bottom: 0; }
 /* Leaderboard */
 .tabs { display: flex; gap: 4px; overflow-x: auto; margin-bottom: 12px; padding-bottom: 2px; }
 .tabs button { flex: 0 0 auto; padding: 6px 12px; min-height: 36px; font-size: 0.9rem; }
+.home-tabs { margin: 0 0 12px; }
+.home-tabs button { flex: 1 1 0; }
+.puzzles .status.in-progress button.link { padding: 0 4px; min-height: 0; font-size: inherit; }
+form.login.endless-open select { width: auto; flex: none; }
+form.login.endless-open input { width: auto; }
 .date-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 table.board-table { width: 100%; border-collapse: collapse; }
 table.board-table td { padding: 8px 4px; border-bottom: 1px solid var(--line); }

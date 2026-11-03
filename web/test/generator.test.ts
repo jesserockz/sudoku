@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { countSolutions, solve } from "../src/generator/solver.ts";
 import {
-  DEFAULT_LEVELS, GENERATOR_VERSION, MAX_LEVELS, difficultyFor, generate, generateDay, puzzleSeed, puzzleTitle,
+  DEFAULT_LEVELS, DIFFICULTIES, GENERATOR_VERSION, MAX_ENDLESS_NUMBER, MAX_LEVELS, difficultyFor, endlessPuzzleSeed, endlessTitle,
+  generate, generateDay, generateEndless, isEndlessNumber, puzzleSeed, puzzleTitle,
 } from "../src/generator/generator.ts";
+import { Board } from "../src/core/board.ts";
 import { SplitMix64, Xoshiro256StarStar } from "../src/generator/random.ts";
 import { formatWeekSeed, parseWeekSeed } from "../src/generator/week-seed.ts";
 
@@ -111,4 +113,44 @@ test("levels spread across the tiers", () => {
 test("games sharing a tier get different puzzles", () => {
   const day = generateDay(parseWeekSeed("9f2c4a1b7e30d5c8"), 1, 10);
   assert.equal(new Set(day.map((p) => p.givens)).size, 10);
+});
+
+// Endless goldens: the server's Go port (server/internal/puzzle) is pinned to these same vectors.
+const endlessGoldens: [string, number, number, string, string, string][] = [
+  ["9f2c4a1b7e30d5c8", 1, 1, "45e399388c9d16e9", "608007201942051768000862490203700080871600520050080000060120005007040030020000046", "638497251942351768715862493293715684871634529456289317364128975587946132129573846"],
+  ["9f2c4a1b7e30d5c8", 5, 1, "0e552db1aa008165", "000006004310400000000501002000200038700060040000008006520600000003000000008190700", "259786314316429857847531692694217538782365149135948276521674983973852461468193725"],
+  ["0123456789abcdef", 3, 2, "e1e47b90e6f7744f", "090010000516002070000507000000041060003009204041600700300100800000780032085300107", "792418653516932478834567921978241365653879214241653789327195846169784532485326197"],
+  ["0123456789abcdef", 2, 1000000, "91861766ec2934e3", "090000034538004206000300708000146903316090000984000002460089307700060020000001600", "197628534538974216642315798275146983316892475984537162461289357759463821823751649"],
+  ["ffffffffffffffff", 4, 9007199254740991, "494cf19e7268c89e", "800005010007000004030000090004150002701409060600800000003200000100008320078010600", "862945713917623584435781296384156972721439865659872431593267148146598327278314659"],
+];
+
+test("golden endless puzzles", () => {
+  for (const [seed, tier, number, puzzleSeedHex, givens, solution] of endlessGoldens) {
+    const at = `${seed} difficulty ${tier} #${number}`;
+    assert.equal(formatWeekSeed(endlessPuzzleSeed(parseWeekSeed(seed), tier, number)), puzzleSeedHex, `seed for ${at}`);
+    const p = generateEndless(parseWeekSeed(seed), tier, number);
+    assert.equal(p.givens, givens, `givens for ${at}`);
+    assert.equal(p.solution, solution, `solution for ${at}`);
+    assert.equal(p.difficulty, DIFFICULTIES[tier - 1]);
+    assert.equal(p.number, number);
+    assert.ok(p.givenCount >= p.difficulty.targetGivens);
+    assert.equal(p.board().get(0), Board.parse(givens).get(0));
+  }
+  assert.equal(generateEndless(parseWeekSeed("9f2c4a1b7e30d5c8"), 3, 12).title, "Hard #12");
+  assert.equal(endlessTitle(5, 1), "Diabolical #1");
+});
+
+test("endless puzzles never repeat a daily one's seed", () => {
+  const seed = parseWeekSeed("9f2c4a1b7e30d5c8");
+  const daily = new Set<bigint>();
+  for (let day = 1; day <= 7; day++) for (let level = 1; level <= MAX_LEVELS; level++) daily.add(puzzleSeed(seed, day, level));
+  for (let tier = 1; tier <= 5; tier++) for (let n = 1; n <= 10; n++) assert.ok(!daily.has(endlessPuzzleSeed(seed, tier, n)));
+});
+
+test("endless arguments are checked", () => {
+  const seed = parseWeekSeed("9f2c4a1b7e30d5c8");
+  for (const tier of [0, 6, 1.5]) assert.throws(() => generateEndless(seed, tier, 1), RangeError);
+  for (const n of [0, -1, 1.5, MAX_ENDLESS_NUMBER + 1]) assert.throws(() => generateEndless(seed, 1, n), RangeError);
+  assert.equal(isEndlessNumber(MAX_ENDLESS_NUMBER), true);
+  assert.equal(isEndlessNumber(0), false);
 });

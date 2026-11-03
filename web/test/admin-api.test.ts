@@ -88,3 +88,32 @@ test("the repository hands out the signed-in client", async () => {
   assert.equal(repo.me()!.admin, true);
   assert.equal((await repo.api().adminUpdateStatus()).state, "idle");
 });
+
+test("the client calls the admin endless endpoints", async () => {
+  const row = {
+    userId: "u/1", displayName: "Una", difficulty: 2, number: 7, elapsedMs: 5000, completedAt: "c", submittedAt: "s",
+    replay: "valid", replayError: "", flag: null,
+  };
+  const server = new FakeServer(() => 0);
+  server.admin = true;
+  server.adminEndlessList = { date: "2026-10-27", results: [row] };
+  server.adminEndlessReplayDetail = { ...row, givens: "0".repeat(81), events: [] };
+  server.adminEndlessFlagResult = row;
+  const c = api(server);
+
+  assert.equal((await c.adminEndlessResults("2026-10-27")).results[0]!.number, 7);
+  assert.equal((await c.adminEndlessReplay(2, 7, "u/1")).events.length, 0);
+  assert.equal((await c.flagEndlessResult(2, 7, "u/1", "odd")).difficulty, 2);
+  assert.equal((await c.unflagEndlessResult(2, 7, "u/1")).userId, "u/1");
+  const sent = server.requests.filter((r) => r.url.pathname.startsWith("/api/v1/admin/endless"));
+  assert.deepEqual(sent.map((r) => [r.method, r.url.pathname + r.url.search]), [
+    ["GET", "/api/v1/admin/endless/results?date=2026-10-27"],
+    ["GET", "/api/v1/admin/endless/results/2/7/u%2F1/replay"],
+    ["PUT", "/api/v1/admin/endless/results/2/7/u%2F1/flag"],
+    ["DELETE", "/api/v1/admin/endless/results/2/7/u%2F1/flag"],
+  ]);
+  assert.deepEqual(JSON.parse(sent[2]!.body), { reason: "odd" });
+
+  server.admin = false;
+  await assert.rejects(c.adminEndlessResults("2026-10-27"), (e: unknown) => e instanceof ApiException && e.status === 403);
+});

@@ -52,11 +52,18 @@ func toAdminResultJSON(r store.AdminResult) adminResultJSON {
 		Replay:      r.ReplayStatus,
 		ReplayError: r.ReplayError,
 	}
-	if f := r.Flag; f != nil {
-		out.Flag = &flagJSON{Reason: f.Reason, Auto: f.Auto, FlaggedAt: f.At}
-		if f.By != nil {
-			out.Flag.FlaggedBy = &flaggedByJSON{UserID: userID(f.By.ID), DisplayName: f.By.DisplayName}
-		}
+	out.Flag = toFlagJSON(r.Flag)
+	return out
+}
+
+// toFlagJSON is the API form of a flag, or nil for none.
+func toFlagJSON(f *store.Flag) *flagJSON {
+	if f == nil {
+		return nil
+	}
+	out := &flagJSON{Reason: f.Reason, Auto: f.Auto, FlaggedAt: f.At}
+	if f.By != nil {
+		out.FlaggedBy = &flaggedByJSON{UserID: userID(f.By.ID), DisplayName: f.By.DisplayName}
 	}
 	return out
 }

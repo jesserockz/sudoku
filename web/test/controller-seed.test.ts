@@ -24,7 +24,7 @@ function host(hash = ""): Host {
   };
 }
 
-const fakeRepo = (isSignedIn = false) => ({ isSignedIn, today: () => "2026-10-27" }) as unknown as SudokuRepository;
+const fakeRepo = (isSignedIn = false) => ({ isSignedIn, today: () => "2026-10-27", homeTab: () => "daily" }) as unknown as SudokuRepository;
 const shareHash = (seed: string): string => "#" + buildShareLink("http://localhost/", s(seed)).split("#")[1];
 const settled = () => new Promise<void>((resolve) => setImmediate(resolve));
 

@@ -81,7 +81,7 @@ function controller(reloadPage: () => void): AppController {
     wallMs: () => 0,
     reloadPage,
   };
-  const repo = { isSignedIn: false, today: () => "2026-10-27" } as unknown as SudokuRepository;
+  const repo = { isSignedIn: false, today: () => "2026-10-27", homeTab: () => "daily" } as unknown as SudokuRepository;
   return new AppController(repo, new SeedRepository(new MemoryStore()), host);
 }
 
