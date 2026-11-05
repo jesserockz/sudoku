@@ -1,6 +1,6 @@
 import {
-  type DayResult, type EndlessInfo, type EndlessResult, type GameResult, type Me, type OidcConfig, type Week,
-  decodeDayResult, decodeEndlessInfo, decodeEndlessResult, decodeGameResult, decodeMe, decodeOidcConfig, decodeWeek,
+  type DayResult, type EndlessInfo, type EndlessResult, type GameResult, type Me, type OidcConfig, type Streak, type Week,
+  decodeDayResult, decodeEndlessInfo, decodeEndlessResult, decodeGameResult, decodeMe, decodeOidcConfig, decodeStreak, decodeWeek,
 } from "../api/models.ts";
 import type { SavedGame } from "../game/game.ts";
 import { decodeReplayEvent } from "../game/replay.ts";
@@ -105,6 +105,8 @@ export class AppStorage {
   readonly endlessResults: StoredValue<EndlessResult[]>;
   /** The offline queue of endless results. */
   readonly endlessPending: StoredValue<EndlessResult[]>;
+  /** The user's last known daily streak, so the home page shows it offline and after a reload. */
+  readonly streak: StoredValue<Streak>;
   /** The home page tab last shown on this device. */
   readonly homeTab: StoredValue<HomeTab>;
   /** Set once the endless explainer has popped up on this device, so it only does so once. */
@@ -123,6 +125,7 @@ export class AppStorage {
     this.endlessGames = new StoredValue(store, "endless-games", (j) => record(j, decodeSavedGame));
     this.endlessResults = new StoredValue(store, "endless-results", (j) => list(j, decodeEndlessResult));
     this.endlessPending = new StoredValue(store, "endless-pending", (j) => list(j, decodeEndlessResult));
+    this.streak = new StoredValue(store, "streak", decodeStreak);
     this.homeTab = new StoredValue(store, "home-tab", decodeHomeTab);
     this.endlessHelpSeen = new StoredValue(store, "endless-help-seen", bool);
   }
@@ -143,5 +146,6 @@ export class AppStorage {
     this.endlessGames.write(null);
     this.endlessResults.write(null);
     this.endlessPending.write(null);
+    this.streak.write(null);
   }
 }

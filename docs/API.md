@@ -193,8 +193,8 @@ Defaults to today.
     ]
   },
   "players": [
-    { "userId": "alice", "displayName": "Alice", "completedLevels": [1, 2, 3] },
-    { "userId": "bob", "displayName": "Bob", "completedLevels": [1, 2, 3, 4, 5] }
+    { "userId": "alice", "displayName": "Alice", "completedLevels": [1, 2, 3], "streak": 4 },
+    { "userId": "bob", "displayName": "Bob", "completedLevels": [1, 2, 3, 4, 5], "streak": 1 }
   ]
 }
 ```
@@ -203,6 +203,7 @@ Defaults to today.
 - Entries are sorted by time ascending. **Ties share a rank** with no tiebreaker, using standard competition ranking (1, 2, 2, 4). Entries with equal time are ordered by `displayName` for stable display only.
 - `total` includes only users who completed **all five** levels that day.
 - `players` lists every user with at least one result that day, so clients can show partial progress (e.g. 3 of 5).
+- Each `players` item has `"streak": n`: the player's [daily streak](#get-apiv1mestats) as of the board's date, i.e. the number of consecutive days, ending on `date`, on which they had a counting result. It is 0 when none of their results on `date` counts (for instance, an admin flagged them all), and on today's board it equals their current streak. Older servers don't send it; clients treat a missing value as 0.
 - Every puzzle and total entry also has `"suspicious": true|false`: `true` when an admin flagged that result (the server's own automatic flags don't count until an admin confirms one), or for a total entry, any of the player's results that day. Flagged results stay listed and ranked like any other; clients show a visible marker on them. Who flagged a result and why is only shown to admins.
 
 ### `GET /api/v1/endless`
@@ -224,6 +225,39 @@ All of the caller's endless results, ordered by difficulty then number. Lets a f
   ]
 }
 ```
+
+### `GET /api/v1/me/stats`
+
+The caller's streak and personal statistics, for the Stats screen.
+
+```json
+{
+  "today": "2026-11-05",
+  "streak": { "current": 4, "best": 12, "lastDate": "2026-11-05" },
+  "daily": [
+    {
+      "difficulty": 1,
+      "completed": 30,
+      "bestMs": 95000,
+      "averageMs": 140250,
+      "recent": [{ "date": "2026-11-04", "level": 1, "elapsedMs": 150000 }]
+    }
+  ],
+  "endless": [
+    { "difficulty": 1, "completed": 12, "highest": 14, "bestMs": 120000, "averageMs": 180000 }
+  ]
+}
+```
+
+- `today` is today's game date in the server's timezone, as in `GET /api/v1/week`.
+- **Streak**, across all difficulties. A day counts when the caller has at least one daily result on that game date (any level) that is not flagged by an admin. The server's own automatic flags don't stop a day counting, since they are admin-only until confirmed and can be false positives; an admin flag, including a confirmed automatic one, does. Days are the stored game dates, so day boundaries match the daily puzzle, and consecutive means consecutive calendar days.
+  - `current` is the number of consecutive counting days ending today, or ending yesterday when today has no counting result yet (today isn't over). Otherwise it is 0.
+  - `best` is the longest run of consecutive counting days ever, and is never less than `current`.
+  - `lastDate` is the latest counting date, or `null` when there is none.
+- `daily` always has five entries, `difficulty` 1 (Easy) to 5 (Diabolical) in order. A daily result's difficulty is the tier of its level given the number of games on its day (the level schedule for that date's ISO week, see `levels` in `GET /api/v1/week`), the same mapping as for the endless tiers. It counts all of the caller's daily results, flagged or not: it is their own record.
+  - `completed` is the number of results; `bestMs` is the fastest and `averageMs` the mean rounded to the nearest millisecond. Both are `null` when `completed` is 0.
+  - `recent` is the caller's 20 most recent results of that difficulty, by date and then level, oldest first. It is empty when there are none.
+- `endless` always has five entries, `difficulty` 1 to 5 in order. `completed` is the number of puzzles solved, `highest` the highest puzzle number solved (0 when none), and `bestMs` and `averageMs` as above (`null` when none).
 
 ### `POST /api/v1/endless/results`
 

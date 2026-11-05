@@ -126,7 +126,41 @@ export interface Leaderboard {
   date: string;
   puzzles: { level: number; entries: { rank: number; userId: string; displayName: string; elapsedMs: number; suspicious: boolean }[] }[];
   total: { entries: { rank: number; userId: string; displayName: string; totalMs: number; suspicious: boolean }[] };
-  players: { userId: string; displayName: string; completedLevels: number[] }[];
+  /** `players[].streak` is that player's streak as of the board's date (older servers don't send it: 0). */
+  players: { userId: string; displayName: string; completedLevels: number[]; streak: number }[];
+}
+
+/** The daily streak: consecutive days with a counting result. `lastDate` is `null` when there is none. */
+export interface Streak {
+  current: number;
+  best: number;
+  lastDate: string | null;
+}
+
+/** One difficulty of the daily stats. `bestMs` and `averageMs` are `null` when nothing is solved. `recent` is oldest first. */
+export interface DailyStat {
+  difficulty: number;
+  completed: number;
+  bestMs: number | null;
+  averageMs: number | null;
+  recent: { date: string; level: number; elapsedMs: number }[];
+}
+
+/** One difficulty of the endless stats. `highest` is 0 when nothing is solved. */
+export interface EndlessStat {
+  difficulty: number;
+  completed: number;
+  highest: number;
+  bestMs: number | null;
+  averageMs: number | null;
+}
+
+/** `GET /api/v1/me/stats` */
+export interface MyStats {
+  today: string;
+  streak: Streak;
+  daily: DailyStat[];
+  endless: EndlessStat[];
 }
 
 /** How a result's replay checked out on submission (`none`: submitted before the server kept replays). */
@@ -446,8 +480,41 @@ export function decodeLeaderboard(json: unknown): Leaderboard {
     },
     players: list(o.players, (p) => {
       const x = obj(p);
-      return { userId: str(x.userId), displayName: str(x.displayName), completedLevels: list(x.completedLevels, num) };
+      return {
+        userId: str(x.userId), displayName: str(x.displayName), completedLevels: list(x.completedLevels, num),
+        streak: optional(x.streak, num) ?? 0,
+      };
     }),
   };
 }
 
+
+export function decodeStreak(json: unknown): Streak {
+  const o = obj(json);
+  return { current: num(o.current), best: num(o.best), lastDate: optional(o.lastDate, date) };
+}
+
+export function decodeMyStats(json: unknown): MyStats {
+  const o = obj(json);
+  return {
+    today: date(o.today),
+    streak: decodeStreak(o.streak),
+    daily: list(o.daily, (d) => {
+      const x = obj(d);
+      return {
+        difficulty: num(x.difficulty), completed: num(x.completed), bestMs: optional(x.bestMs, num), averageMs: optional(x.averageMs, num),
+        recent: list(x.recent, (r) => {
+          const y = obj(r);
+          return { date: date(y.date), level: num(y.level), elapsedMs: num(y.elapsedMs) };
+        }),
+      };
+    }),
+    endless: list(o.endless, (d) => {
+      const x = obj(d);
+      return {
+        difficulty: num(x.difficulty), completed: num(x.completed), highest: num(x.highest),
+        bestMs: optional(x.bestMs, num), averageMs: optional(x.averageMs, num),
+      };
+    }),
+  };
+}

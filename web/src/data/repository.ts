@@ -1,7 +1,7 @@
 import { type Fetch, SudokuApi, type TokenProvider, devToken } from "../api/client.ts";
 import {
   type AppConfig, type DayResult, type EndlessBoard, type EndlessProgress, type EndlessResult, type GameResult, type Leaderboard, type Me,
-  type OidcConfig, type Week, weekPuzzles,
+  type MyStats, type OidcConfig, type Streak, type Week, weekPuzzles,
 } from "../api/models.ts";
 import { OidcClient, TokenSession, type TokenResponse, createPkce } from "../api/oidc.ts";
 import { formatTimestamp, inWeek, today } from "../game/calendar.ts";
@@ -248,6 +248,21 @@ export class SudokuRepository implements EndlessSource {
       remaining: [...report.remaining, ...endless.remaining],
       failure: report.failure ?? endless.failure,
     };
+  }
+
+  /**
+   * Fetches the user's stats and keeps the streak for offline. Network and HTTP failures propagate (the stored
+   * streak is left as it was). A separate call from {@link refresh}: stats are nice to have and must not fail a sync.
+   */
+  async fetchStats(): Promise<MyStats> {
+    const stats = await this.#client().myStats();
+    this.#storage.streak.write(stats.streak);
+    return stats;
+  }
+
+  /** The last streak fetched, or `null` when none is known. */
+  streak(): Streak | null {
+    return this.#storage.streak.read();
   }
 
   /** Uploads queued results only. */

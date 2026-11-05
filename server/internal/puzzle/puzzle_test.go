@@ -245,6 +245,24 @@ func TestDifficultyFor(t *testing.T) {
 	}
 }
 
+func TestTierFor(t *testing.T) {
+	for _, levels := range []int{1, 3, 5, 7, 10} {
+		for l := 1; l <= levels; l++ {
+			n, err := TierFor(l, levels)
+			if err != nil {
+				t.Fatal(err)
+			}
+			name, _, _ := DifficultyFor(l, levels)
+			if difficulties[n-1].name != name {
+				t.Errorf("TierFor(%d, %d) = %d (%s), want %s", l, levels, n, difficulties[n-1].name, name)
+			}
+		}
+	}
+	if _, err := TierFor(6, 5); err == nil {
+		t.Error("level above levels accepted")
+	}
+}
+
 func TestArgumentErrors(t *testing.T) {
 	tests := []struct {
 		name               string

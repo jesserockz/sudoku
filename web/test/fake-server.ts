@@ -21,6 +21,23 @@ export class FakeServer {
   /** When set, the endless leaderboard endpoints wait for this promise before answering. */
   endlessBoardGate: Promise<void> | null = null;
   levels = 5;
+  /** Answer to `GET /me/stats`; `statsStatus` makes it fail instead, and `statsGate` holds the answer back. */
+  stats: unknown = {
+    today: "2026-10-27",
+    streak: { current: 4, best: 12, lastDate: "2026-10-27" },
+    daily: [1, 2, 3, 4, 5].map((difficulty) => ({
+      difficulty, completed: difficulty === 1 ? 3 : 0, bestMs: difficulty === 1 ? 90000 : null, averageMs: difficulty === 1 ? 120000 : null,
+      recent: difficulty === 1 ? [{ date: "2026-10-25", level: 1, elapsedMs: 150000 }, { date: "2026-10-26", level: 1, elapsedMs: 90000 }] : [],
+    })),
+    endless: [1, 2, 3, 4, 5].map((difficulty) => ({
+      difficulty, completed: difficulty === 1 ? 2 : 0, highest: difficulty === 1 ? 5 : 0,
+      bestMs: difficulty === 1 ? 60000 : null, averageMs: difficulty === 1 ? 70000 : null,
+    })),
+  };
+  statsStatus: number | null = null;
+  statsGate: Promise<void> | null = null;
+  /** The leaderboard's `players`. */
+  leaderboardPlayers: unknown[] = [];
   /** Whether `/me` reports the user as an admin; when false the admin endpoints answer 403. */
   admin: boolean | undefined = undefined;
   /** Answer to the admin endpoints, as the server would give them. */
@@ -200,7 +217,11 @@ export class FakeServer {
           }),
         });
       case "/api/v1/leaderboard":
-        return json({ date: r.url.searchParams.get("date"), puzzles: [], total: { entries: [] }, players: [] });
+        return json({ date: r.url.searchParams.get("date"), puzzles: [], total: { entries: [] }, players: this.leaderboardPlayers });
+      case "/api/v1/me/stats":
+        await this.statsGate;
+        if (this.statsStatus !== null) return json({ error: { code: "boom", message: "stats broke" } }, this.statsStatus);
+        return json(this.stats);
     }
     return json({ error: { code: "not_found", message: "" } }, 404);
   }

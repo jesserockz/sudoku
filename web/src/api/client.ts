@@ -1,10 +1,10 @@
 import {
   type AdminEndlessResult, type AdminEndlessResults, type AdminResult, type AdminResults, type ApiError, type AppConfig,
   type EndlessBoard, type EndlessInfo, type EndlessProgress, type EndlessReplayDetail, type EndlessResult, type GameResult,
-  type Leaderboard, type Me, type MyEndlessResults, type MyResults, type ReleaseList, type ReplayDetail, type UpdateStatus, type Week,
+  type Leaderboard, type Me, type MyEndlessResults, type MyResults, type MyStats, type ReleaseList, type ReplayDetail, type UpdateStatus, type Week,
   decodeAdminEndlessResult, decodeAdminEndlessResults, decodeAdminResult, decodeAdminResults, decodeApiError, decodeAppConfig,
   decodeEndlessBoard, decodeEndlessInfo, decodeEndlessProgress, decodeEndlessReplayDetail, decodeEndlessResult, decodeGameResult,
-  decodeLeaderboard, decodeMe, decodeMyEndlessResults, decodeMyResults, decodeReleaseList, decodeReplayDetail, decodeUpdateStatus,
+  decodeLeaderboard, decodeMe, decodeMyEndlessResults, decodeMyResults, decodeMyStats, decodeReleaseList, decodeReplayDetail, decodeUpdateStatus,
   decodeWeek,
 } from "./models.ts";
 
@@ -87,6 +87,11 @@ export class SudokuApi {
   /** The leaderboard for `date` (the server's today when omitted). */
   async leaderboard(date?: string): Promise<Leaderboard> {
     return decodeLeaderboard(await this.#get("leaderboard" + (date ? `?date=${date}` : "")));
+  }
+
+  /** The caller's streak and personal stats. */
+  async myStats(): Promise<MyStats> {
+    return decodeMyStats(await this.#get("me/stats"));
   }
 
   submitResult(result: GameResult): Promise<SubmitOutcome> {
