@@ -91,18 +91,28 @@ func DifficultyFor(level, levels int) (name string, targetGivens int, err error)
 }
 
 func tier(level, levels int) (difficulty, error) {
-	if err := checkLevels(levels); err != nil {
+	n, err := TierFor(level, levels)
+	if err != nil {
 		return difficulty{}, err
 	}
+	return difficulties[n-1], nil
+}
+
+// TierFor is the tier number (1 = Easy to Tiers = Diabolical) of game level
+// (1..levels) on a day with levels games; DifficultyFor gives its name.
+func TierFor(level, levels int) (int, error) {
+	if err := checkLevels(levels); err != nil {
+		return 0, err
+	}
 	if level < 1 || level > levels {
-		return difficulty{}, fmt.Errorf("level must be 1..%d: %d", levels, level)
+		return 0, fmt.Errorf("level must be 1..%d: %d", levels, level)
 	}
 	if levels == 1 {
-		return difficulties[2], nil
+		return 3, nil
 	}
 	i := level - 1
 	last := len(difficulties) - 1
-	return difficulties[(2*i*last+(levels-1))/(2*(levels-1))], nil
+	return (2*i*last+(levels-1))/(2*(levels-1)) + 1, nil
 }
 
 // puzzleSeed is the seed for one puzzle: every input passes through a full

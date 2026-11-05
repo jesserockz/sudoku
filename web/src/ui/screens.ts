@@ -7,11 +7,28 @@ import { WEB_VERSION } from "../version.ts";
 import { type AdminModel, actionLabel, flavourOf, formatBytes, progressFraction } from "./admin.ts";
 import { type AppController, ENDLESS_LABEL, type Phase, type ServerInfo } from "./controller.ts";
 import { type Child, Component, h, topBar } from "./dom.ts";
+import { sparklinePoints, streakMarker, streakSummary } from "./stats.ts";
 import { actionButton, canShare, copyText, share, shareResultsButton } from "./share.ts";
 
 /** A screen: a component that renders from the app's state. */
 abstract class Screen extends Component {
   app!: AppController;
+}
+
+const SPARK_WIDTH = 64;
+const SPARK_HEIGHT = 20;
+/** A sparkline of `points` (see `sparklinePoints`). SVG elements need their namespace, which `h` doesn't give. */
+function sparkline(points: string): SVGElement {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("class", "spark");
+  svg.setAttribute("viewBox", `0 0 ${SPARK_WIDTH} ${SPARK_HEIGHT}`);
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", "Recent times, higher is faster");
+  const line = document.createElementNS(ns, "polyline");
+  line.setAttribute("points", points);
+  svg.append(line);
+  return svg;
 }
 
 const range = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => from + i);
@@ -173,7 +190,9 @@ export class TodayScreen extends Screen {
           error,
         ),
       ),
-      h("div", { class: "actions" }, h("button", { onclick: () => app.openEndlessScores(1) }, app.seed ? "History" : "Leaderboard")),
+      h("div", { class: "actions" },
+        h("button", { onclick: () => app.openEndlessScores(1) }, app.seed ? "History" : "Leaderboard"),
+        !app.seed && h("button", { onclick: () => app.openStats() }, "Stats")),
     ];
   }
 
@@ -204,6 +223,7 @@ export class TodayScreen extends Screen {
         ),
       ];
     }
+    const streak = app.streakText();
     const rows = puzzles.map((p) => {
       const status = app.statusOf(p.level);
       let text: string;
@@ -229,6 +249,7 @@ export class TodayScreen extends Screen {
     return [header, [
       h("div", { class: "card" },
         h("p", { class: "muted" }, describeDate(app.today), app.me && ` · ${app.me.displayName}`),
+        streak && h("p", { class: "streak" }, h("span", { class: "flame", "aria-hidden": "true" }, "\u{1F525}"), streak),
         h("ul", { class: "puzzles" }, rows),
       ),
       serverless
@@ -239,7 +260,9 @@ export class TodayScreen extends Screen {
           ),
           this.#seedCard(),
         ]
-        : h("div", { class: "actions" }, h("button", { onclick: () => app.openScores(0) }, "Leaderboard")),
+        : h("div", { class: "actions" },
+          h("button", { onclick: () => app.openScores(0) }, "Leaderboard"),
+          h("button", { onclick: () => app.openStats() }, "Stats")),
     ]];
   }
 
@@ -293,10 +316,15 @@ export class ScoresScreen extends Screen {
     // That day's game count: from its leaderboard once loaded (a past week may differ).
     const levels = (board?.puzzles.length || app.puzzles?.length) ?? 0;
 
-    const scoreRow = (rank: number, name: string, ms: number, isMe: boolean, suspicious: boolean) =>
+    const streaks = new Map(board?.players.map((p) => [p.userId, p.streak]));
+    const marker = (userId: string) => {
+      const m = streakMarker(streaks.get(userId) ?? 0);
+      return m && h("span", { class: "streak-marker", title: m.title }, m.text);
+    };
+    const scoreRow = (rank: number, userId: string, name: string, ms: number, isMe: boolean, suspicious: boolean) =>
       h("tr", { class: [isMe && "me", suspicious && "flagged"] },
         h("td", { class: "rank" }, String(rank)),
-        h("td", null, name, suspicious && h("span", { class: "badge suspicious", title: "An admin flagged this result as suspicious" }, "suspicious")),
+        h("td", null, name, marker(userId), suspicious && h("span", { class: "badge suspicious", title: "An admin flagged this result as suspicious" }, "suspicious")),
         h("td", { class: "time" }, formatDuration(ms)),
       );
     let body: Child;
@@ -308,13 +336,13 @@ export class ScoresScreen extends Screen {
       body = board.total.entries.length === 0
         ? h("p", { class: "muted" }, `Nobody has finished all ${levels} yet.`)
         : h("table", { class: "board-table" }, h("tbody", null,
-          board.total.entries.map((e) => scoreRow(e.rank, e.displayName, e.totalMs, e.userId === meId, e.suspicious))));
+          board.total.entries.map((e) => scoreRow(e.rank, e.userId, e.displayName, e.totalMs, e.userId === meId, e.suspicious))));
     } else {
       const entries = board.puzzles.find((p) => p.level === tab)?.entries ?? [];
       body = entries.length === 0
         ? h("p", { class: "muted" }, "No one has solved this one yet.")
         : h("table", { class: "board-table" }, h("tbody", null,
-          entries.map((e) => scoreRow(e.rank, e.displayName, e.elapsedMs, e.userId === meId, e.suspicious))));
+          entries.map((e) => scoreRow(e.rank, e.userId, e.displayName, e.elapsedMs, e.userId === meId, e.suspicious))));
     }
 
     const players = board?.players.slice().sort((a, b) =>
@@ -335,7 +363,7 @@ export class ScoresScreen extends Screen {
         h("h2", null, "Progress"),
         h("table", { class: "board-table" }, h("tbody", null, players.map((p) =>
           h("tr", { class: p.userId === meId && "me" },
-            h("td", null, p.displayName),
+            h("td", null, p.displayName, marker(p.userId)),
             h("td", { class: "time" },
               h("span", { class: "levels" }, range(1, levels).map((l) => h("span", { class: p.completedLevels.includes(l) && "on" }, String(l)))),
               ` ${p.completedLevels.length}/${levels}`,
@@ -343,6 +371,53 @@ export class ScoresScreen extends Screen {
           )))),
       ),
     ];
+  }
+}
+
+/** `<sudoku-stats>`: the player's streak and their daily and endless numbers per difficulty. */
+export class StatsScreen extends Screen {
+  protected render(): Child {
+    const app = this.app;
+    const stats = app.stats;
+    let body: Child;
+    if (app.statsError !== null) {
+      body = h("div", { class: "card" }, h("p", { class: "error" }, app.statsError));
+    } else if (!stats) {
+      body = h("div", { class: "card" }, h("p", { class: "muted" }, "Loading…"));
+    } else {
+      const ms = (v: number | null) => (v === null ? "-" : formatDuration(v));
+      const name = (difficulty: number) => DIFFICULTIES[difficulty - 1]?.name ?? `Level ${difficulty}`;
+      const head = (...cells: string[]) => h("thead", null, h("tr", null, cells.map((c, i) => h("th", { class: i > 0 && "num" }, c))));
+      const spark = (recent: number[]) => {
+        const points = sparklinePoints(recent, SPARK_WIDTH, SPARK_HEIGHT);
+        return points && sparkline(points);
+      };
+      const daily = stats.daily.map((d) => h("tr", null,
+        h("td", null, name(d.difficulty)), h("td", { class: "num" }, String(d.completed)),
+        h("td", { class: "num" }, ms(d.bestMs)), h("td", { class: "num" }, ms(d.averageMs)),
+        h("td", { class: "num" }, spark(d.recent.map((r) => r.elapsedMs)))));
+      const endless = stats.endless.map((d) => h("tr", null,
+        h("td", null, name(d.difficulty)), h("td", { class: "num" }, String(d.completed)),
+        h("td", { class: "num" }, d.highest > 0 ? `#${d.highest}` : "-"),
+        h("td", { class: "num" }, ms(d.bestMs)), h("td", { class: "num" }, ms(d.averageMs))));
+      body = [
+        h("div", { class: "card" },
+          h("h2", null, "Streak"),
+          h("p", { class: "streak-big" }, h("span", { class: "flame", "aria-hidden": "true" }, "\u{1F525}"), streakSummary(stats.streak, stats.today)),
+          h("p", { class: "muted small" }, "Days in a row with a daily puzzle solved. Today's can wait until the end of the day."),
+        ),
+        h("div", { class: "card" },
+          h("h2", null, "Daily"),
+          h("table", { class: "board-table stats-table" }, head("", "Played", "Best", "Average", "Recent"), h("tbody", null, daily)),
+          h("p", { class: "muted small" }, "Recent: your last times, oldest on the left. Higher is faster."),
+        ),
+        h("div", { class: "card" },
+          h("h2", null, ENDLESS_LABEL),
+          h("table", { class: "board-table stats-table" }, head("", "Solved", "Highest", "Best", "Average"), h("tbody", null, endless)),
+        ),
+      ];
+    }
+    return [topBar("Stats", () => app.openToday()), body];
   }
 }
 
@@ -709,6 +784,7 @@ customElements.define("sudoku-failed", FailedScreen);
 customElements.define("sudoku-sign-in", SignInScreen);
 customElements.define("sudoku-today", TodayScreen);
 customElements.define("sudoku-scores", ScoresScreen);
+customElements.define("sudoku-stats", StatsScreen);
 customElements.define("sudoku-endless-scores", EndlessScoresScreen);
 customElements.define("sudoku-history", HistoryScreen);
 customElements.define("sudoku-about", AboutScreen);

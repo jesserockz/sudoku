@@ -60,6 +60,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/leaderboard", s.requireAuth(s.getLeaderboard))
 	s.mux.HandleFunc("GET /api/v1/endless", s.requireAuth(s.getEndless))
 	s.mux.HandleFunc("GET /api/v1/me/endless", s.requireAuth(s.getMyEndless))
+	s.mux.HandleFunc("GET /api/v1/me/stats", s.requireAuth(s.getMyStats))
 	s.mux.HandleFunc("POST /api/v1/endless/results", s.requireAuth(s.postEndlessResult))
 	s.mux.HandleFunc("GET /api/v1/endless/leaderboard", s.requireAuth(s.getEndlessLeaderboard))
 	s.mux.HandleFunc("GET /api/v1/endless/leaderboard/{difficulty}/{number}", s.requireAuth(s.getEndlessPuzzleLeaderboard))

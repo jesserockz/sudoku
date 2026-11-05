@@ -171,7 +171,8 @@ are different puzzles. Games of a repeated tier are titled "Medium 1",
 
 The app keeps its state as JSON documents in `localStorage`, under keys
 prefixed `sudoku.`: settings and identity, the cached week (seed and games per
-day), `me`, games in progress, the server's results for today and the offline
+day), `me`, games in progress, the server's results for today, the last
+streak (`streak`, from `GET /api/v1/me/stats`; cleared on sign-out) and the offline
 result queue (`ResultSync`). The rules (`SudokuRepository`):
 
 - Exactly one week is kept. "Today" is the device clock in Pacific/Auckland;
@@ -271,6 +272,10 @@ node web/e2e/serverless-on-server.cjs http://localhost:8080 dev-secret-change-me
 `web/e2e/replay.cjs` checks replays and the admin tools the same way, against
 a server started with `SUDOKU_ADMIN_CLAIM=sub SUDOKU_ADMIN_VALUES=ann` and an
 empty database: `node web/e2e/replay.cjs http://localhost:8080 [screenshot dir]`.
+`web/e2e/stats.cjs` (same server, any database) seeds daily results on
+consecutive days through the API and checks the home streak, the Stats screen
+and the leaderboard's streak markers, with screenshots (including dark mode):
+`node web/e2e/stats.cjs http://localhost:8080 [screenshot dir]`.
 `web/e2e/endless.cjs` (same server, any database) plays and submits an endless
 puzzle with a reload part way, and checks the tab, the leaderboards, that a
 second player gets the same puzzle and the admin list.
@@ -351,6 +356,28 @@ In dev auth mode the app instead asks for a user id and display name and sends
   only; offline it says so, and it loads once the connection is back. Results
   an admin flagged (including by confirming the server's automatic flag) carry
   a red "suspicious" marker.
+- **Streak**: with a server, the Daily tab shows the player's daily streak
+  ("4-day streak", plus "best 12" when that is longer), or "No streak yet".
+  A day counts when at least one daily result for it counts (any difficulty,
+  not admin-flagged). It comes from `GET /api/v1/me/stats`, fetched after every
+  sync and kept in storage (`streak`), so it shows offline and after a reload;
+  a stored streak whose last counting day is before yesterday reads as ended.
+  Nothing is shown until the first fetch (or against a server without stats),
+  and never when playing with a seed. Signing out forgets it.
+- **Streak marker on the leaderboard**: next to a player's name (in the boards
+  and the progress list), a flame and the number, with the title "N-day
+  streak", for streaks of 2 or more. It uses `players[].streak` of
+  `GET /api/v1/leaderboard` (0 from servers that don't send it).
+- **Stats** (button next to **Leaderboard**, on both tabs, with a server only):
+  the streak (current and best); a Daily table per difficulty with games
+  played, best and average time and a small sparkline of the most recent
+  times (oldest on the left, drawn with the fastest at the top, so a line
+  climbing to the right means getting faster; none under two times); and an
+  Endless table per difficulty with puzzles solved, the highest number, best
+  and average time. Online only, like the leaderboard: offline it says so, and
+  it loads once the connection is back (the next sync retries it). The
+  decisions behind it (streak text, marker, sparkline points) are pure
+  functions in `src/ui/stats.ts`, unit-tested; `StatsScreen` only lays them out.
 
 ## Endless puzzles
 

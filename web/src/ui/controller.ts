@@ -1,5 +1,5 @@
 import { ApiException } from "../api/client.ts";
-import type { AppConfig, EndlessBoard, EndlessProgress, EndlessResult, Leaderboard, Me } from "../api/models.ts";
+import type { AppConfig, EndlessBoard, EndlessProgress, EndlessResult, Leaderboard, Me, MyStats, Streak } from "../api/models.ts";
 import type { HomeTab } from "../data/app-storage.ts";
 import type { EndlessSource } from "../data/endless.ts";
 import { OidcException } from "../api/oidc.ts";
@@ -13,6 +13,7 @@ import type { SeedProfile, SeedRepository, SeedResult } from "../serverless/seed
 import { buildShareLink, parseShareLink } from "../serverless/share-link.ts";
 import { AdminModel } from "./admin.ts";
 import { AdminResultsModel, type ResultKey } from "./admin-results.ts";
+import { streakSummary } from "./stats.ts";
 
 /** Register `<origin>/auth/callback` as the redirect URI with the identity provider. */
 export const CALLBACK_PATH = "/auth/callback";
@@ -64,6 +65,8 @@ export type Screen =
   /** The endless leaderboard: everyone's progress in `difficulty`, or with `number` that puzzle's times. */
   | { kind: "endless-scores"; difficulty: number; number: number | null }
   | { kind: "scores"; date: string; tab: number }
+  /** The signed-in player's streak and personal stats. */
+  | { kind: "stats" }
   /** Serverless play's local history of solve times. */
   | { kind: "history" }
   | { kind: "about" }
@@ -137,6 +140,11 @@ export class AppController extends EventTarget {
   needsSignIn = false;
   leaderboard: Leaderboard | null = null;
   leaderboardError: string | null = null;
+  /** The daily streak last fetched (kept in storage, so known offline), or `null` when unknown or in serverless play. */
+  streak: Streak | null = null;
+  /** The Stats screen's data, and why it couldn't load. */
+  stats: MyStats | null = null;
+  statsError: string | null = null;
   /** The home page tab; remembered on this device. */
   homeTab: HomeTab;
   /** The endless leaderboard screen's data (whichever of the two it shows). */
@@ -165,6 +173,7 @@ export class AppController extends EventTarget {
   /** The last sync couldn't reach the server: retried periodically, as `online` events aren't reliable. */
   #offline = false;
   #leaderboardRequest = 0;
+  #statsRequest = 0;
 
   constructor(repo: SudokuRepository, seeds: SeedRepository, host: Host) {
     super();
@@ -209,7 +218,7 @@ export class AppController extends EventTarget {
     }
     this.seed = null;
     if (this.#repo.isSignedIn) {
-      this.#showReady();
+      this.#showReady(false);
       this.sync();
       return;
     }
@@ -225,11 +234,14 @@ export class AppController extends EventTarget {
     })();
   }
 
-  #showReady(): void {
+  /** `loadStats` is false when a sync follows anyway, which fetches them. */
+  #showReady(loadStats = true): void {
     this.seed = null;
     this.#loadLocal();
     this.#set({ needsSignIn: this.#repo.needsSignIn, phase: { kind: "ready" } });
     this.#firstEndlessVisit();
+    // Signing in has just synced everything but the stats.
+    if (loadStats) void this.#refreshStats().then(() => this.#changed());
   }
 
   /** Reloads the day from local state (no network). */
@@ -239,6 +251,7 @@ export class AppController extends EventTarget {
       return;
     }
     this.me = this.#repo.me();
+    this.streak = this.#repo.streak();
     this.today = this.#repo.today();
     this.puzzles = this.#repo.puzzles(this.today);
     this.games.clear();
@@ -270,6 +283,7 @@ export class AppController extends EventTarget {
       try {
         const report = await this.#repo.refresh();
         this.#offline = false;
+        await this.#refreshStats();
         this.notice = report.failure != null
           ? "Some results haven't uploaded yet. They'll retry automatically."
           : report.rejected.length > 0 ? `The server rejected ${report.rejected.length} result(s).` : null;
@@ -293,10 +307,31 @@ export class AppController extends EventTarget {
         else this.#refreshQueued();
         // A leaderboard that failed (e.g. offline) tries again.
         if (this.screen.kind === "scores" && this.leaderboardError !== null) this.#loadLeaderboard(this.screen.date);
+        if (this.screen.kind === "stats" && this.statsError !== null) this.openStats();
         if (this.screen.kind === "endless-scores" && this.leaderboardError !== null) this.openEndlessScores(this.screen.difficulty, this.screen.number);
         this.#changed();
       }
     })();
+  }
+
+  /** Keeps the streak (and the Stats screen's data) fresh after a sync. Stats are a nicety: a failure here is not a sync failure. */
+  async #refreshStats(): Promise<void> {
+    try {
+      this.#setStats(await this.#repo.fetchStats());
+    } catch {
+      // Offline or an old server without stats: the stored streak stays as it was.
+    }
+  }
+
+  #setStats(stats: MyStats): void {
+    this.stats = stats;
+    this.streak = stats.streak;
+    this.statsError = null;
+  }
+
+  /** The home page's streak line, or `null` when there is nothing to show (serverless play, or no streak known yet). */
+  streakText(): string | null {
+    return this.seed ? null : streakSummary(this.streak, this.today);
   }
 
   statusOf(level: number): PuzzleStatus {
@@ -400,6 +435,7 @@ export class AppController extends EventTarget {
     this.today = day;
     this.puzzles = list;
     this.me = null;
+    this.streak = null;
     this.needsSignIn = false;
     this.games.clear();
     for (const p of list) {
@@ -523,7 +559,7 @@ export class AppController extends EventTarget {
     const endSession = await this.#repo.endSessionUrl(`${this.origin}/`);
     this.#repo.signOut();
     this.games.clear();
-    Object.assign(this, { puzzles: null, me: null, notice: null, needsSignIn: false, screen: { kind: "today" } });
+    Object.assign(this, { puzzles: null, me: null, streak: null, stats: null, notice: null, needsSignIn: false, screen: { kind: "today" } });
     if (endSession) this.#host.location.assign(endSession);
     else this.start();
   }
@@ -691,6 +727,25 @@ export class AppController extends EventTarget {
     }
     this.screen = { kind: "scores", date, tab };
     this.#loadLeaderboard(date);
+  }
+
+  /** The Stats screen. It needs the server, like the leaderboard. */
+  openStats(): void {
+    if (this.seed) return;
+    this.screen = { kind: "stats" };
+    const request = ++this.#statsRequest;
+    this.stats = null;
+    this.statsError = null;
+    this.#changed();
+    this.#repo.fetchStats().then(
+      (stats) => {
+        if (request === this.#statsRequest) this.#setStats(stats);
+      },
+      (e) => {
+        if (request !== this.#statsRequest) return;
+        this.statsError = e instanceof ApiException ? describe(e) : "You're offline. Your stats need a connection to the server.";
+      },
+    ).finally(() => this.#changed());
   }
 
   showScoresTab(tab: number): void {

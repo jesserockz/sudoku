@@ -303,3 +303,17 @@ button.danger { color: var(--conflict); border-color: var(--conflict); }
 table.replay-events tr.current td { background: var(--selected); }
 table.replay-events tr.long td:first-child, table.replay-events tr.stretch-paused td:first-child, table.replay-events tr.stretch-hidden td:first-child { border-left: 3px solid var(--conflict); }
 table.replay-events td.time { white-space: nowrap; }
+
+/* Streaks and the Stats screen */
+.streak { margin: 4px 0 8px; font-weight: 600; }
+.streak .flame, .streak-big .flame { margin-right: 6px; }
+.streak-big { font-size: 1.3rem; font-weight: 700; margin: 4px 0; }
+.streak-marker {
+  margin-left: 6px; font-size: 0.8rem; font-weight: 600; color: var(--muted); white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+table.stats-table th { font-size: 0.8rem; font-weight: 600; color: var(--muted); text-align: left; padding: 4px; }
+table.stats-table th.num, table.stats-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.stats-table td.num { white-space: nowrap; }
+svg.spark { width: 64px; height: 20px; vertical-align: middle; overflow: visible; }
+svg.spark polyline { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }

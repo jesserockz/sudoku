@@ -4,9 +4,11 @@ import (
 	"cmp"
 	"net/http"
 	"slices"
+	"strconv"
 
 	"github.com/jesserockz/sudoku/server/internal/httpx"
 	"github.com/jesserockz/sudoku/server/internal/store"
+	"github.com/jesserockz/sudoku/server/internal/week"
 )
 
 type leaderboardResponse struct {
@@ -45,11 +47,19 @@ type playerJSON struct {
 	UserID          string `json:"userId"`
 	DisplayName     string `json:"displayName"`
 	CompletedLevels []int  `json:"completedLevels"`
+	// Streak is the player's run of consecutive days ending on the board's
+	// date.
+	Streak int `json:"streak"`
 }
 
 func (s *Server) getLeaderboard(w http.ResponseWriter, r *http.Request) {
 	date, ok := s.dateParam(w, r)
 	if !ok {
+		return
+	}
+	counting, err := s.deps.Store.CountingDates(r.Context(), date.String())
+	if err != nil {
+		httpx.Internal(w, r, err)
 		return
 	}
 	rows, err := s.deps.Store.DayResults(r.Context(), date.String())
@@ -64,7 +74,22 @@ func (s *Server) getLeaderboard(w http.ResponseWriter, r *http.Request) {
 	}
 	lb := buildLeaderboard(rows, levels)
 	lb.Date = date.String()
+	addStreaks(&lb, counting, date)
 	httpx.WriteJSON(w, http.StatusOK, lb)
+}
+
+// addStreaks sets each player's streak as of the board's date from the
+// counting dates of everyone who played that day.
+func addStreaks(lb *leaderboardResponse, byUser map[int64][]string, date week.Date) {
+	for i, p := range lb.Players {
+		// userID formatted it, so it parses.
+		id, _ := strconv.ParseInt(p.UserID, 10, 64)
+		var dates []week.Date
+		for _, d := range byUser[id] {
+			dates = append(dates, storedDate(d))
+		}
+		lb.Players[i].Streak = streakOn(dates, date)
+	}
 }
 
 // scored is one user's time on a board, before ranking.

@@ -61,10 +61,10 @@ func TestBuildLeaderboard(t *testing.T) {
 	}
 
 	wantPlayers := []playerJSON{
-		{"1", "Alice", []int{1, 2, 3}},
-		{"2", "Bob", []int{1, 2, 3, 4, 5}},
-		{"3", "Carol", []int{1, 2, 3, 4, 5}},
-		{"4", "Dave", []int{1}},
+		{"1", "Alice", []int{1, 2, 3}, 0},
+		{"2", "Bob", []int{1, 2, 3, 4, 5}, 0},
+		{"3", "Carol", []int{1, 2, 3, 4, 5}, 0},
+		{"4", "Dave", []int{1}, 0},
 	}
 	if !reflect.DeepEqual(got.Players, wantPlayers) {
 		t.Errorf("players = %+v", got.Players)
