@@ -1,5 +1,6 @@
 import { colOf, index, rowOf } from "../core/geometry.ts";
 import { formatDuration } from "../game/timer.ts";
+import { generatorName } from "../generator/versions.ts";
 import { SudokuBoard, SudokuKeypad } from "./board.ts";
 import { ENDLESS_LABEL, type AppController, type PuzzleRef } from "./controller.ts";
 import { type Child, Component, h, topBar } from "./dom.ts";
@@ -150,7 +151,7 @@ export class PlayScreen extends Component {
           typeof ref === "number"
             ? h("button", { onclick: () => app.openToday() }, "Today's puzzles")
             : [
-              h("button", { onclick: () => app.openEndless({ difficulty: ref.difficulty, number: ref.number + 1 }) }, `Play #${ref.number + 1}`),
+              h("button", { onclick: () => app.openEndless({ generator: ref.generator, difficulty: ref.difficulty, number: ref.number + 1 }) }, `Play #${ref.number + 1}`),
               h("button", { onclick: () => app.openToday() }, `${ENDLESS_LABEL} puzzles`),
             ],
         ),
@@ -176,7 +177,7 @@ export class PlayScreen extends Component {
     }
 
     return [
-      topBar(puzzle.title, () => app.openToday(),
+      topBar(typeof ref === "number" ? puzzle.title : `${generatorName(ref.generator)} · ${puzzle.title}`, () => app.openToday(),
         this.#timer,
         !game.isComplete && !paused && h("button", { class: "link", onclick: () => this.#pause() }, "Pause")),
       h("div", { class: "play-area" },

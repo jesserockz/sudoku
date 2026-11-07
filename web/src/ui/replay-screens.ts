@@ -2,6 +2,7 @@ import type { AdminEndlessResult, AdminResult, ReplayStatus } from "../api/model
 import { CELLS, colOf, rowOf } from "../core/geometry.ts";
 import { formatDuration } from "../game/timer.ts";
 import { DIFFICULTIES, endlessTitle, puzzleTitle } from "../generator/generator.ts";
+import { generatorName } from "../generator/versions.ts";
 import { ENDLESS_DIFFICULTIES, type AdminResultsModel, type ResultsMode } from "./admin-results.ts";
 import type { AppController } from "./controller.ts";
 import { type Child, Component, h, topBar } from "./dom.ts";
@@ -90,7 +91,7 @@ export class AdminResultsScreen extends AdminResultsScreenBase {
             ? h("p", { class: "muted" }, "No results.")
             : h("table", { class: "board-table results-table" }, h("tbody", null, results.map((r) =>
               h("tr", { class: "clickable", onclick: () => this.app.openReplay(r) },
-                h("td", null, `#${r.number} `, r.displayName, h("div", { class: "small" }, statusBadges(r))),
+                h("td", null, `${generatorName(r.generator)} #${r.number} `, r.displayName, h("div", { class: "small" }, statusBadges(r))),
                 h("td", { class: "time" }, formatDuration(r.elapsedMs)),
               )))),
         );
@@ -172,7 +173,7 @@ export class ReplayScreen extends AdminResultsScreenBase {
     const d = v.detail;
     const result = m.find(d) ?? d;
     const heading = "difficulty" in d
-      ? `${d.displayName}, ${endlessTitle(d.difficulty, d.number)}, submitted ${d.submittedAt.slice(0, 10)}`
+      ? `${d.displayName}, ${generatorName(d.generator)} ${endlessTitle(d.difficulty, d.number)}, submitted ${d.submittedAt.slice(0, 10)}`
       : `${d.displayName}, ${puzzleTitle(d.level, d.levels)} on ${d.date}`;
     return [
       topBar("Replay", back),

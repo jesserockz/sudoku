@@ -134,7 +134,7 @@ func GenerateV2(weekSeed uint64, dayOfWeek, level, levels int) (Graded, error) {
 
 // GenerateEndlessV2 is GenerateEndless for v2: endless puzzle number
 // (1..MaxEndlessNumber) of tier difficulty (1 = Easy to 5 = Diabolical), with
-// its grade. Endless puzzles are still v1 only.
+// its grade.
 func GenerateEndlessV2(endlessSeed uint64, difficulty int, number int64) (Graded, error) {
 	if difficulty < 1 || difficulty > Tiers {
 		return Graded{}, fmt.Errorf("difficulty must be 1..%d: %d", Tiers, difficulty)
@@ -161,6 +161,19 @@ func GenerateVersion(version int, weekSeed uint64, dayOfWeek, level, levels int)
 		return Generate(weekSeed, dayOfWeek, level, levels)
 	case VersionGraded:
 		g, err := GenerateV2(weekSeed, dayOfWeek, level, levels)
+		return g.Puzzle, err
+	}
+	return Puzzle{}, fmt.Errorf("unknown generator version %d", version)
+}
+
+// GenerateEndlessVersion generates an endless puzzle with generator version 1
+// or 2. Other versions are an error.
+func GenerateEndlessVersion(version int, endlessSeed uint64, difficulty int, number int64) (Puzzle, error) {
+	switch version {
+	case VersionClassic:
+		return GenerateEndless(endlessSeed, difficulty, number)
+	case VersionGraded:
+		g, err := GenerateEndlessV2(endlessSeed, difficulty, number)
 		return g.Puzzle, err
 	}
 	return Puzzle{}, fmt.Errorf("unknown generator version %d", version)

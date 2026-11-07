@@ -16,7 +16,7 @@ func TestInsertEndlessResultIdempotent(t *testing.T) {
 	s, _ := openTemp(t)
 	u, _ := s.UpsertUser(ctx, "alice", "Alice")
 
-	first := EndlessResult{UserID: u.ID, Difficulty: 3, Number: 7, ElapsedMs: 183000, CompletedAt: "2026-10-26T09:15:00+13:00", ReplayStatus: "valid"}
+	first := EndlessResult{UserID: u.ID, Generator: 1, Difficulty: 3, Number: 7, ElapsedMs: 183000, CompletedAt: "2026-10-26T09:15:00+13:00", ReplayStatus: "valid"}
 	got, created, err := s.InsertEndlessResult(ctx, first)
 	if err != nil || !created || got != first {
 		t.Fatalf("first insert: %+v %v %v", got, created, err)
@@ -30,11 +30,11 @@ func TestInsertEndlessResultIdempotent(t *testing.T) {
 	if err != nil || created {
 		t.Fatalf("dup insert: created=%v err=%v", created, err)
 	}
-	want := EndlessResult{UserID: u.ID, Difficulty: 3, Number: 7, ElapsedMs: 183000, CompletedAt: "2026-10-26T09:15:00+13:00"}
+	want := EndlessResult{UserID: u.ID, Generator: 1, Difficulty: 3, Number: 7, ElapsedMs: 183000, CompletedAt: "2026-10-26T09:15:00+13:00"}
 	if got != want {
 		t.Errorf("dup returned %+v, want stored %+v", got, want)
 	}
-	if r, _ := s.AdminEndlessResult(ctx, u.ID, 3, 7); r.Flag != nil {
+	if r, _ := s.AdminEndlessResult(ctx, u.ID, 1, 3, 7); r.Flag != nil {
 		t.Errorf("duplicate flagged the result: %+v", r.Flag)
 	}
 
@@ -49,11 +49,11 @@ func TestInsertEndlessResultIdempotent(t *testing.T) {
 
 	// The schema's checks reject what the API never sends.
 	for name, bad := range map[string]EndlessResult{
-		"unknown user":   {UserID: 42, Difficulty: 1, Number: 1, ElapsedMs: 1, CompletedAt: "x", ReplayStatus: "valid"},
-		"difficulty 0":   {UserID: u.ID, Difficulty: 0, Number: 1, ElapsedMs: 1, CompletedAt: "x", ReplayStatus: "valid"},
-		"difficulty 6":   {UserID: u.ID, Difficulty: 6, Number: 1, ElapsedMs: 1, CompletedAt: "x", ReplayStatus: "valid"},
-		"number 0":       {UserID: u.ID, Difficulty: 1, Number: 0, ElapsedMs: 1, CompletedAt: "x", ReplayStatus: "valid"},
-		"no replay info": {UserID: u.ID, Difficulty: 1, Number: 1, ElapsedMs: 1, CompletedAt: "x"},
+		"unknown user":   {UserID: 42, Generator: 1, Difficulty: 1, Number: 1, ElapsedMs: 1, CompletedAt: "x", ReplayStatus: "valid"},
+		"difficulty 0":   {UserID: u.ID, Generator: 1, Difficulty: 0, Number: 1, ElapsedMs: 1, CompletedAt: "x", ReplayStatus: "valid"},
+		"difficulty 6":   {UserID: u.ID, Generator: 1, Difficulty: 6, Number: 1, ElapsedMs: 1, CompletedAt: "x", ReplayStatus: "valid"},
+		"number 0":       {UserID: u.ID, Generator: 1, Difficulty: 1, Number: 0, ElapsedMs: 1, CompletedAt: "x", ReplayStatus: "valid"},
+		"no replay info": {UserID: u.ID, Generator: 1, Difficulty: 1, Number: 1, ElapsedMs: 1, CompletedAt: "x"},
 	} {
 		if _, _, err := s.InsertEndlessResult(ctx, bad); err == nil {
 			t.Errorf("%s: expected an error", name)
@@ -73,14 +73,14 @@ func TestEndlessReplayAndFlags(t *testing.T) {
 			t.Fatalf("insert %+v: created=%v err=%v", r, created, err)
 		}
 	}
-	valid := EndlessResult{UserID: alice.ID, Difficulty: 1, Number: 1, ElapsedMs: 100000, CompletedAt: "c", ReplayStatus: "valid", Events: `[{"t":0}]`}
+	valid := EndlessResult{UserID: alice.ID, Generator: 1, Difficulty: 1, Number: 1, ElapsedMs: 100000, CompletedAt: "c", ReplayStatus: "valid", Events: `[{"t":0}]`}
 	ins(valid)
-	invalid := EndlessResult{UserID: alice.ID, Difficulty: 1, Number: 2, ElapsedMs: 100000, CompletedAt: "c",
+	invalid := EndlessResult{UserID: alice.ID, Generator: 1, Difficulty: 1, Number: 2, ElapsedMs: 100000, CompletedAt: "c",
 		ReplayStatus: "invalid", ReplayError: "boom", Events: `[]`, AutoFlag: "Replay check failed: boom"}
 	ins(invalid)
-	ins(EndlessResult{UserID: bob.ID, Difficulty: 1, Number: 1, ElapsedMs: 90000, CompletedAt: "c", ReplayStatus: "missing", AutoFlag: "No replay submitted"})
+	ins(EndlessResult{UserID: bob.ID, Generator: 1, Difficulty: 1, Number: 1, ElapsedMs: 90000, CompletedAt: "c", ReplayStatus: "missing", AutoFlag: "No replay submitted"})
 
-	r, err := s.AdminEndlessResult(ctx, alice.ID, 1, 2)
+	r, err := s.AdminEndlessResult(ctx, alice.ID, 1, 1, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,18 +91,18 @@ func TestEndlessReplayAndFlags(t *testing.T) {
 		t.Errorf("flag = %+v, want %+v", r.Flag, want)
 	}
 
-	ev, err := s.EndlessReplayEvents(ctx, alice.ID, 1, 1)
+	ev, err := s.EndlessReplayEvents(ctx, alice.ID, 1, 1, 1)
 	if err != nil || string(ev) != `[{"t":0}]` {
 		t.Errorf("events = %q, %v", ev, err)
 	}
-	if ev, err := s.EndlessReplayEvents(ctx, bob.ID, 1, 1); err != nil || ev != nil {
+	if ev, err := s.EndlessReplayEvents(ctx, bob.ID, 1, 1, 1); err != nil || ev != nil {
 		t.Errorf("missing replay events = %q, %v", ev, err)
 	}
 
 	// Automatic flags stay out of the public boards until an admin confirms one.
 	flagged := func() []bool {
 		t.Helper()
-		rows, err := s.EndlessPuzzleResults(ctx, 1, 1)
+		rows, err := s.EndlessPuzzleResults(ctx, 1, 1, 1)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -116,38 +116,38 @@ func TestEndlessReplayAndFlags(t *testing.T) {
 		t.Errorf("flagged with only automatic flags = %v", got)
 	}
 	at := time.Date(2026, 10, 26, 9, 15, 0, 123_000_000, time.FixedZone("NZDT", 13*3600))
-	if err := s.FlagEndlessResult(ctx, bob.ID, 1, 1, alice.ID, "confirmed", at); err != nil {
+	if err := s.FlagEndlessResult(ctx, bob.ID, 1, 1, 1, alice.ID, "confirmed", at); err != nil {
 		t.Fatal(err)
 	}
 	if got := flagged(); !reflect.DeepEqual(got, []bool{true, false}) {
 		t.Errorf("flagged after an admin flag = %v", got)
 	}
-	r, _ = s.AdminEndlessResult(ctx, bob.ID, 1, 1)
+	r, _ = s.AdminEndlessResult(ctx, bob.ID, 1, 1, 1)
 	want := &Flag{Reason: "confirmed", By: &FlagUser{ID: alice.ID, DisplayName: "Alice"}, At: "2026-10-25T20:15:00.123Z"}
 	if !reflect.DeepEqual(r.Flag, want) {
 		t.Errorf("flag = %+v, want %+v", r.Flag, want)
 	}
 
-	if err := s.UnflagEndlessResult(ctx, bob.ID, 1, 1); err != nil {
+	if err := s.UnflagEndlessResult(ctx, bob.ID, 1, 1, 1); err != nil {
 		t.Fatal(err)
 	}
-	if r, _ := s.AdminEndlessResult(ctx, bob.ID, 1, 1); r.Flag != nil {
+	if r, _ := s.AdminEndlessResult(ctx, bob.ID, 1, 1, 1); r.Flag != nil {
 		t.Errorf("still flagged: %+v", r.Flag)
 	}
 	// Unflagging an unflagged result is fine.
-	if err := s.UnflagEndlessResult(ctx, bob.ID, 1, 1); err != nil {
+	if err := s.UnflagEndlessResult(ctx, bob.ID, 1, 1, 1); err != nil {
 		t.Fatal(err)
 	}
 
 	for name, err := range map[string]error{
-		"flag":   s.FlagEndlessResult(ctx, alice.ID, 1, 3, bob.ID, "x", at),
-		"unflag": s.UnflagEndlessResult(ctx, 99, 1, 1),
+		"flag":   s.FlagEndlessResult(ctx, alice.ID, 1, 1, 3, bob.ID, "x", at),
+		"unflag": s.UnflagEndlessResult(ctx, 99, 1, 1, 1),
 	} {
 		if !errors.Is(err, ErrNotFound) {
 			t.Errorf("%s of a missing result: %v", name, err)
 		}
 	}
-	if _, err := s.AdminEndlessResult(ctx, alice.ID, 2, 1); !errors.Is(err, ErrNotFound) {
+	if _, err := s.AdminEndlessResult(ctx, alice.ID, 1, 2, 1); !errors.Is(err, ErrNotFound) {
 		t.Errorf("AdminEndlessResult of a missing result: %v", err)
 	}
 }
@@ -158,10 +158,10 @@ func TestEndlessUserAndPuzzleResults(t *testing.T) {
 	alice, _ := s.UpsertUser(ctx, "a", "Alice")
 	bob, _ := s.UpsertUser(ctx, "b", "Bob")
 	for _, r := range []EndlessResult{
-		{UserID: alice.ID, Difficulty: 2, Number: 1, ElapsedMs: 70000},
-		{UserID: alice.ID, Difficulty: 1, Number: 10, ElapsedMs: 80000},
-		{UserID: alice.ID, Difficulty: 1, Number: 2, ElapsedMs: 90000},
-		{UserID: bob.ID, Difficulty: 1, Number: 2, ElapsedMs: 60000},
+		{UserID: alice.ID, Generator: 1, Difficulty: 2, Number: 1, ElapsedMs: 70000},
+		{UserID: alice.ID, Generator: 1, Difficulty: 1, Number: 10, ElapsedMs: 80000},
+		{UserID: alice.ID, Generator: 1, Difficulty: 1, Number: 2, ElapsedMs: 90000},
+		{UserID: bob.ID, Generator: 1, Difficulty: 1, Number: 2, ElapsedMs: 60000},
 	} {
 		r.CompletedAt, r.ReplayStatus = "c", "valid"
 		if _, _, err := s.InsertEndlessResult(ctx, r); err != nil {
@@ -187,18 +187,18 @@ func TestEndlessUserAndPuzzleResults(t *testing.T) {
 		t.Errorf("no results = %#v, %v", none, err)
 	}
 
-	times, err := s.EndlessPuzzleResults(ctx, 1, 2)
+	times, err := s.EndlessPuzzleResults(ctx, 1, 1, 2)
 	if err != nil || len(times) != 2 || times[0].DisplayName != "Bob" || times[0].ElapsedMs != 60000 || times[1].UserID != alice.ID {
 		t.Errorf("puzzle results = %+v, %v", times, err)
 	}
-	if none, err := s.EndlessPuzzleResults(ctx, 1, 3); err != nil || none == nil || len(none) != 0 {
+	if none, err := s.EndlessPuzzleResults(ctx, 1, 1, 3); err != nil || none == nil || len(none) != 0 {
 		t.Errorf("empty puzzle = %#v, %v", none, err)
 	}
 
-	if err := s.FlagEndlessResult(ctx, alice.ID, 1, 10, bob.ID, "", time.Now()); err != nil {
+	if err := s.FlagEndlessResult(ctx, alice.ID, 1, 1, 10, bob.ID, "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	prog, err := s.EndlessProgressAll(ctx)
+	prog, err := s.EndlessProgressAll(ctx, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,10 +218,10 @@ func TestAdminEndlessResultsBetween(t *testing.T) {
 	alice, _ := s.UpsertUser(ctx, "a", "Alice")
 	bob, _ := s.UpsertUser(ctx, "b", "Bob")
 	for i, r := range []EndlessResult{
-		{UserID: alice.ID, Difficulty: 2, Number: 1, ElapsedMs: 70000},
-		{UserID: bob.ID, Difficulty: 1, Number: 5, ElapsedMs: 80000},
-		{UserID: alice.ID, Difficulty: 1, Number: 5, ElapsedMs: 80000},
-		{UserID: alice.ID, Difficulty: 1, Number: 4, ElapsedMs: 90000},
+		{UserID: alice.ID, Generator: 1, Difficulty: 2, Number: 1, ElapsedMs: 70000},
+		{UserID: bob.ID, Generator: 1, Difficulty: 1, Number: 5, ElapsedMs: 80000},
+		{UserID: alice.ID, Generator: 1, Difficulty: 1, Number: 5, ElapsedMs: 80000},
+		{UserID: alice.ID, Generator: 1, Difficulty: 1, Number: 4, ElapsedMs: 90000},
 	} {
 		r.CompletedAt, r.ReplayStatus = "c", "valid"
 		if _, _, err := s.InsertEndlessResult(ctx, r); err != nil {
@@ -271,13 +271,13 @@ func TestEndlessQueriesFailOnClosedStore(t *testing.T) {
 	checks := map[string]error{
 		"InsertEndlessResult":        insertErr,
 		"UserEndlessResults":         func() error { _, err := s.UserEndlessResults(ctx, 1); return err }(),
-		"EndlessPuzzleResults":       func() error { _, err := s.EndlessPuzzleResults(ctx, 1, 1); return err }(),
-		"EndlessProgressAll":         func() error { _, err := s.EndlessProgressAll(ctx); return err }(),
+		"EndlessPuzzleResults":       func() error { _, err := s.EndlessPuzzleResults(ctx, 1, 1, 1); return err }(),
+		"EndlessProgressAll":         func() error { _, err := s.EndlessProgressAll(ctx, 1); return err }(),
 		"AdminEndlessResultsBetween": func() error { _, err := s.AdminEndlessResultsBetween(ctx, at, at); return err }(),
-		"AdminEndlessResult":         func() error { _, err := s.AdminEndlessResult(ctx, 1, 1, 1); return err }(),
-		"EndlessReplayEvents":        func() error { _, err := s.EndlessReplayEvents(ctx, 1, 1, 1); return err }(),
-		"FlagEndlessResult":          s.FlagEndlessResult(ctx, 1, 1, 1, 1, "", at),
-		"UnflagEndlessResult":        s.UnflagEndlessResult(ctx, 1, 1, 1),
+		"AdminEndlessResult":         func() error { _, err := s.AdminEndlessResult(ctx, 1, 1, 1, 1); return err }(),
+		"EndlessReplayEvents":        func() error { _, err := s.EndlessReplayEvents(ctx, 1, 1, 1, 1); return err }(),
+		"FlagEndlessResult":          s.FlagEndlessResult(ctx, 1, 1, 1, 1, 1, "", at),
+		"UnflagEndlessResult":        s.UnflagEndlessResult(ctx, 1, 1, 1, 1),
 	}
 	for name, err := range checks {
 		if err == nil || errors.Is(err, ErrNotFound) || !strings.Contains(err.Error(), "endless") {
@@ -336,7 +336,7 @@ func TestMigrateKeepsDailyResultsForEndless(t *testing.T) {
 	if mine, err := s.UserEndlessResults(ctx, 1); err != nil || len(mine) != 0 {
 		t.Errorf("endless results after migration = %+v, %v", mine, err)
 	}
-	if _, created, err := s.InsertEndlessResult(ctx, EndlessResult{UserID: 1, Difficulty: 1, Number: 1, ElapsedMs: 6000, CompletedAt: "x", ReplayStatus: "valid", Events: "[]"}); err != nil || !created {
+	if _, created, err := s.InsertEndlessResult(ctx, EndlessResult{UserID: 1, Generator: 1, Difficulty: 1, Number: 1, ElapsedMs: 6000, CompletedAt: "x", ReplayStatus: "valid", Events: "[]"}); err != nil || !created {
 		t.Errorf("endless insert after migration: created=%v err=%v", created, err)
 	}
 }
@@ -349,7 +349,7 @@ func TestEndlessQueriesFailOnBadRows(t *testing.T) {
 	u, _ := s.UpsertUser(ctx, "a", "Alice")
 	bob, _ := s.UpsertUser(ctx, "b", "Bob")
 	for _, id := range []int64{u.ID, bob.ID} {
-		if _, _, err := s.InsertEndlessResult(ctx, EndlessResult{UserID: id, Difficulty: 1, Number: 1, ElapsedMs: 6000, CompletedAt: "c", ReplayStatus: "valid"}); err != nil {
+		if _, _, err := s.InsertEndlessResult(ctx, EndlessResult{UserID: id, Generator: 1, Difficulty: 1, Number: 1, ElapsedMs: 6000, CompletedAt: "c", ReplayStatus: "valid"}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -373,8 +373,8 @@ func TestEndlessQueriesFailOnBadRows(t *testing.T) {
 	now := time.Now()
 	checks := map[string]error{
 		"UserEndlessResults":   func() error { _, err := s.UserEndlessResults(ctx, u.ID); return err }(),
-		"EndlessPuzzleResults": func() error { _, err := s.EndlessPuzzleResults(ctx, 1, 1); return err }(),
-		"EndlessProgressAll":   func() error { _, err := s.EndlessProgressAll(ctx); return err }(),
+		"EndlessPuzzleResults": func() error { _, err := s.EndlessPuzzleResults(ctx, 1, 1, 1); return err }(),
+		"EndlessProgressAll":   func() error { _, err := s.EndlessProgressAll(ctx, 1); return err }(),
 		"AdminEndlessResultsBetween": func() error {
 			_, err := s.AdminEndlessResultsBetween(ctx, now.AddDate(-1, 0, 0), now.AddDate(1, 0, 0))
 			return err
@@ -384,5 +384,149 @@ func TestEndlessQueriesFailOnBadRows(t *testing.T) {
 		if err == nil || errors.Is(err, ErrNotFound) {
 			t.Errorf("%s: err = %v", name, err)
 		}
+	}
+}
+
+func TestEndlessSeriesAreSeparate(t *testing.T) {
+	ctx := context.Background()
+	s, _ := openTemp(t)
+	alice, _ := s.UpsertUser(ctx, "a", "Alice")
+	bob, _ := s.UpsertUser(ctx, "b", "Bob")
+	ins := func(uid int64, gen int, ms int64, events string) EndlessResult {
+		t.Helper()
+		r, created, err := s.InsertEndlessResult(ctx, EndlessResult{UserID: uid, Generator: gen, Difficulty: 2, Number: 3, ElapsedMs: ms,
+			CompletedAt: "c", ReplayStatus: "valid", Events: events})
+		if err != nil || !created || r.Generator != gen {
+			t.Fatalf("insert gen %d: %+v created=%v err=%v", gen, r, created, err)
+		}
+		return r
+	}
+	// The same user, tier and number in both series are two results.
+	ins(alice.ID, 1, 50000, `[{"t":1}]`)
+	ins(alice.ID, 2, 40000, `[{"t":2}]`)
+	ins(bob.ID, 2, 30000, "")
+
+	// A duplicate in a series returns that series' result.
+	dup, created, err := s.InsertEndlessResult(ctx, EndlessResult{UserID: alice.ID, Generator: 2, Difficulty: 2, Number: 3, ElapsedMs: 1, CompletedAt: "d", ReplayStatus: "valid"})
+	if err != nil || created || dup.Generator != 2 || dup.ElapsedMs != 40000 {
+		t.Errorf("dup = %+v created=%v err=%v", dup, created, err)
+	}
+	// Only generators 1 and 2 are valid.
+	if _, _, err := s.InsertEndlessResult(ctx, EndlessResult{UserID: alice.ID, Generator: 3, Difficulty: 2, Number: 3, ElapsedMs: 1, CompletedAt: "c", ReplayStatus: "valid"}); err == nil {
+		t.Error("generator 3 should be rejected")
+	}
+
+	mine, err := s.UserEndlessResults(ctx, alice.ID)
+	if err != nil || len(mine) != 2 || mine[0].Generator != 1 || mine[0].ElapsedMs != 50000 || mine[1].Generator != 2 || mine[1].ElapsedMs != 40000 {
+		t.Errorf("results = %+v, %v", mine, err)
+	}
+	for gen, want := range map[int][]int64{1: {50000}, 2: {30000, 40000}} {
+		times, err := s.EndlessPuzzleResults(ctx, gen, 2, 3)
+		var got []int64
+		for _, r := range times {
+			got = append(got, r.ElapsedMs)
+		}
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Errorf("puzzle results gen %d = %v, %v; want %v", gen, got, err, want)
+		}
+	}
+	for gen, want := range map[int]int{1: 1, 2: 2} {
+		prog, err := s.EndlessProgressAll(ctx, gen)
+		if err != nil || len(prog) != want {
+			t.Errorf("progress gen %d = %+v, %v", gen, prog, err)
+		}
+	}
+	for gen, want := range map[int]string{1: `[{"t":1}]`, 2: `[{"t":2}]`} {
+		if ev, err := s.EndlessReplayEvents(ctx, alice.ID, gen, 2, 3); err != nil || string(ev) != want {
+			t.Errorf("events gen %d = %q, %v", gen, ev, err)
+		}
+	}
+
+	// Flags address one series only.
+	if err := s.FlagEndlessResult(ctx, alice.ID, 2, 2, 3, bob.ID, "x", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := s.AdminEndlessResult(ctx, alice.ID, 2, 2, 3); r.Flag == nil || r.Generator != 2 {
+		t.Errorf("gen 2 result = %+v", r)
+	}
+	if r, _ := s.AdminEndlessResult(ctx, alice.ID, 1, 2, 3); r.Flag != nil || r.Generator != 1 {
+		t.Errorf("gen 1 result = %+v", r)
+	}
+	if err := s.UnflagEndlessResult(ctx, alice.ID, 2, 2, 3); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AdminEndlessResult(ctx, bob.ID, 1, 2, 3); !errors.Is(err, ErrNotFound) {
+		t.Errorf("bob has no generator 1 result: %v", err)
+	}
+}
+
+// TestMigrateEndlessGenerator opens a database left by the previous server
+// version (schema 5) holding endless results with and without replays and
+// flags, and checks that migrating keeps them all as generator 1.
+func TestMigrateEndlessGenerator(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "v5.db")
+	raw, err := sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw.SetMaxOpenConns(1)
+	names, _ := migrationFS.ReadDir("migrations")
+	for _, n := range names[:5] {
+		body, err := migrationFS.ReadFile("migrations/" + n.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := raw.Exec(string(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, q := range []string{
+		`INSERT INTO users (id, subject, display_name) VALUES (1, 'a', 'Alice')`,
+		`INSERT INTO users (id, subject, display_name) VALUES (2, 'b', 'Bob')`,
+		`INSERT INTO endless_results (user_id, difficulty, number, elapsed_ms, completed_at, submitted_at, replay_status, replay_error, flagged_at, flagged_by, flag_reason, flag_auto)
+			VALUES (1, 3, 7, 90000, 'c1', '2026-10-26T00:00:00.000Z', 'invalid', 'boom', '2026-10-26T01:00:00.000Z', 2, 'bad', 0)`,
+		`INSERT INTO endless_results (user_id, difficulty, number, elapsed_ms, completed_at, replay_status)
+			VALUES (2, 3, 7, 80000, 'c2', 'missing')`,
+		`INSERT INTO endless_replays (user_id, difficulty, number, events) VALUES (1, 3, 7, '[{"t":5}]')`,
+		`PRAGMA user_version = 5`,
+	} {
+		if _, err := raw.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw.Close()
+
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	r, err := s.AdminEndlessResult(ctx, 1, 1, 3, 7)
+	if err != nil || r.Generator != 1 || r.ElapsedMs != 90000 || r.CompletedAt != "c1" || r.SubmittedAt != "2026-10-26T00:00:00.000Z" ||
+		r.ReplayStatus != "invalid" || r.ReplayError != "boom" || r.Flag == nil || r.Flag.Reason != "bad" || r.Flag.By == nil || r.Flag.By.ID != 2 {
+		t.Errorf("migrated result = %+v, %v", r, err)
+	}
+	if ev, err := s.EndlessReplayEvents(ctx, 1, 1, 3, 7); err != nil || string(ev) != `[{"t":5}]` {
+		t.Errorf("migrated replay = %q, %v", ev, err)
+	}
+	if ev, err := s.EndlessReplayEvents(ctx, 2, 1, 3, 7); err != nil || ev != nil {
+		t.Errorf("replay of a result without one = %q, %v", ev, err)
+	}
+	if times, err := s.EndlessPuzzleResults(ctx, 1, 3, 7); err != nil || len(times) != 2 || times[0].UserID != 2 {
+		t.Errorf("migrated puzzle results = %+v, %v", times, err)
+	}
+	// The same puzzle in the new series is free, and the old key is still unique.
+	if _, created, err := s.InsertEndlessResult(ctx, EndlessResult{UserID: 1, Generator: 2, Difficulty: 3, Number: 7, ElapsedMs: 6000, CompletedAt: "x", ReplayStatus: "valid", Events: "[]"}); err != nil || !created {
+		t.Errorf("generator 2 insert after migration: created=%v err=%v", created, err)
+	}
+	if _, created, err := s.InsertEndlessResult(ctx, EndlessResult{UserID: 1, Generator: 1, Difficulty: 3, Number: 7, ElapsedMs: 6000, CompletedAt: "x", ReplayStatus: "valid"}); err != nil || created {
+		t.Errorf("generator 1 duplicate after migration: created=%v err=%v", created, err)
+	}
+	// The replay foreign key follows the renamed table.
+	var fk string
+	if err := s.db.QueryRow(`SELECT "table" FROM pragma_foreign_key_list('endless_replays')`).Scan(&fk); err != nil || fk != "endless_results" {
+		t.Errorf("replay foreign key references %q, %v", fk, err)
 	}
 }

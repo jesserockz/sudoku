@@ -342,3 +342,23 @@ func TestGenerateVersionDispatches(t *testing.T) {
 		}
 	}
 }
+
+func TestGenerateEndlessVersion(t *testing.T) {
+	const es = 0x0123456789abcdef
+	c, err := GenerateEndlessVersion(VersionClassic, es, 2, 3)
+	want, _ := GenerateEndless(es, 2, 3)
+	if err != nil || c != want {
+		t.Errorf("classic = %+v, %v", c, err)
+	}
+	g, err := GenerateEndlessVersion(VersionGraded, es, 2, 3)
+	wantG, _ := GenerateEndlessV2(es, 2, 3)
+	if err != nil || g != wantG.Puzzle || g == c {
+		t.Errorf("graded = %+v, %v", g, err)
+	}
+	if _, err := GenerateEndlessVersion(VersionGraded, es, 0, 3); err == nil {
+		t.Error("expected an error for a bad difficulty")
+	}
+	if _, err := GenerateEndlessVersion(9, es, 2, 3); err == nil {
+		t.Error("expected an error for an unknown version")
+	}
+}

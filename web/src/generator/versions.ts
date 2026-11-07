@@ -1,5 +1,5 @@
-import { DEFAULT_LEVELS, generateDay, type Puzzle } from "./generator.ts";
-import { generateDayV2 } from "./generator-v2.ts";
+import { DEFAULT_LEVELS, type EndlessPuzzle, generateDay, generateEndless, type Puzzle } from "./generator.ts";
+import { generateDayV2, generateEndlessV2 } from "./generator-v2.ts";
 
 /** Generator version 1: puzzles by clue count (`generator.ts`). Players see it as "Classic". */
 export const GENERATOR_CLASSIC = 1;
@@ -27,6 +27,15 @@ export function generateDayVersion(version: number, weekSeed: bigint, dayOfWeek:
   switch (version) {
     case GENERATOR_CLASSIC: return generateDay(weekSeed, dayOfWeek, levels);
     case GENERATOR_GRADED: return generateDayV2(weekSeed, dayOfWeek, levels);
+    default: throw new RangeError(`unknown generator version: ${version}`);
+  }
+}
+
+/** Endless puzzle `number` of tier `tier` with generator `version`. Throws a `RangeError` for an unknown version. */
+export function generateEndlessVersion(version: number, endlessSeed: bigint, tier: number, number: number): EndlessPuzzle {
+  switch (version) {
+    case GENERATOR_CLASSIC: return generateEndless(endlessSeed, tier, number);
+    case GENERATOR_GRADED: return generateEndlessV2(endlessSeed, tier, number).puzzle;
     default: throw new RangeError(`unknown generator version: ${version}`);
   }
 }

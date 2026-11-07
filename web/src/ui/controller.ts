@@ -1,14 +1,14 @@
 import { ApiException } from "../api/client.ts";
 import type { AppConfig, EndlessBoard, EndlessProgress, EndlessResult, Leaderboard, Me, MyStats, PendingGenerator, Streak, Week } from "../api/models.ts";
-import type { HomeTab } from "../data/app-storage.ts";
-import type { EndlessSource } from "../data/endless.ts";
+import { type HomeTab, endlessGameKey, parseEndlessGameKey } from "../data/app-storage.ts";
+import type { EndlessInProgress, EndlessSource } from "../data/endless.ts";
 import { OidcException } from "../api/oidc.ts";
 import { SignInError, type SudokuRepository } from "../data/repository.ts";
 import { addDays } from "../game/calendar.ts";
 import { Game } from "../game/game.ts";
 import type { ReplayInput } from "../game/replay.ts";
 import { DIFFICULTIES, type EndlessPuzzle, isEndlessNumber, type Puzzle } from "../generator/generator.ts";
-import { GENERATOR_CLASSIC } from "../generator/versions.ts";
+import { GENERATOR_CLASSIC, isGeneratorVersion } from "../generator/versions.ts";
 import { fingerprint, sameSettings, type SeedSettings } from "../serverless/seed.ts";
 import type { SeedProfile, SeedRepository, SeedResult } from "../serverless/seed-repository.ts";
 import { buildShareLink, parseShareLink } from "../serverless/share-link.ts";
@@ -40,8 +40,12 @@ export const ENDLESS_LABEL = "Endless";
 /** Which "how it works" explainer is open over the screen. */
 export type HelpTopic = HomeTab;
 
-/** An endless puzzle: `number` (from 1) of difficulty tier `difficulty` (1 = Easy .. 5 = Diabolical). */
+/**
+ * An endless puzzle: `number` (from 1) of difficulty tier `difficulty` (1 = Easy .. 5 = Diabolical) in the series
+ * of generator version `generator` (each version numbers its own puzzles).
+ */
 export interface EndlessRef {
+  generator: number;
   difficulty: number;
   number: number;
 }
@@ -49,7 +53,7 @@ export interface EndlessRef {
 /** A puzzle being played: today's game `level`, or an endless puzzle. */
 export type PuzzleRef = number | EndlessRef;
 
-/** One difficulty on the endless tab. `next` is the lowest number not solved yet. */
+/** One difficulty on the endless tab, in the current series. `next` is the lowest number not solved yet. */
 export interface EndlessSummary {
   difficulty: number;
   solved: number;
@@ -62,9 +66,9 @@ export interface EndlessSummary {
 export type Screen =
   | { kind: "today" }
   | { kind: "play"; level: number }
-  | { kind: "endless-play"; difficulty: number; number: number }
-  /** The endless leaderboard: everyone's progress in `difficulty`, or with `number` that puzzle's times. */
-  | { kind: "endless-scores"; difficulty: number; number: number | null }
+  | { kind: "endless-play"; generator: number; difficulty: number; number: number }
+  /** The endless leaderboard of `generator`'s series: everyone's progress in `difficulty`, or with `number` that puzzle's times. */
+  | { kind: "endless-scores"; generator: number; difficulty: number; number: number | null }
   | { kind: "scores"; date: string; tab: number }
   /** The signed-in player's streak and personal stats. */
   | { kind: "stats" }
@@ -314,7 +318,7 @@ export class AppController extends EventTarget {
         // A leaderboard that failed (e.g. offline) tries again.
         if (this.screen.kind === "scores" && this.leaderboardError !== null) this.#loadLeaderboard(this.screen.date);
         if (this.screen.kind === "stats" && this.statsError !== null) this.openStats();
-        if (this.screen.kind === "endless-scores" && this.leaderboardError !== null) this.openEndlessScores(this.screen.difficulty, this.screen.number);
+        if (this.screen.kind === "endless-scores" && this.leaderboardError !== null) this.openEndlessScores(this.screen.difficulty, this.screen.number, this.screen.generator);
         this.#changed();
       }
     })();
@@ -637,33 +641,47 @@ export class AppController extends EventTarget {
     return this.seed ? this.#seeds : this.#repo;
   }
 
-  /** Serverless play's endless solve times, by difficulty then number. */
+  /** Serverless play's endless solve times, by series, difficulty then number. */
   endlessHistory(): EndlessResult[] {
     return this.#seeds.endlessHistory();
   }
 
-  /** The endless tab, per difficulty, or `null` until the endless seed has been downloaded once. */
+  /**
+   * The series the Endless tab plays: the generator the current week uses. It follows the week, so when the
+   * generator changes the tab switches series by itself, and switching back resumes the earlier series.
+   */
+  get endlessGenerator(): number {
+    return this.week?.generator ?? GENERATOR_CLASSIC;
+  }
+
+  /** The endless tab for the current series, per difficulty, or `null` until the endless seed has been downloaded once. */
   endlessSummaries(): EndlessSummary[] | null {
-    if (!this.#endlessSource.endlessPuzzle(1, 1)) return null;
+    if (!this.#endlessSource.endlessReady()) return null;
+    const generator = this.endlessGenerator;
     const solved = this.#endlessSource.endlessSolved();
     const inProgress = this.#endlessSource.endlessInProgress();
     return DIFFICULTIES.map((_, i) => {
       const difficulty = i + 1;
-      const numbers = [...solved.keys()].filter((k) => k.startsWith(`${difficulty}/`)).map((k) => Number(k.split("/")[1]));
+      const numbers = [...solved.keys()].map(parseEndlessGameKey).filter((k) => k.generator === generator && k.difficulty === difficulty).map((k) => k.number);
       let next = 1;
-      while (solved.has(`${difficulty}/${next}`)) next++;
+      while (solved.has(endlessGameKey(generator, difficulty, next))) next++;
       return {
         difficulty, solved: numbers.length, highest: Math.max(0, ...numbers), next,
-        inProgress: inProgress.filter((g) => g.difficulty === difficulty).map((g) => ({ number: g.number, elapsedMs: g.elapsedMs })),
+        inProgress: inProgress.filter((g) => g.generator === generator && g.difficulty === difficulty).map((g) => ({ number: g.number, elapsedMs: g.elapsedMs })),
       };
     });
+  }
+
+  /** Unfinished games of the series the tab isn't playing now (e.g. Classic after the week moved to Graded), which can still be resumed. */
+  endlessElsewhere(): EndlessInProgress[] {
+    return this.#endlessSource.endlessInProgress().filter((g) => g.generator !== this.endlessGenerator);
   }
 
   /** An endless puzzle's state, as {@link statusOf} for today's. */
   endlessStatusOf(ref: EndlessRef): PuzzleStatus {
     const open = this.#endless && sameEndless(this.#endless.ref, ref) ? this.#endless.game : null;
     const game = open ?? this.#loadEndless(ref)?.game ?? null;
-    const solved = this.#endlessSource.endlessSolved().get(`${ref.difficulty}/${ref.number}`);
+    const solved = this.#endlessSource.endlessSolved().get(endlessGameKey(ref.generator, ref.difficulty, ref.number));
     if (solved) return { kind: "done", elapsedMs: solved.elapsedMs, synced: solved.synced };
     if (!game) return { kind: "new" };
     if (game.completedElapsedMs !== null) return { kind: "done", elapsedMs: game.completedElapsedMs, synced: false };
@@ -672,39 +690,42 @@ export class AppController extends EventTarget {
 
   /** Plays an endless puzzle, resuming it if it was started here. One solved elsewhere opens its leaderboard. */
   openEndless(ref: EndlessRef): void {
-    if (!this.hasEndless || !DIFFICULTIES[ref.difficulty - 1] || !isEndlessNumber(ref.number)) return;
+    if (!this.hasEndless || !isGeneratorVersion(ref.generator) || !DIFFICULTIES[ref.difficulty - 1] || !isEndlessNumber(ref.number)) return;
     const loaded = this.#endless && sameEndless(this.#endless.ref, ref) ? this.#endless : this.#loadEndless(ref);
     if (!loaded) return;
     if (this.endlessStatusOf(ref).kind === "done" && !loaded.game.isComplete) {
-      this.openEndlessScores(ref.difficulty, ref.number);
+      this.openEndlessScores(ref.difficulty, ref.number, ref.generator);
       return;
     }
     this.#endless = loaded;
-    this.#set({ screen: { kind: "endless-play", difficulty: ref.difficulty, number: ref.number } });
+    this.#set({ screen: { kind: "endless-play", generator: ref.generator, difficulty: ref.difficulty, number: ref.number } });
   }
 
   /** The endless puzzle and its game (a new one if it wasn't started here), or `null` without the endless seed. */
   #loadEndless(ref: EndlessRef): { ref: EndlessRef; puzzle: EndlessPuzzle; game: Game } | null {
-    const puzzle = this.#endlessSource.endlessPuzzle(ref.difficulty, ref.number);
+    const puzzle = this.#endlessSource.endlessPuzzle(ref.generator, ref.difficulty, ref.number);
     if (!puzzle) return null;
-    const game = this.#endlessSource.loadEndlessGame(puzzle) ?? this.#stamp(Game.create(puzzle.givens), { a: "start" });
-    return { ref: { difficulty: ref.difficulty, number: ref.number }, puzzle, game };
+    const game = this.#endlessSource.loadEndlessGame(ref.generator, puzzle) ?? this.#stamp(Game.create(puzzle.givens), { a: "start" });
+    return { ref: { generator: ref.generator, difficulty: ref.difficulty, number: ref.number }, puzzle, game };
   }
 
-  /** The endless leaderboard: progress in `difficulty`, or one puzzle's times with `number`. In serverless play, the history. */
-  openEndlessScores(difficulty: number, number: number | null = null): void {
+  /**
+   * The endless leaderboard of `generator`'s series (the current one when omitted): progress in `difficulty`, or one
+   * puzzle's times with `number`. In serverless play, the history.
+   */
+  openEndlessScores(difficulty: number, number: number | null = null, generator: number = this.endlessGenerator): void {
     // No leaderboard without a server: serverless play's history lists endless solves too.
     if (this.seed) {
       this.openHistory();
       return;
     }
-    this.screen = { kind: "endless-scores", difficulty, number };
+    this.screen = { kind: "endless-scores", generator, difficulty, number };
     const request = ++this.#leaderboardRequest;
     this.endlessProgress = null;
     this.endlessBoard = null;
     this.leaderboardError = null;
     this.#changed();
-    const load: Promise<unknown> = number === null ? this.#repo.endlessProgress() : this.#repo.endlessBoard(difficulty, number);
+    const load: Promise<unknown> = number === null ? this.#repo.endlessProgress(generator) : this.#repo.endlessBoard(generator, difficulty, number);
     load.then(
       (data) => {
         if (request !== this.#leaderboardRequest) return;
@@ -733,7 +754,7 @@ export class AppController extends EventTarget {
   /** "See scores" after solving `ref`. */
   openScoresFor(ref: PuzzleRef): void {
     if (typeof ref === "number") this.openScores(ref);
-    else this.openEndlessScores(ref.difficulty, ref.number);
+    else this.openEndlessScores(ref.difficulty, ref.number, ref.generator);
   }
 
   openPuzzle(level: number): void {
@@ -834,8 +855,8 @@ export class AppController extends EventTarget {
     if (finished) after = this.#stamp(after, { a: "finish" });
     if (typeof ref !== "number") {
       this.#endless!.game = after;
-      this.#endlessSource.saveEndlessGame(ref.difficulty, ref.number, after, this.nowMs());
-      if (finished) void this.#endlessSource.completeEndless(ref.difficulty, ref.number, after).then(() => this.sync());
+      this.#endlessSource.saveEndlessGame(ref.generator, ref.difficulty, ref.number, after, this.nowMs());
+      if (finished) void this.#endlessSource.completeEndless(ref.generator, ref.difficulty, ref.number, after).then(() => this.sync());
       this.#changed();
       return;
     }
@@ -903,7 +924,7 @@ export class AppController extends EventTarget {
   }
 }
 
-const sameEndless = (a: EndlessRef, b: EndlessRef) => a.difficulty === b.difficulty && a.number === b.number;
+const sameEndless = (a: EndlessRef, b: EndlessRef) => a.generator === b.generator && a.difficulty === b.difficulty && a.number === b.number;
 
 function describe(e: unknown): string {
   if (e instanceof SignInError) return e.message || "Sign-in failed.";

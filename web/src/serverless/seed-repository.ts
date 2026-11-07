@@ -48,7 +48,8 @@ function decodeResult(json: unknown): SeedResult {
  *
  * Endless puzzles come from the seed too (see {@link endlessSeed}): their games
  * and solve times are kept per seed like the daily ones, but never pruned, as
- * an endless puzzle can be finished at any time.
+ * an endless puzzle can be finished at any time. Each generator version has its
+ * own series of them, with its own numbering.
  *
  * Games and history are kept per seed (keyed by its fingerprint), so switching
  * seeds and back resumes where you were and never mixes two groups' games.
@@ -177,53 +178,58 @@ export class SeedRepository implements EndlessSource {
     if (this.#endlessSeed?.seed !== seed) this.#endlessSeed = { seed, hex: await endlessSeed(seed) };
   }
 
-  /** Endless puzzle `number` of `difficulty`, or `null` until {@link loadEndless} has run for the active seed. */
-  endlessPuzzle(difficulty: number, number: number): EndlessPuzzle | null {
-    if (!this.#endlessSeed || this.#endlessSeed.seed !== this.profile()?.settings.seed) return null;
-    return this.#endlessPuzzles.get(this.#endlessSeed.hex, difficulty, number);
+  /** Whether {@link loadEndless} has run for the active seed. */
+  endlessReady(): boolean {
+    return this.#endlessSeed !== null && this.#endlessSeed.seed === this.profile()?.settings.seed;
+  }
+
+  /** Endless puzzle `number` of `difficulty` in `generator`'s series, or `null` until {@link loadEndless} has run for the active seed. */
+  endlessPuzzle(generator: number, difficulty: number, number: number): EndlessPuzzle | null {
+    if (!this.endlessReady()) return null;
+    return this.#endlessPuzzles.get(this.#endlessSeed!.hex, generator, difficulty, number);
   }
 
   /** Every solved endless puzzle of the active seed, by {@link endlessGameKey}. */
   endlessSolved(): Map<string, EndlessSolved> {
-    return new Map(this.endlessHistory().map((r) => [endlessGameKey(r.difficulty, r.number), { elapsedMs: r.elapsedMs, synced: true }]));
+    return new Map(this.endlessHistory().map((r) => [endlessGameKey(r.generator, r.difficulty, r.number), { elapsedMs: r.elapsedMs, synced: true }]));
   }
 
-  /** Every endless solve of the active seed, by difficulty then number. */
+  /** Every endless solve of the active seed, by series, difficulty then number. */
   endlessHistory(): EndlessResult[] {
     const profile = this.profile();
     const results = profile ? (this.#endlessHistory(profile).read() ?? []) : [];
-    return results.sort((a, b) => a.difficulty - b.difficulty || a.number - b.number);
+    return results.sort((a, b) => a.generator - b.generator || a.difficulty - b.difficulty || a.number - b.number);
   }
 
-  /** Endless games started and not solved yet, by difficulty then number. */
+  /** Endless games started and not solved yet, by series, difficulty then number. */
   endlessInProgress(): EndlessInProgress[] {
     return endlessInProgressOf(this.#endlessGames().read());
   }
 
   /** A saved game for an endless puzzle, if it still matches the puzzle. */
-  loadEndlessGame(puzzle: EndlessPuzzle): Game | null {
-    const saved = this.#endlessGames().read()?.[endlessGameKey(puzzle.tier, puzzle.number)];
+  loadEndlessGame(generator: number, puzzle: EndlessPuzzle): Game | null {
+    const saved = this.#endlessGames().read()?.[endlessGameKey(generator, puzzle.tier, puzzle.number)];
     return saved && saved.givens === puzzle.givens ? Game.restore(saved) : null;
   }
 
-  saveEndlessGame(difficulty: number, number: number, game: Game, nowMs: number): void {
-    this.#endlessGames().update((games) => ({ ...games, [endlessGameKey(difficulty, number)]: game.save(nowMs) }));
+  saveEndlessGame(generator: number, difficulty: number, number: number, game: Game, nowMs: number): void {
+    this.#endlessGames().update((games) => ({ ...games, [endlessGameKey(generator, difficulty, number)]: game.save(nowMs) }));
   }
 
   /**
    * Records a just-finished endless game in the history and drops its saved
    * game, which has nothing left to resume. The first result for a puzzle counts.
    */
-  async completeEndless(difficulty: number, number: number, game: Game): Promise<EndlessResult> {
+  async completeEndless(generator: number, difficulty: number, number: number, game: Game): Promise<EndlessResult> {
     const profile = this.#requireProfile();
     if (game.completedElapsedMs === null) throw new Error("game isn't complete");
-    const key = endlessGameKey(difficulty, number);
+    const key = endlessGameKey(generator, difficulty, number);
     this.#endlessGames().update((games) => Object.fromEntries(Object.entries(games ?? {}).filter(([k]) => k !== key)));
     const history = this.#endlessHistory(profile);
-    const existing = (history.read() ?? []).find((r) => r.difficulty === difficulty && r.number === number);
+    const existing = (history.read() ?? []).find((r) => r.generator === generator && r.difficulty === difficulty && r.number === number);
     if (existing) return existing;
     const result: EndlessResult = {
-      difficulty, number, elapsedMs: game.completedElapsedMs, completedAt: new Date(this.#now()).toISOString().replace(".000Z", "Z"),
+      generator, difficulty, number, elapsedMs: game.completedElapsedMs, completedAt: new Date(this.#now()).toISOString().replace(".000Z", "Z"),
     };
     history.update((h) => [...(h ?? []), result]);
     return result;

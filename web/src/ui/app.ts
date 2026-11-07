@@ -37,7 +37,7 @@ export class SudokuApp extends HTMLElement {
       : screen.kind === "play"
         ? ["sudoku-play", `play-${screen.level}`]
         : screen.kind === "endless-play"
-          ? ["sudoku-play", `endless-play-${screen.difficulty}-${screen.number}`]
+          ? ["sudoku-play", `endless-play-${screen.generator}-${screen.difficulty}-${screen.number}`]
           : [`sudoku-${screen.kind}`, screen.kind];
     if (key === this.#key && this.#screen) {
       this.#screen.update();
@@ -46,7 +46,7 @@ export class SudokuApp extends HTMLElement {
     const next = document.createElement(tag) as ScreenElement;
     next.app = app;
     if (screen.kind === "play") next.ref = screen.level;
-    else if (screen.kind === "endless-play") next.ref = { difficulty: screen.difficulty, number: screen.number };
+    else if (screen.kind === "endless-play") next.ref = { generator: screen.generator, difficulty: screen.difficulty, number: screen.number };
     // Set before swapping: the old screen may change the app as it leaves (e.g. pausing its game).
     this.#key = key;
     this.#screen = next;

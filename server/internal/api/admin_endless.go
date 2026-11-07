@@ -10,10 +10,12 @@ import (
 	"unicode/utf8"
 
 	"github.com/jesserockz/sudoku/server/internal/httpx"
+	"github.com/jesserockz/sudoku/server/internal/puzzle"
 	"github.com/jesserockz/sudoku/server/internal/store"
 )
 
 type adminEndlessResultJSON struct {
+	Generator   int       `json:"generator"`
 	UserID      string    `json:"userId"`
 	DisplayName string    `json:"displayName"`
 	Difficulty  int       `json:"difficulty"`
@@ -28,6 +30,7 @@ type adminEndlessResultJSON struct {
 
 func toAdminEndlessResultJSON(r store.AdminEndlessResult) adminEndlessResultJSON {
 	return adminEndlessResultJSON{
+		Generator:   r.Generator,
 		UserID:      userID(r.UserID),
 		DisplayName: r.DisplayName,
 		Difficulty:  r.Difficulty,
@@ -65,19 +68,33 @@ func (s *Server) getAdminEndlessResults(w http.ResponseWriter, r *http.Request) 
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
-// endlessResultKey reads {difficulty}, {number} and {userId} from the path.
-// On a bad value it writes a 400 and returns false.
-func endlessResultKey(w http.ResponseWriter, r *http.Request) (difficulty int, number int64, uid int64, ok bool) {
-	difficulty, number, ok = endlessPuzzleParams(w, r)
+// endlessKey identifies one endless result.
+type endlessKey struct {
+	uid        int64
+	generator  int
+	difficulty int
+	number     int64
+}
+
+// endlessResultKey reads {difficulty}, {number} and {userId} from the path
+// and the optional ?generator= (default 1). On a bad value it writes a 400
+// and returns false.
+func (s *Server) endlessResultKey(w http.ResponseWriter, r *http.Request) (k endlessKey, ok bool) {
+	k.difficulty, k.number, ok = endlessPuzzleParams(w, r)
 	if !ok {
-		return 0, 0, 0, false
+		return endlessKey{}, false
+	}
+	k.generator, ok = s.generatorParam(w, r, puzzle.VersionClassic)
+	if !ok {
+		return endlessKey{}, false
 	}
 	uid, err := strconv.ParseInt(r.PathValue("userId"), 10, 64)
 	if err != nil || uid < 1 {
 		httpx.Error(w, http.StatusBadRequest, httpx.CodeBadRequest, "userId must be a positive integer")
-		return 0, 0, 0, false
+		return endlessKey{}, false
 	}
-	return difficulty, number, uid, true
+	k.uid = uid
+	return k, true
 }
 
 type adminEndlessReplayResponse struct {
@@ -88,16 +105,16 @@ type adminEndlessReplayResponse struct {
 }
 
 func (s *Server) getAdminEndlessReplay(w http.ResponseWriter, r *http.Request) {
-	difficulty, number, uid, ok := endlessResultKey(w, r)
+	k, ok := s.endlessResultKey(w, r)
 	if !ok {
 		return
 	}
-	res, err := s.deps.Store.AdminEndlessResult(r.Context(), uid, difficulty, number)
+	res, err := s.deps.Store.AdminEndlessResult(r.Context(), k.uid, k.generator, k.difficulty, k.number)
 	if err != nil {
 		writeStoreError(w, r, err)
 		return
 	}
-	events, err := s.deps.Store.EndlessReplayEvents(r.Context(), uid, difficulty, number)
+	events, err := s.deps.Store.EndlessReplayEvents(r.Context(), k.uid, k.generator, k.difficulty, k.number)
 	if err != nil {
 		httpx.Internal(w, r, err)
 		return
@@ -107,13 +124,13 @@ func (s *Server) getAdminEndlessReplay(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.WriteJSON(w, http.StatusOK, adminEndlessReplayResponse{
 		adminEndlessResultJSON: toAdminEndlessResultJSON(res),
-		Givens:                 s.endlessPuzzleFor(difficulty, number).Givens,
+		Givens:                 s.endlessPuzzleFor(k.generator, k.difficulty, k.number).Givens,
 		Events:                 events,
 	})
 }
 
 func (s *Server) putAdminEndlessFlag(w http.ResponseWriter, r *http.Request) {
-	difficulty, number, uid, ok := endlessResultKey(w, r)
+	k, ok := s.endlessResultKey(w, r)
 	if !ok {
 		return
 	}
@@ -128,24 +145,24 @@ func (s *Server) putAdminEndlessFlag(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, httpx.CodeBadRequest, "reason must be at most 500 characters")
 		return
 	}
-	err := s.deps.Store.FlagEndlessResult(r.Context(), uid, difficulty, number, currentUser(r).ID, reason, s.deps.Clock.Now())
-	s.respondEndlessFlagged(w, r, err, uid, difficulty, number)
+	err := s.deps.Store.FlagEndlessResult(r.Context(), k.uid, k.generator, k.difficulty, k.number, currentUser(r).ID, reason, s.deps.Clock.Now())
+	s.respondEndlessFlagged(w, r, err, k)
 }
 
 func (s *Server) deleteAdminEndlessFlag(w http.ResponseWriter, r *http.Request) {
-	difficulty, number, uid, ok := endlessResultKey(w, r)
+	k, ok := s.endlessResultKey(w, r)
 	if !ok {
 		return
 	}
-	err := s.deps.Store.UnflagEndlessResult(r.Context(), uid, difficulty, number)
-	s.respondEndlessFlagged(w, r, err, uid, difficulty, number)
+	err := s.deps.Store.UnflagEndlessResult(r.Context(), k.uid, k.generator, k.difficulty, k.number)
+	s.respondEndlessFlagged(w, r, err, k)
 }
 
 // respondEndlessFlagged answers a flag change with the updated list item.
-func (s *Server) respondEndlessFlagged(w http.ResponseWriter, r *http.Request, err error, uid int64, difficulty int, number int64) {
+func (s *Server) respondEndlessFlagged(w http.ResponseWriter, r *http.Request, err error, k endlessKey) {
 	var res store.AdminEndlessResult
 	if err == nil {
-		res, err = s.deps.Store.AdminEndlessResult(r.Context(), uid, difficulty, number)
+		res, err = s.deps.Store.AdminEndlessResult(r.Context(), k.uid, k.generator, k.difficulty, k.number)
 	}
 	if err != nil {
 		writeStoreError(w, r, err)

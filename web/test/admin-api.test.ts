@@ -102,15 +102,15 @@ test("the client calls the admin endless endpoints", async () => {
   const c = api(server);
 
   assert.equal((await c.adminEndlessResults("2026-10-27")).results[0]!.number, 7);
-  assert.equal((await c.adminEndlessReplay(2, 7, "u/1")).events.length, 0);
-  assert.equal((await c.flagEndlessResult(2, 7, "u/1", "odd")).difficulty, 2);
-  assert.equal((await c.unflagEndlessResult(2, 7, "u/1")).userId, "u/1");
+  assert.equal((await c.adminEndlessReplay(1, 2, 7, "u/1")).events.length, 0);
+  assert.equal((await c.flagEndlessResult(1, 2, 7, "u/1", "odd")).difficulty, 2);
+  assert.equal((await c.unflagEndlessResult(1, 2, 7, "u/1")).userId, "u/1");
   const sent = server.requests.filter((r) => r.url.pathname.startsWith("/api/v1/admin/endless"));
   assert.deepEqual(sent.map((r) => [r.method, r.url.pathname + r.url.search]), [
     ["GET", "/api/v1/admin/endless/results?date=2026-10-27"],
-    ["GET", "/api/v1/admin/endless/results/2/7/u%2F1/replay"],
-    ["PUT", "/api/v1/admin/endless/results/2/7/u%2F1/flag"],
-    ["DELETE", "/api/v1/admin/endless/results/2/7/u%2F1/flag"],
+    ["GET", "/api/v1/admin/endless/results/2/7/u%2F1/replay?generator=1"],
+    ["PUT", "/api/v1/admin/endless/results/2/7/u%2F1/flag?generator=1"],
+    ["DELETE", "/api/v1/admin/endless/results/2/7/u%2F1/flag?generator=1"],
   ]);
   assert.deepEqual(JSON.parse(sent[2]!.body), { reason: "odd" });
 

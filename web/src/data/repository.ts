@@ -289,11 +289,16 @@ export class SudokuRepository implements EndlessSource {
     this.#storage.endlessHelpSeen.write(true);
   }
 
-  /** Endless puzzle `number` of `difficulty`, or `null` until the endless seed has been fetched once. */
-  endlessPuzzle(difficulty: number, number: number): EndlessPuzzle | null {
+  /** Whether the endless seed has been fetched once. */
+  endlessReady(): boolean {
+    return this.#storage.endless.read() !== null;
+  }
+
+  /** Endless puzzle `number` of `difficulty` in `generator`'s series, or `null` until the endless seed has been fetched once. */
+  endlessPuzzle(generator: number, difficulty: number, number: number): EndlessPuzzle | null {
     const seed = this.#storage.endless.read()?.seed;
     if (!seed) return null;
-    return this.#endlessPuzzles.get(seed, difficulty, number);
+    return this.#endlessPuzzles.get(seed, generator, difficulty, number);
   }
 
   /** Every solved endless puzzle, by {@link endlessGameKey}: the server's record, then the offline queue. */
@@ -304,36 +309,36 @@ export class SudokuRepository implements EndlessSource {
     return solved;
   }
 
-  /** Endless games started on this device and not solved yet, by difficulty then number. */
+  /** Endless games started on this device and not solved yet, by series, difficulty then number. */
   endlessInProgress(): EndlessInProgress[] {
     return endlessInProgressOf(this.#storage.endlessGames.read());
   }
 
   /** A saved game for an endless puzzle, if it still matches the puzzle. */
-  loadEndlessGame(puzzle: EndlessPuzzle): Game | null {
-    const saved = this.#storage.endlessGames.read()?.[endlessGameKey(puzzle.tier, puzzle.number)];
+  loadEndlessGame(generator: number, puzzle: EndlessPuzzle): Game | null {
+    const saved = this.#storage.endlessGames.read()?.[endlessGameKey(generator, puzzle.tier, puzzle.number)];
     return saved && saved.givens === puzzle.givens ? Game.restore(saved) : null;
   }
 
-  saveEndlessGame(difficulty: number, number: number, game: Game, nowMs: number): void {
-    this.#storage.endlessGames.update((games) => ({ ...games, [endlessGameKey(difficulty, number)]: game.save(nowMs) }));
+  saveEndlessGame(generator: number, difficulty: number, number: number, game: Game, nowMs: number): void {
+    this.#storage.endlessGames.update((games) => ({ ...games, [endlessGameKey(generator, difficulty, number)]: game.save(nowMs) }));
   }
 
   /** Queues the result of a just-finished endless game. */
-  async completeEndless(difficulty: number, number: number, game: Game): Promise<EndlessResult> {
+  async completeEndless(generator: number, difficulty: number, number: number, game: Game): Promise<EndlessResult> {
     if (game.completedElapsedMs === null) throw new Error("game isn't complete");
-    const result: EndlessResult = { difficulty, number, elapsedMs: game.completedElapsedMs, completedAt: formatTimestamp(this.#now()) };
+    const result: EndlessResult = { generator, difficulty, number, elapsedMs: game.completedElapsedMs, completedAt: formatTimestamp(this.#now()) };
     if (game.replay.length <= MAX_REPLAY_EVENTS) result.replay = { version: REPLAY_VERSION, events: game.replay.slice() };
     await this.endlessSync.enqueue(result);
     return result;
   }
 
-  endlessProgress(): Promise<EndlessProgress> {
-    return this.#client().endlessProgress();
+  endlessProgress(generator: number): Promise<EndlessProgress> {
+    return this.#client().endlessProgress(generator);
   }
 
-  endlessBoard(difficulty: number, number: number): Promise<EndlessBoard> {
-    return this.#client().endlessBoard(difficulty, number);
+  endlessBoard(generator: number, difficulty: number, number: number): Promise<EndlessBoard> {
+    return this.#client().endlessBoard(generator, difficulty, number);
   }
 
   /** Keeps the server's endless results, and drops finished games it has: they'd otherwise pile up forever. */

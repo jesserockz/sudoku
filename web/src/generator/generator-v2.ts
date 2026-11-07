@@ -124,7 +124,7 @@ export function generateV2(weekSeed: bigint, dayOfWeek: number, level: number, l
   return { puzzle: new Puzzle(weekSeed, dayOfWeek, level, levels, givens, solution), grade, attempts };
 }
 
-/** {@link generateEndless} for v2: number `number` of tier `tier` (1..5). Endless puzzles are still v1 only. */
+/** {@link generateEndless} for v2: number `number` of tier `tier` (1..5). */
 export function generateEndlessV2(endlessSeed: bigint, tier: number, number: number): Graded<EndlessPuzzle> {
   if (!(Number.isInteger(tier) && tier >= 1 && tier <= BANDS.length)) throw new RangeError(`difficulty must be 1..${BANDS.length}: ${tier}`);
   if (!isEndlessNumber(number)) throw new RangeError(`number must be 1..${MAX_ENDLESS_NUMBER}: ${number}`);

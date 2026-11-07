@@ -221,10 +221,12 @@ export interface EndlessInfo {
 }
 
 /**
- * One endless result: the body of `POST /api/v1/endless/results` and its response. `difficulty` is the tier
- * (1 = Easy .. 5 = Diabolical) and `number` the puzzle's number within it. `replay` is only sent, never returned.
+ * One endless result: the body of `POST /api/v1/endless/results` and its response. `generator` is the series
+ * (the generator version, 1 = Classic, 2 = Graded), `difficulty` the tier (1 = Easy .. 5 = Diabolical) and
+ * `number` the puzzle's number within the series' tier. `replay` is only sent, never returned.
  */
 export interface EndlessResult {
+  generator: number;
   difficulty: number;
   number: number;
   elapsedMs: number;
@@ -239,6 +241,8 @@ export interface MyEndlessResults {
 
 /** `GET /api/v1/endless/leaderboard`: per difficulty, how many puzzles each player has solved. */
 export interface EndlessProgress {
+  /** The series the numbers are for. */
+  generator: number;
   difficulties: {
     difficulty: number;
     players: { rank: number; userId: string; displayName: string; completed: number; highest: number; suspicious: boolean }[];
@@ -247,6 +251,7 @@ export interface EndlessProgress {
 
 /** `GET /api/v1/endless/leaderboard/{difficulty}/{number}`: one endless puzzle's times. */
 export interface EndlessBoard {
+  generator: number;
   difficulty: number;
   number: number;
   entries: { rank: number; userId: string; displayName: string; elapsedMs: number; suspicious: boolean }[];
@@ -254,6 +259,7 @@ export interface EndlessBoard {
 
 /** One endless result as admins see it: an {@link AdminResult} keyed by difficulty and number instead of a game of the day. */
 export interface AdminEndlessResult extends Omit<AdminResult, "level"> {
+  generator: number;
   difficulty: number;
   number: number;
 }
@@ -429,7 +435,7 @@ function decodeReplayGame(o: Record<string, unknown>): { givens: string; events:
 
 export function decodeAdminEndlessResult(json: unknown): AdminEndlessResult {
   const o = obj(json);
-  return { difficulty: num(o.difficulty), number: num(o.number), ...decodeAdminResultBase(json) };
+  return { generator: decodeGenerator(o.generator), difficulty: num(o.difficulty), number: num(o.number), ...decodeAdminResultBase(json) };
 }
 
 export function decodeAdminEndlessResults(json: unknown): AdminEndlessResults {
@@ -447,12 +453,15 @@ export function decodeEndlessInfo(json: unknown): EndlessInfo {
   return { seed };
 }
 
+/** The series of an endless result: results from before there were several series have none, and are Classic's. */
+const decodeGenerator = (json: unknown): number => optional(json, generatorVersion) ?? GENERATOR_CLASSIC;
+
 export function decodeEndlessResult(json: unknown): EndlessResult {
   const o = obj(json);
   const replay = optional(o.replay, decodeReplay);
   return {
-    difficulty: num(o.difficulty), number: num(o.number), elapsedMs: num(o.elapsedMs), completedAt: str(o.completedAt),
-    ...(replay ? { replay } : {}),
+    generator: decodeGenerator(o.generator), difficulty: num(o.difficulty), number: num(o.number), elapsedMs: num(o.elapsedMs),
+    completedAt: str(o.completedAt), ...(replay ? { replay } : {}),
   };
 }
 
@@ -470,6 +479,7 @@ const decodeTimeEntry = (e: unknown): EndlessBoard["entries"][number] => {
 
 export function decodeEndlessProgress(json: unknown): EndlessProgress {
   return {
+    generator: decodeGenerator(obj(json).generator),
     difficulties: list(obj(json).difficulties, (d) => {
       const b = obj(d);
       return {
@@ -488,7 +498,7 @@ export function decodeEndlessProgress(json: unknown): EndlessProgress {
 
 export function decodeEndlessBoard(json: unknown): EndlessBoard {
   const o = obj(json);
-  return { difficulty: num(o.difficulty), number: num(o.number), entries: list(o.entries, decodeTimeEntry) };
+  return { generator: decodeGenerator(o.generator), difficulty: num(o.difficulty), number: num(o.number), entries: list(o.entries, decodeTimeEntry) };
 }
 
 export function decodeDayResult(json: unknown): DayResult {

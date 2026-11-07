@@ -17,11 +17,17 @@ const maxNumber = 9007199254740991
 
 func endlessPuzzle(t *testing.T, difficulty int, number int64) puzzle.Puzzle {
 	t.Helper()
+	return endlessPuzzleG(t, puzzle.VersionClassic, difficulty, number)
+}
+
+// endlessPuzzleG is endlessPuzzle for generator version.
+func endlessPuzzleG(t *testing.T, generator, difficulty int, number int64) puzzle.Puzzle {
+	t.Helper()
 	es, err := puzzle.ParseWeekSeed(seed.ForEndless([]byte(testSecret)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := puzzle.GenerateEndless(es, difficulty, number)
+	p, err := puzzle.GenerateEndlessVersion(generator, es, difficulty, number)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +175,7 @@ func TestPostEndlessResultIdempotent(t *testing.T) {
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("first status = %d", resp.StatusCode)
 	}
-	want := endlessResultJSON{Difficulty: 2, Number: 7, ElapsedMs: 183000, CompletedAt: "2026-10-26T09:15:00+13:00"}
+	want := endlessResultJSON{Generator: 1, Difficulty: 2, Number: 7, ElapsedMs: 183000, CompletedAt: "2026-10-26T09:15:00+13:00"}
 	if first := decode[endlessResultJSON](t, resp); first != want {
 		t.Errorf("first = %+v", first)
 	}
@@ -267,7 +273,7 @@ func TestGetMyEndless(t *testing.T) {
 	}
 	at := "2026-10-26T09:15:00+13:00"
 	want := myEndlessResponse{Results: []endlessResultJSON{
-		{1, 2, 90000, at}, {1, 10, 80000, at}, {3, 2, 70000, at},
+		{1, 1, 2, 90000, at}, {1, 1, 10, 80000, at}, {1, 3, 2, 70000, at},
 	}}
 	if got := decode[myEndlessResponse](t, resp); !reflect.DeepEqual(got, want) {
 		t.Errorf("results = %+v", got)
@@ -437,7 +443,12 @@ type endlessDetail struct {
 
 func (e replayEnv) endlessDetail(t *testing.T, difficulty int, number int64, uid string) endlessDetail {
 	t.Helper()
-	resp := do(t, e.srv, "GET", endlessURL(difficulty, number, uid)+"/replay", adminToken, nil)
+	return e.endlessDetailG(t, 1, difficulty, number, uid)
+}
+
+func (e replayEnv) endlessDetailG(t *testing.T, generator, difficulty int, number int64, uid string) endlessDetail {
+	t.Helper()
+	resp := do(t, e.srv, "GET", endlessURL(difficulty, number, uid)+"/replay?generator="+strconv.Itoa(generator), adminToken, nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("replay status = %d", resp.StatusCode)
 	}
@@ -643,5 +654,162 @@ func TestPostEndlessResultStoreFailureStoresNothing(t *testing.T) {
 	e.sabotage(t, "ALTER TABLE gone RENAME TO endless_replays")
 	if n := len(decode[myEndlessResponse](t, do(t, e.srv, "GET", "/api/v1/me/endless", alice, nil)).Results); n != 0 {
 		t.Errorf("%d results stored after a failed insert", n)
+	}
+}
+
+func TestEndlessSeriesSubmitAndRead(t *testing.T) {
+	e := newReplayEnv(t, 1)
+	c, g := endlessPuzzleG(t, 1, 2, 7), endlessPuzzleG(t, 2, 2, 7)
+	if c.Givens == g.Givens {
+		t.Fatal("the series gave the same puzzle")
+	}
+	gBody := func(elapsed int64, rep any) map[string]any {
+		return with(endlessBody(2, 7, elapsed, rep), "generator", 2)
+	}
+
+	// A graded replay validates against the graded puzzle, and echoes the series.
+	rep, elapsed := solveReplay(g)
+	resp := do(t, e.srv, "POST", "/api/v1/endless/results", alice, gBody(elapsed, rep))
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if got := decode[endlessResultJSON](t, resp); got.Generator != 2 || got.ElapsedMs != elapsed {
+		t.Errorf("graded result = %+v", got)
+	}
+	// The same number in Classic (generator missing, or 1) is a separate result,
+	// and the graded replay does not solve it.
+	e.postEndless(t, alice, endlessBody(2, 7, elapsed, rep), http.StatusCreated)
+	e.postEndless(t, bobToken, with(endlessBody(2, 7, 60000, nil), "generator", 1), http.StatusCreated)
+	// Idempotent per series.
+	resp = do(t, e.srv, "POST", "/api/v1/endless/results", alice, gBody(1000000, nil))
+	if resp.StatusCode != http.StatusOK || decode[endlessResultJSON](t, resp).Generator != 2 {
+		t.Errorf("graded duplicate status = %d", resp.StatusCode)
+	}
+	e.postEndless(t, bobToken, gBody(40000, nil), http.StatusCreated)
+
+	e.sabotage(t, "UPDATE endless_results SET submitted_at = '2026-10-26T01:00:00.000Z'")
+	type row struct {
+		gen    int
+		name   string
+		replay string
+	}
+	var got []row
+	for _, r := range e.endlessList(t, "").Results {
+		got = append(got, row{r.Generator, r.DisplayName, r.Replay})
+	}
+	want := []row{{1, "Alice", "invalid"}, {1, "Bob", "missing"}, {2, "Bob", "missing"}, {2, "Alice", "valid"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("list = %v\nwant %v", got, want)
+	}
+
+	// Replays and flags address a series with ?generator= (default 1).
+	uid := e.userID(t, alice)
+	if d := e.endlessDetailG(t, 2, 2, 7, uid); d.Generator != 2 || d.Givens != g.Givens || d.Replay != "valid" || len(d.Events) == 0 {
+		t.Errorf("graded detail = %+v", d.adminEndlessResultJSON)
+	}
+	if d := e.endlessDetail(t, 2, 7, uid); d.Generator != 1 || d.Givens != c.Givens || d.Replay != "invalid" {
+		t.Errorf("classic detail = %+v", d.adminEndlessResultJSON)
+	}
+	flag := endlessURL(2, 7, uid) + "/flag?generator=2"
+	if item := decode[adminEndlessResultJSON](t, do(t, e.srv, "PUT", flag, adminToken, nil)); item.Generator != 2 || item.Flag == nil {
+		t.Errorf("flagged = %+v", item)
+	}
+	if item := e.endlessDetail(t, 2, 7, uid); item.Flag == nil || !item.Flag.Auto {
+		t.Errorf("the classic result's flag changed: %+v", item.Flag)
+	}
+	if item := decode[adminEndlessResultJSON](t, do(t, e.srv, "DELETE", flag, adminToken, nil)); item.Generator != 2 || item.Flag != nil {
+		t.Errorf("unflagged = %+v", item)
+	}
+	expectError(t, do(t, e.srv, "GET", endlessURL(3, 7, uid)+"/replay?generator=2", adminToken, nil), http.StatusNotFound, "not_found")
+
+	// What a user has played, in both series.
+	mine := decode[myEndlessResponse](t, do(t, e.srv, "GET", "/api/v1/me/endless", alice, nil)).Results
+	if len(mine) != 2 || mine[0].Generator != 1 || mine[1].Generator != 2 || mine[1].ElapsedMs != elapsed {
+		t.Errorf("me = %+v", mine)
+	}
+
+	// Boards are per series; with no ?generator= it is the current week's (Classic here).
+	board := func(path string) endlessPuzzleBoard {
+		t.Helper()
+		resp := do(t, e.srv, "GET", path, alice, nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s status = %d", path, resp.StatusCode)
+		}
+		return decode[endlessPuzzleBoard](t, resp)
+	}
+	if b := board("/api/v1/endless/leaderboard/2/7"); b.Generator != 1 || len(b.Entries) != 2 || b.Entries[0].DisplayName != "Alice" {
+		t.Errorf("default board = %+v", b)
+	}
+	if b := board("/api/v1/endless/leaderboard/2/7?generator=2"); b.Generator != 2 || len(b.Entries) != 2 || b.Entries[0].DisplayName != "Bob" {
+		t.Errorf("graded board = %+v", b)
+	}
+	lb := func(q string) endlessLeaderboardResponse {
+		return decode[endlessLeaderboardResponse](t, do(t, e.srv, "GET", "/api/v1/endless/leaderboard"+q, alice, nil))
+	}
+	if l := lb(""); l.Generator != 1 || len(l.Difficulties[1].Players) != 2 {
+		t.Errorf("default leaderboard = %+v", l)
+	}
+	if l := lb("?generator=2"); l.Generator != 2 || len(l.Difficulties[1].Players) != 2 || len(l.Difficulties[0].Players) != 0 {
+		t.Errorf("graded leaderboard = %+v", l)
+	}
+	makeWeekGraded(t, e)
+	if l := lb(""); l.Generator != 2 {
+		t.Errorf("default leaderboard on a graded week = generator %d", l.Generator)
+	}
+	if b := board("/api/v1/endless/leaderboard/2/7"); b.Generator != 2 {
+		t.Errorf("default board on a graded week = generator %d", b.Generator)
+	}
+	if b := board("/api/v1/endless/leaderboard/2/7?generator=1"); b.Generator != 1 {
+		t.Errorf("classic board on a graded week = generator %d", b.Generator)
+	}
+	// Any series is accepted whatever the week uses, so queued results still land.
+	e.postEndless(t, "dev:carol:Carol", endlessBody(1, 1, 60000, nil), http.StatusCreated)
+}
+
+func TestEndlessGeneratorValidation(t *testing.T) {
+	e := newReplayEnv(t, 1)
+	for _, g := range []any{0, 3, -1, 99} {
+		expectError(t, do(t, e.srv, "POST", "/api/v1/endless/results", alice, with(endlessBody(1, 1, 60000, nil), "generator", g)), http.StatusBadRequest, "invalid_result")
+	}
+	expectError(t, do(t, e.srv, "POST", "/api/v1/endless/results", alice, with(endlessBody(1, 1, 60000, nil), "generator", "x")), http.StatusBadRequest, "bad_request")
+	e.postEndless(t, alice, with(endlessBody(1, 1, 60000, nil), "generator", nil), http.StatusCreated)
+
+	uid := e.userID(t, alice)
+	for _, q := range []string{"?generator=3", "?generator=0", "?generator=x", "?generator=1.5"} {
+		for _, path := range []string{
+			"/api/v1/endless/leaderboard", "/api/v1/endless/leaderboard/1/1",
+		} {
+			expectError(t, do(t, e.srv, "GET", path+q, alice, nil), http.StatusBadRequest, "bad_request")
+		}
+		expectError(t, do(t, e.srv, "GET", endlessURL(1, 1, uid)+"/replay"+q, adminToken, nil), http.StatusBadRequest, "bad_request")
+		expectError(t, do(t, e.srv, "PUT", endlessURL(1, 1, uid)+"/flag"+q, adminToken, nil), http.StatusBadRequest, "bad_request")
+		expectError(t, do(t, e.srv, "DELETE", endlessURL(1, 1, uid)+"/flag"+q, adminToken, nil), http.StatusBadRequest, "bad_request")
+	}
+}
+
+func TestEndlessGeneratorNeedsTheSchedule(t *testing.T) {
+	e := newReplayEnv(t, 1)
+	e.sabotage(t, "ALTER TABLE generator_schedule RENAME TO gone")
+	expectError(t, do(t, e.srv, "GET", "/api/v1/endless/leaderboard", alice, nil), http.StatusInternalServerError, "internal")
+	expectError(t, do(t, e.srv, "GET", "/api/v1/endless/leaderboard/1/1", alice, nil), http.StatusInternalServerError, "internal")
+	// An explicit series does not need it.
+	if resp := do(t, e.srv, "GET", "/api/v1/endless/leaderboard?generator=2", alice, nil); resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d", resp.StatusCode)
+	}
+}
+
+func TestStatsEndlessPerGenerator(t *testing.T) {
+	e := newReplayEnv(t, 1)
+	e.postEndless(t, alice, endlessBody(1, 1, 60000, nil), http.StatusCreated)
+	e.postEndless(t, alice, with(endlessBody(1, 4, 30000, nil), "generator", 2), http.StatusCreated)
+	e.postEndless(t, alice, with(endlessBody(1, 5, 50000, nil), "generator", 2), http.StatusCreated)
+	get := func(q string) statsResponse {
+		return decode[statsResponse](t, do(t, e.srv, "GET", "/api/v1/me/stats"+q, alice, nil))
+	}
+	if s := get(""); s.Generator != 1 || s.Endless[0].Completed != 1 || s.Endless[0].Highest != 1 {
+		t.Errorf("default = %+v", s.Endless[0])
+	}
+	if s := get("?generator=2"); s.Generator != 2 || s.Endless[0].Completed != 2 || s.Endless[0].Highest != 5 || *s.Endless[0].BestMs != 30000 {
+		t.Errorf("graded = %+v", s.Endless[0])
 	}
 }
