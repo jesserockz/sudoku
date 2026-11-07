@@ -1,0 +1,44 @@
+name: Web preview cleanup
+
+# Removes the Cloudflare Pages previews (and marks their GitHub deployments
+# inactive) of pull requests that are no longer open: when a pull request
+# closes, and weekly in case a run failed. pull_request_target is used only so
+# that closed fork PRs get the secrets too; it runs the base branch's scripts
+# and never checks out or runs pull request code. See docs/WEB.md, "PR
+# previews".
+
+on:
+  pull_request_target:
+    types: [closed]
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: preview-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: Remove closed PRs' previews
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+      pull-requests: write
+    steps:
+      - name: Checkout scripts
+        uses: actions/checkout@v7.0.1
+        with:
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+      - name: Remove previews
+        env:
+          PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'sudoku-time' }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: .github/scripts/preview-cleanup.sh

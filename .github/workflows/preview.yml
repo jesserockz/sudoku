@@ -1,0 +1,139 @@
+name: Web preview
+
+# Deploys the web client that the Web workflow built to Cloudflare Pages, so
+# every pull request has a live preview of seed play (no server) and main has
+# one too. Each gets its own pages.dev subdomain (`pr-N` for pull request N),
+# which makes each a separate origin: nothing a preview stores or caches, and
+# no service worker it registers, can touch the production site's.
+#
+# This runs from main's copy of the workflow once Web has finished, and only
+# downloads the bundle Web uploaded: it never checks out or runs code from a
+# pull request, so the Cloudflare secrets are not exposed to it. Pull requests
+# from forks are only deployed with the `preview` label (re-run the PR's Web
+# workflow after adding it). Previews are removed when the pull request closes
+# (preview-cleanup.yml). The one-time setup is in docs/WEB.md, "PR previews".
+
+on:
+  workflow_run:
+    workflows: [Web]
+    types: [completed]
+
+permissions: {}
+
+concurrency:
+  group: preview-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy preview
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      deployments: write
+      pull-requests: write
+    env:
+      PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'sudoku-time' }}
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Checkout scripts
+        uses: actions/checkout@v7.0.1
+        with:
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+      - name: Choose what to deploy
+        id: target
+        env:
+          EVENT: ${{ github.event.workflow_run.event }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+        run: .github/scripts/preview-target.sh >> "$GITHUB_OUTPUT"
+      - name: Download the bundle
+        if: steps.target.outputs.deploy == 'true'
+        env:
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          gh run download "$RUN_ID" --repo "$REPO" --name web --dir "$RUNNER_TEMP/site"
+          test -f "$RUNNER_TEMP/site/index.html"
+          test -f "$RUNNER_TEMP/site/sw.js"
+          # The build never makes Pages' special files; a pull request must not
+          # be able to add server-side code or redirects, or drop the noindex.
+          rm -rf "$RUNNER_TEMP/site/_worker.js" "$RUNNER_TEMP/site/_routes.json" "$RUNNER_TEMP/site/_redirects"
+          printf '/*\n  X-Robots-Tag: noindex\n' > "$RUNNER_TEMP/site/_headers"
+      - name: Deploy to Cloudflare Pages
+        id: deploy
+        if: steps.target.outputs.deploy == 'true'
+        working-directory: ${{ runner.temp }}
+        env:
+          BRANCH: ${{ steps.target.outputs.branch }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx --yes wrangler@4.152.0 pages deploy site --project-name "$PROJECT" --branch "$BRANCH" --commit-hash "$HEAD_SHA" --commit-dirty=true
+          curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT" \
+            -o project.json
+          if ! url=$("$GITHUB_WORKSPACE/.github/scripts/preview-url.sh" "$BRANCH" < project.json); then
+            exit 1
+          fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+      - name: Record a GitHub deployment
+        if: steps.target.outputs.deploy == 'true'
+        # The preview is up either way; the comment below still links to it.
+        continue-on-error: true
+        env:
+          PR: ${{ steps.target.outputs.pr }}
+          URL: ${{ steps.deploy.outputs.url }}
+          LOG_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          environment=preview
+          if [ -z "$PR" ]; then
+            environment=preview-main
+          fi
+          if ! request=$(jq -n --arg ref "$HEAD_SHA" --arg environment "$environment" --arg pr "$PR" '{
+            ref: $ref,
+            environment: $environment,
+            auto_merge: false,
+            required_contexts: [],
+            transient_environment: true,
+            production_environment: false,
+            payload: {pr: (if $pr == "" then null else ($pr | tonumber) end)},
+            description: "Cloudflare Pages preview"
+          }'); then
+            echo "::error::Could not build the deployment request"
+            exit 1
+          fi
+          if ! id=$(gh api "repos/$REPO/deployments" --input - --jq .id <<< "$request"); then
+            echo "::error::Could not create the GitHub deployment"
+            exit 1
+          fi
+          gh api "repos/$REPO/deployments/$id/statuses" \
+            -f state=success -f environment_url="$URL" -f log_url="$LOG_URL" -F auto_inactive=false > /dev/null
+      - name: Comment on the pull request
+        if: steps.target.outputs.deploy == 'true' && steps.target.outputs.pr != ''
+        env:
+          PR: ${{ steps.target.outputs.pr }}
+          URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          marker="<!-- sudoku-preview -->"
+          body=$(printf '%s\nPreview of %s: %s\n\nSeed play only: there is no server, so no sign-in or leaderboards. Its saved data is separate from the real app'"'"'s and is deleted when this pull request closes.' "$marker" "${HEAD_SHA::7}" "$URL")
+          if ! comment=$(gh api "repos/$REPO/issues/$PR/comments?per_page=100" --paginate \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | contains(\"$marker\"))) | .id"); then
+            echo "::error::Could not list the comments of #$PR"
+            exit 1
+          fi
+          comment=${comment%%$'\n'*}
+          if [ -n "$comment" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$comment" -f body="$body" > /dev/null
+          else
+            gh api -X POST "repos/$REPO/issues/$PR/comments" -f body="$body" > /dev/null
+          fi
+      - name: Summarize
+        if: steps.target.outputs.deploy == 'true'
+        env:
+          URL: ${{ steps.deploy.outputs.url }}
+        run: echo "Preview $URL" >> "$GITHUB_STEP_SUMMARY"
