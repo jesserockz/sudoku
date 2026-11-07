@@ -22,7 +22,7 @@ concurrency:
 jobs:
   verify:
     name: Verify actions.lock
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
