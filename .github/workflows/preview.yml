@@ -28,7 +28,7 @@ jobs:
   deploy:
     name: Deploy preview
     if: github.event.workflow_run.conclusion == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # The Cloudflare secrets live in this environment, which only main may use.
     # Its history is main's preview: only a push to main records a deployment
     # there (at main's commit, which preview-target.sh checks is the one built).

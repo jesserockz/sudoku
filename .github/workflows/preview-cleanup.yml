@@ -23,7 +23,7 @@ concurrency:
 jobs:
   cleanup:
     name: Remove closed PRs' previews
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # The Cloudflare secrets live in this environment, which only main may use.
     environment:
       name: cf-pages
