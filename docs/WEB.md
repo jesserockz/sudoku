@@ -213,6 +213,17 @@ server and in serverless play:
 - While a change is pending, the Daily tab shows "From next week (2026-W46),
   daily puzzles use the Graded generator.", and **About** has a "Daily
   generator" row for the one this week uses.
+- A "Classic and Graded puzzles" explainer (`generatorHelp` in
+  `src/ui/generator.ts`, shown by the help dialog as the `generators` topic)
+  describes both generators and the five Graded levels. It opens with the
+  pending change ("From next week (2026-W46), puzzles switch from Classic to
+  Graded.") or, with none, the generator in use. With a server players have
+  no say in the generator, so the text only explains it and never offers a
+  choice (otherwise players ask for the old one back); in serverless play it
+  points to the seed card's choice. It opens from a "What's this?" link in
+  the pending notice on the Daily tab and in the seed card's Puzzle
+  generator section, and from the "Classic and Graded" button on **About**,
+  with or without a server.
 - Admins change it on the [Server admin](#admin) page; serverless play has it
   in the seed card (see [Serverless play](#serverless-play-a-shared-seed)).
 

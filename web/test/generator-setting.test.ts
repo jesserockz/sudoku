@@ -13,7 +13,7 @@ import { FIRST_WEEK, INITIAL_SCHEDULE, choose, decodeSchedule, pendingFor, versi
 import { seedSettings as s, seedWeek } from "../src/serverless/seed.ts";
 import { SeedRepository } from "../src/serverless/seed-repository.ts";
 import { AppController, type Host } from "../src/ui/controller.ts";
-import { generatorSummary, historyLine, pendingLine, pendingNotice } from "../src/ui/generator.ts";
+import { generatorHelp, generatorSummary, historyLine, pendingLine, pendingNotice } from "../src/ui/generator.ts";
 import { FakeServer } from "./fake-server.ts";
 
 const NOW = Date.parse("2026-10-27T01:00:00Z"); // Tuesday 2026-10-27, in 2026-W44
@@ -426,4 +426,32 @@ test("an invalid serverless choice is refused before anything is stored", async 
   await until(() => c.phase.kind === "ready" && c.seed !== null && c.week !== null);
   await assert.rejects(c.setSeedGenerator(5), /unknown generator version: 5/);
   assert.equal(c.pendingGenerator, null);
+});
+
+test("the Classic and Graded explainer explains a change with a server and offers the choice only in seed play", () => {
+  const pending = { version: GENERATOR_GRADED, fromWeek: "2026-W45" };
+  const server = generatorHelp({ current: GENERATOR_CLASSIC, pending, seed: false });
+  assert.equal(server.title, "Classic and Graded puzzles");
+  assert.deepEqual(server.levels.map((l) => l.name), ["Easy", "Medium", "Hard", "Expert", "Diabolical"]);
+  assert.equal(server.intro[0], "From next week (2026-W45), puzzles switch from Classic to Graded. Here's the difference.");
+  assert.equal(server.intro.length, 3);
+  assert.match(server.outro[1], /^Endless uses the same generator as the daily puzzles\./);
+  for (const text of [...server.intro, ...server.outro]) assert.doesNotMatch(text, /choose|choice/i, "players with a server have no say");
+
+  const settled = generatorHelp({ current: GENERATOR_GRADED, pending: null, seed: false });
+  assert.equal(settled.intro[0], "This week's puzzles use Graded.");
+
+  const seed = generatorHelp({ current: GENERATOR_CLASSIC, pending: null, seed: true });
+  assert.equal(seed.intro[0], "This seed's puzzles use Classic.");
+  assert.match(seed.outro[1], /^You choose the generator for this seed in the seed card/);
+
+  const unloaded = generatorHelp({ current: null, pending, seed: false });
+  assert.equal(unloaded.intro.length, 2, "no lead line before a week is loaded");
+  assert.match(unloaded.intro[0], /^Classic decides/);
+
+  for (const help of [server, settled, seed, unloaded]) {
+    for (const text of [help.title, ...help.intro, ...help.outro, ...help.levels.map((l) => l.text)]) {
+      assert.ok(!text.includes("\u2014"), "no em dashes");
+    }
+  }
 });

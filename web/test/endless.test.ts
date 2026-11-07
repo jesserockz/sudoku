@@ -694,4 +694,6 @@ test("the explainers open from the About screen", async () => {
   assert.equal(e.c.help, "daily");
   e.c.openHelp("endless");
   assert.equal(e.c.help, "endless");
+  e.c.openHelp("generators");
+  assert.equal(e.c.help, "generators");
 });
