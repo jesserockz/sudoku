@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -97,7 +98,7 @@ func (s *Server) postResult(w http.ResponseWriter, r *http.Request) {
 		result.ReplayStatus = replayMissing
 		result.AutoFlag = "No replay submitted"
 	} else {
-		p, err := s.puzzleFor(date, *req.Level, levels)
+		p, err := s.puzzleFor(r.Context(), date, *req.Level, levels)
 		if err != nil {
 			httpx.Internal(w, r, err)
 			return
@@ -151,11 +152,15 @@ func parseReplay(raw json.RawMessage) (rep replay.Replay, ok bool, err error) {
 }
 
 // puzzleFor regenerates the puzzle of game level on date, on a day with
-// levels games.
-func (s *Server) puzzleFor(date week.Date, level, levels int) (puzzle.Puzzle, error) {
+// levels games, with the generator its week uses.
+func (s *Server) puzzleFor(ctx context.Context, date week.Date, level, levels int) (puzzle.Puzzle, error) {
+	version, err := s.generatorFor(ctx, date)
+	if err != nil {
+		return puzzle.Puzzle{}, err
+	}
 	// ForWeek always yields 16 hex digits, which ParseWeekSeed accepts.
 	ws, _ := puzzle.ParseWeekSeed(seed.ForWeek([]byte(s.deps.Config.ServerSecret), date.ISOWeek()))
-	return puzzle.Generate(ws, date.Weekday(), level, levels)
+	return puzzle.GenerateVersion(version, ws, date.Weekday(), level, levels)
 }
 
 // validateResult applies the sanity caps relative to today. The level's

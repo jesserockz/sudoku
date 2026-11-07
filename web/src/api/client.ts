@@ -1,10 +1,10 @@
 import {
   type AdminEndlessResult, type AdminEndlessResults, type AdminResult, type AdminResults, type ApiError, type AppConfig,
-  type EndlessBoard, type EndlessInfo, type EndlessProgress, type EndlessReplayDetail, type EndlessResult, type GameResult,
+  type EndlessBoard, type EndlessInfo, type EndlessProgress, type EndlessReplayDetail, type EndlessResult, type GameResult, type GeneratorInfo,
   type Leaderboard, type Me, type MyEndlessResults, type MyResults, type MyStats, type ReleaseList, type ReplayDetail, type UpdateStatus, type Week,
   decodeAdminEndlessResult, decodeAdminEndlessResults, decodeAdminResult, decodeAdminResults, decodeApiError, decodeAppConfig,
   decodeEndlessBoard, decodeEndlessInfo, decodeEndlessProgress, decodeEndlessReplayDetail, decodeEndlessResult, decodeGameResult,
-  decodeLeaderboard, decodeMe, decodeMyEndlessResults, decodeMyResults, decodeMyStats, decodeReleaseList, decodeReplayDetail, decodeUpdateStatus,
+  decodeGeneratorInfo, decodeLeaderboard, decodeMe, decodeMyEndlessResults, decodeMyResults, decodeMyStats, decodeReleaseList, decodeReplayDetail, decodeUpdateStatus,
   decodeWeek,
 } from "./models.ts";
 
@@ -89,9 +89,9 @@ export class SudokuApi {
     return decodeLeaderboard(await this.#get("leaderboard" + (date ? `?date=${date}` : "")));
   }
 
-  /** The caller's streak and personal stats. */
-  async myStats(): Promise<MyStats> {
-    return decodeMyStats(await this.#get("me/stats"));
+  /** The caller's streak and personal stats, with the daily numbers for `generator` (the one in use now when omitted). */
+  async myStats(generator?: number): Promise<MyStats> {
+    return decodeMyStats(await this.#get("me/stats" + (generator === undefined ? "" : `?generator=${generator}`)));
   }
 
   submitResult(result: GameResult): Promise<SubmitOutcome> {
@@ -188,6 +188,21 @@ export class SudokuApi {
   /** Admin only: removes an endless result's flag. */
   async unflagEndlessResult(difficulty: number, number: number, userId: string): Promise<AdminEndlessResult> {
     return decodeAdminEndlessResult(await this.#send("DELETE", `${endlessResultPath(difficulty, number, userId)}/flag`));
+  }
+
+  /** Admin only: the puzzle generator in use, what is scheduled and its history. */
+  async adminGenerator(): Promise<GeneratorInfo> {
+    return decodeGeneratorInfo(await this.#get("admin/generator"));
+  }
+
+  /** Admin only: makes `version` the generator from next week (choosing the one in use cancels a pending change). */
+  async setGenerator(version: number): Promise<GeneratorInfo> {
+    return decodeGeneratorInfo(await this.#send("PUT", "admin/generator", { version }));
+  }
+
+  /** Admin only: cancels the pending generator change, if any. */
+  async cancelGenerator(): Promise<GeneratorInfo> {
+    return decodeGeneratorInfo(await this.#send("DELETE", "admin/generator/pending"));
   }
 
   async #post(path: string, body?: unknown): Promise<UpdateStatus> {

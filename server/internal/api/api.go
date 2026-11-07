@@ -72,6 +72,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/admin/endless/results/{difficulty}/{number}/{userId}/replay", s.requireAdmin(s.getAdminEndlessReplay))
 	s.mux.HandleFunc("PUT /api/v1/admin/endless/results/{difficulty}/{number}/{userId}/flag", s.requireAdmin(s.putAdminEndlessFlag))
 	s.mux.HandleFunc("DELETE /api/v1/admin/endless/results/{difficulty}/{number}/{userId}/flag", s.requireAdmin(s.deleteAdminEndlessFlag))
+	s.mux.HandleFunc("GET /api/v1/admin/generator", s.requireAdmin(s.getAdminGenerator))
+	s.mux.HandleFunc("PUT /api/v1/admin/generator", s.requireAdmin(s.putAdminGenerator))
+	s.mux.HandleFunc("DELETE /api/v1/admin/generator/pending", s.requireAdmin(s.deleteAdminGeneratorPending))
 	s.mux.HandleFunc("GET /api/v1/admin/releases", s.requireAdmin(s.getAdminReleases))
 	s.mux.HandleFunc("POST /api/v1/admin/update", s.requireAdmin(s.postAdminUpdate))
 	s.mux.HandleFunc("GET /api/v1/admin/update", s.requireAdmin(s.getAdminUpdate))
@@ -87,6 +90,12 @@ func (s *Server) today() week.Date { return week.DateOf(s.deps.Clock.Now(), s.lo
 // levelsFor is the number of levels on date d, per the level schedule.
 func (s *Server) levelsFor(ctx context.Context, d week.Date) (int, error) {
 	return s.deps.Store.LevelsForWeek(ctx, d.ISOWeek())
+}
+
+// generatorFor is the generator version the dailies of date use, per the
+// generator schedule.
+func (s *Server) generatorFor(ctx context.Context, d week.Date) (int, error) {
+	return s.deps.Store.GeneratorForWeek(ctx, d.ISOWeek())
 }
 
 // SyncLevels applies Config.Levels to the level schedule and returns the ISO

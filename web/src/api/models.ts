@@ -1,7 +1,8 @@
 // Request and response bodies of the v1 API, field for field as in docs/API.md,
 // with decoders that check what the server (or localStorage) gave us.
 import { dayOfWeek, inWeek, isIsoDate } from "../game/calendar.ts";
-import { DEFAULT_LEVELS, generateDay, type Puzzle } from "../generator/generator.ts";
+import { DEFAULT_LEVELS, type Puzzle } from "../generator/generator.ts";
+import { GENERATOR_CLASSIC, generateDayVersion, isGeneratorVersion } from "../generator/versions.ts";
 import { parseWeekSeed } from "../generator/week-seed.ts";
 import { type Replay, type ReplayEvent, decodeReplay, decodeReplayEvent } from "../game/replay.ts";
 import { bool, list, num, obj, optional, str } from "../data/store.ts";
@@ -27,6 +28,12 @@ export interface AppConfig {
   version?: string;
 }
 
+/** A generator change that starts at the beginning of ISO week `fromWeek`. */
+export interface PendingGenerator {
+  version: number;
+  fromWeek: string;
+}
+
 /** `GET /api/v1/week`. The seed is 16 lowercase hex characters. */
 export interface Week {
   isoWeek: string;
@@ -38,6 +45,10 @@ export interface Week {
   timezone: string;
   /** Games per day this week (levels `1..levels`). Servers that predate it always had 5. */
   levels: number;
+  /** The puzzle generator this week's dailies use (1 Classic, 2 Graded). Servers that predate it only had 1. */
+  generator: number;
+  /** A generator change that starts next week, or `null`. */
+  pendingGenerator: PendingGenerator | null;
 }
 
 /** `GET /api/v1/me` */
@@ -157,6 +168,8 @@ export interface EndlessStat {
 
 /** `GET /api/v1/me/stats` */
 export interface MyStats {
+  /** The generator version the `daily` stats are for (the streak spans all). Servers that predate it only had 1. */
+  generator: number;
   today: string;
   streak: Streak;
   daily: DailyStat[];
@@ -257,10 +270,43 @@ export interface EndlessReplayDetail extends AdminEndlessResult {
   events: ReplayEvent[];
 }
 
-/** The day's games for `date`, which must be in `week`. */
+/** One generator in the schedule's history: `fromWeek` is `null` for the first, which applied from the very beginning. */
+export interface GeneratorEntry {
+  fromWeek: string | null;
+  version: number;
+}
+
+/** `GET /api/v1/admin/generator`, and the answer to changing it. `schedule` is what has been in effect, up to `active`. */
+export interface GeneratorInfo {
+  active: number;
+  pending: PendingGenerator | null;
+  schedule: GeneratorEntry[];
+}
+
+/** The day's games for `date`, which must be in `week`, from the generator the week uses. */
 export function weekPuzzles(week: Week, date: string = week.today): Puzzle[] {
   if (!inWeek(week, date)) throw new RangeError(`${date} is outside ${week.isoWeek}`);
-  return generateDay(parseWeekSeed(week.seed), dayOfWeek(date), week.levels);
+  return generateDayVersion(week.generator, parseWeekSeed(week.seed), dayOfWeek(date), week.levels);
+}
+
+const generatorVersion = (json: unknown) => {
+  const v = num(json);
+  if (!isGeneratorVersion(v)) throw new TypeError(`unsupported generator version: ${v}`);
+  return v;
+};
+
+export function decodePendingGenerator(json: unknown): PendingGenerator {
+  const o = obj(json);
+  return { version: generatorVersion(o.version), fromWeek: str(o.fromWeek) };
+}
+
+export function decodeGeneratorInfo(json: unknown): GeneratorInfo {
+  const o = obj(json);
+  return {
+    active: generatorVersion(o.active),
+    pending: optional(o.pending, decodePendingGenerator),
+    schedule: list(o.schedule, (e) => ({ fromWeek: optional(obj(e).fromWeek, str), version: generatorVersion(obj(e).version) })),
+  };
 }
 
 const date = (json: unknown) => {
@@ -294,6 +340,8 @@ export function decodeWeek(json: unknown): Week {
   return {
     isoWeek: str(o.isoWeek), seed, weekStart: date(o.weekStart), weekEnd: date(o.weekEnd), today: date(o.today),
     dayOfWeek: num(o.dayOfWeek), timezone: str(o.timezone), levels: optional(o.levels, num) ?? DEFAULT_LEVELS,
+    generator: optional(o.generator, generatorVersion) ?? GENERATOR_CLASSIC,
+    pendingGenerator: optional(o.pendingGenerator, decodePendingGenerator),
   };
 }
 
@@ -497,6 +545,7 @@ export function decodeStreak(json: unknown): Streak {
 export function decodeMyStats(json: unknown): MyStats {
   const o = obj(json);
   return {
+    generator: optional(o.generator, generatorVersion) ?? GENERATOR_CLASSIC,
     today: date(o.today),
     streak: decodeStreak(o.streak),
     daily: list(o.daily, (d) => {

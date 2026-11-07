@@ -17,7 +17,8 @@ import { randomSolution } from "./solver.ts";
  * port (`server/internal/puzzle/v2.go`); the shared fixture
  * `testdata/generator-v2.json` pins both.
  *
- * Not used by the app yet.
+ * Daily puzzles use it for the weeks the generator schedule says so (see
+ * `versions.ts`); endless puzzles do not use it yet.
  */
 
 /** Seed-derivation version for v2 (v1 is `GENERATOR_VERSION` = 1). */
@@ -112,7 +113,7 @@ export function buildV2(seed: bigint, tier: number, maxAttempts = MAX_ATTEMPTS_V
   return { givens: best!.givens.join(""), solution: best!.solution.join(""), grade: best!.grade, attempts };
 }
 
-/** {@link generate} for v2: game `level` of `levels` on a day. Not yet used by the app. */
+/** {@link generate} for v2: game `level` of `levels` on a day. */
 export function generateV2(weekSeed: bigint, dayOfWeek: number, level: number, levels = DEFAULT_LEVELS): Graded<Puzzle> {
   if (!(Number.isInteger(dayOfWeek) && dayOfWeek >= 1 && dayOfWeek <= 7)) {
     throw new RangeError(`dayOfWeek must be 1 (Monday) to 7 (Sunday): ${dayOfWeek}`);
@@ -123,10 +124,15 @@ export function generateV2(weekSeed: bigint, dayOfWeek: number, level: number, l
   return { puzzle: new Puzzle(weekSeed, dayOfWeek, level, levels, givens, solution), grade, attempts };
 }
 
-/** {@link generateEndless} for v2: number `number` of tier `tier` (1..5). Not yet used by the app. */
+/** {@link generateEndless} for v2: number `number` of tier `tier` (1..5). Endless puzzles are still v1 only. */
 export function generateEndlessV2(endlessSeed: bigint, tier: number, number: number): Graded<EndlessPuzzle> {
   if (!(Number.isInteger(tier) && tier >= 1 && tier <= BANDS.length)) throw new RangeError(`difficulty must be 1..${BANDS.length}: ${tier}`);
   if (!isEndlessNumber(number)) throw new RangeError(`number must be 1..${MAX_ENDLESS_NUMBER}: ${number}`);
   const { givens, solution, grade, attempts } = buildV2(endlessPuzzleSeedV2(endlessSeed, tier, number), tier);
   return { puzzle: new EndlessPuzzle(endlessSeed, tier, number, givens, solution), grade, attempts };
+}
+
+/** All games for a day with generator v2, in order (easiest first): {@link generateDay} for v2. */
+export function generateDayV2(weekSeed: bigint, dayOfWeek: number, levels = DEFAULT_LEVELS): Puzzle[] {
+  return Array.from({ length: levels }, (_, i) => generateV2(weekSeed, dayOfWeek, i + 1, levels).puzzle);
 }

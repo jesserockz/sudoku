@@ -158,7 +158,7 @@ func (s *Server) getAdminReplay(w http.ResponseWriter, r *http.Request) {
 		httpx.Internal(w, r, err)
 		return
 	}
-	p, err := s.puzzleFor(date, level, levels)
+	p, err := s.puzzleFor(r.Context(), date, level, levels)
 	if err != nil {
 		httpx.Internal(w, r, err)
 		return

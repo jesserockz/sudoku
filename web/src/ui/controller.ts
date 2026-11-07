@@ -1,5 +1,5 @@
 import { ApiException } from "../api/client.ts";
-import type { AppConfig, EndlessBoard, EndlessProgress, EndlessResult, Leaderboard, Me, MyStats, Streak } from "../api/models.ts";
+import type { AppConfig, EndlessBoard, EndlessProgress, EndlessResult, Leaderboard, Me, MyStats, PendingGenerator, Streak, Week } from "../api/models.ts";
 import type { HomeTab } from "../data/app-storage.ts";
 import type { EndlessSource } from "../data/endless.ts";
 import { OidcException } from "../api/oidc.ts";
@@ -8,6 +8,7 @@ import { addDays } from "../game/calendar.ts";
 import { Game } from "../game/game.ts";
 import type { ReplayInput } from "../game/replay.ts";
 import { DIFFICULTIES, type EndlessPuzzle, isEndlessNumber, type Puzzle } from "../generator/generator.ts";
+import { GENERATOR_CLASSIC } from "../generator/versions.ts";
 import { fingerprint, sameSettings, type SeedSettings } from "../serverless/seed.ts";
 import type { SeedProfile, SeedRepository, SeedResult } from "../serverless/seed-repository.ts";
 import { buildShareLink, parseShareLink } from "../serverless/share-link.ts";
@@ -133,6 +134,8 @@ export class AppController extends EventTarget {
   today: string;
   /** The day's games, or `null` when the cached week doesn't cover today (connect once this week). */
   puzzles: Puzzle[] | null = null;
+  /** The current week (the server's, or the seed's), or `null` when the cached one doesn't cover today. */
+  week: Week | null = null;
   /** Today's games started on this device, by level. */
   readonly games = new Map<number, Game>();
   syncing = false;
@@ -145,6 +148,8 @@ export class AppController extends EventTarget {
   /** The Stats screen's data, and why it couldn't load. */
   stats: MyStats | null = null;
   statsError: string | null = null;
+  /** The generator the player picked on the Stats screen, or `null` for the one in use now. */
+  statsGenerator: number | null = null;
   /** The home page tab; remembered on this device. */
   homeTab: HomeTab;
   /** The endless leaderboard screen's data (whichever of the two it shows). */
@@ -254,6 +259,7 @@ export class AppController extends EventTarget {
     this.streak = this.#repo.streak();
     this.today = this.#repo.today();
     this.puzzles = this.#repo.puzzles(this.today);
+    this.week = this.#repo.weekFor(this.today);
     this.games.clear();
     for (const p of this.puzzles ?? []) {
       const g = this.#repo.loadGame(this.today, p);
@@ -317,7 +323,7 @@ export class AppController extends EventTarget {
   /** Keeps the streak (and the Stats screen's data) fresh after a sync. Stats are a nicety: a failure here is not a sync failure. */
   async #refreshStats(): Promise<void> {
     try {
-      this.#setStats(await this.#repo.fetchStats());
+      this.#setStats(await this.#repo.fetchStats(this.statsGenerator ?? undefined));
     } catch {
       // Offline or an old server without stats: the stored streak stays as it was.
     }
@@ -327,6 +333,16 @@ export class AppController extends EventTarget {
     this.stats = stats;
     this.streak = stats.streak;
     this.statsError = null;
+  }
+
+  /** The puzzle generator this week's dailies use. */
+  get generator(): number {
+    return this.week?.generator ?? GENERATOR_CLASSIC;
+  }
+
+  /** A generator change that starts next week, or `null`. */
+  get pendingGenerator(): PendingGenerator | null {
+    return this.week?.pendingGenerator ?? null;
   }
 
   /** The home page's streak line, or `null` when there is nothing to show (serverless play, or no streak known yet). */
@@ -405,7 +421,7 @@ export class AppController extends EventTarget {
     this.#seeds.leave();
     this.games.clear();
     this.#endless = null;
-    Object.assign(this, { seed: null, puzzles: null, notice: null, screen: { kind: "today" } });
+    Object.assign(this, { seed: null, puzzles: null, week: null, notice: null, screen: { kind: "today" } });
     this.start();
   }
 
@@ -431,9 +447,11 @@ export class AppController extends EventTarget {
   async #loadSeedDay(): Promise<void> {
     const day = this.#seeds.today();
     const list = await this.#seeds.puzzles(day);
+    const week = await this.#seeds.week();
     await this.#seeds.loadEndless();
     this.today = day;
     this.puzzles = list;
+    this.week = week;
     this.me = null;
     this.streak = null;
     this.needsSignIn = false;
@@ -445,6 +463,17 @@ export class AppController extends EventTarget {
     this.#queued.clear();
     this.#serverDone.clear();
     for (const [level, r] of this.#seeds.results(day)) this.#serverDone.set(level, r.elapsedMs);
+  }
+
+  /**
+   * Serverless play: chooses the puzzle generator for this seed from next week on (the current week never changes).
+   * Choosing the one this week uses cancels a change that is pending.
+   */
+  async setSeedGenerator(version: number): Promise<void> {
+    if (!this.seed) return;
+    this.#seeds.setGenerator(version);
+    this.week = await this.#seeds.week();
+    this.#changed();
   }
 
   /** The link that gives others this seed and settings: this page's address with them in the fragment. */
@@ -559,7 +588,7 @@ export class AppController extends EventTarget {
     const endSession = await this.#repo.endSessionUrl(`${this.origin}/`);
     this.#repo.signOut();
     this.games.clear();
-    Object.assign(this, { puzzles: null, me: null, streak: null, stats: null, notice: null, needsSignIn: false, screen: { kind: "today" } });
+    Object.assign(this, { puzzles: null, week: null, me: null, streak: null, stats: null, statsGenerator: null, notice: null, needsSignIn: false, screen: { kind: "today" } });
     if (endSession) this.#host.location.assign(endSession);
     else this.start();
   }
@@ -733,11 +762,22 @@ export class AppController extends EventTarget {
   openStats(): void {
     if (this.seed) return;
     this.screen = { kind: "stats" };
+    this.#loadStats(null);
+  }
+
+  /** Shows the Stats screen's daily numbers for generator `version`. The streak is the same for every generator. */
+  showStatsGenerator(version: number): void {
+    if (this.screen.kind !== "stats") return;
+    this.#loadStats(version);
+  }
+
+  #loadStats(generator: number | null): void {
+    this.statsGenerator = generator;
     const request = ++this.#statsRequest;
     this.stats = null;
     this.statsError = null;
     this.#changed();
-    this.#repo.fetchStats().then(
+    this.#repo.fetchStats(generator ?? undefined).then(
       (stats) => {
         if (request === this.#statsRequest) this.#setStats(stats);
       },

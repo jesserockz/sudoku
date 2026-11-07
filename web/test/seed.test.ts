@@ -29,7 +29,7 @@ test("the week matches the server's week endpoint", async () => {
   // Monday 00:00 in Auckland is Sunday 11:00 UTC.
   assert.deepEqual(await seedWeek(s(serverSecret), Date.parse("2026-10-25T11:00:00Z")), {
     isoWeek: "2026-W44", seed: "e4d2e1e00e3549cc", weekStart: "2026-10-26", weekEnd: "2026-11-01",
-    today: "2026-10-26", dayOfWeek: 1, timezone: "Pacific/Auckland", levels: 5,
+    today: "2026-10-26", dayOfWeek: 1, timezone: "Pacific/Auckland", levels: 5, generator: 1, pendingGenerator: null,
   });
   const sunday = await seedWeek(s(serverSecret), Date.parse("2026-10-25T10:59:59Z"));
   assert.equal(sunday.isoWeek, "2026-W43");

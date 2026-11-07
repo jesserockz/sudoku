@@ -1,12 +1,14 @@
 import { addDays, DEFAULT_TIMEZONE, describeDate, isValidZone } from "../game/calendar.ts";
 import { formatDuration } from "../game/timer.ts";
 import { DEFAULT_LEVELS, DIFFICULTIES, endlessTitle, MAX_LEVELS, puzzleTitle } from "../generator/generator.ts";
+import { GENERATOR_VERSIONS, generatorName } from "../generator/versions.ts";
 import { generateSeed, normalizeSeed, seedSettings, type SeedSettings } from "../serverless/seed.ts";
 import { parseShareLink } from "../serverless/share-link.ts";
 import { WEB_VERSION } from "../version.ts";
 import { type AdminModel, actionLabel, flavourOf, formatBytes, progressFraction } from "./admin.ts";
 import { type AppController, ENDLESS_LABEL, type Phase, type ServerInfo } from "./controller.ts";
 import { type Child, Component, h, topBar } from "./dom.ts";
+import { generatorSummary, historyLine, pendingLine, pendingNotice } from "./generator.ts";
 import { sparklinePoints, streakMarker, streakSummary } from "./stats.ts";
 import { actionButton, canShare, copyText, share, shareResultsButton } from "./share.ts";
 
@@ -246,7 +248,9 @@ export class TodayScreen extends Screen {
         action,
       );
     });
+    const pending = app.pendingGenerator;
     return [header, [
+      pending && h("div", { class: "notice generator-notice" }, pendingNotice(pending)),
       h("div", { class: "card" },
         h("p", { class: "muted" }, describeDate(app.today), app.me && ` · ${app.me.displayName}`),
         streak && h("p", { class: "streak" }, h("span", { class: "flame", "aria-hidden": "true" }, "\u{1F525}"), streak),
@@ -299,6 +303,25 @@ export class TodayScreen extends Screen {
         h("button", { class: "link", onclick: () => app.leaveSeed() }, "Leave seed"),
       ),
       message,
+      this.#generatorSetting(),
+    );
+  }
+
+  /** Serverless play's puzzle generator: this week's, a pending change with a way to cancel it, and the choice for next week. */
+  #generatorSetting(): Child {
+    const app = this.app;
+    const pending = app.pendingGenerator;
+    return h("div", { class: "generator-setting" },
+      h("h2", null, "Puzzle generator"),
+      h("p", null, `This week: ${generatorName(app.generator)}.`),
+      pending && h("p", { class: "generator-pending" }, `Pending: ${pendingLine(pending)}. `,
+        h("button", { class: "link", onclick: () => void app.setSeedGenerator(app.generator) }, "Cancel")),
+      !pending && h("div", { class: "actions" },
+        GENERATOR_VERSIONS.filter((v) => v !== app.generator).map((v) => h("button", {
+          "data-version": v, onclick: () => void app.setSeedGenerator(v),
+        }, `${generatorName(v)} from next week`))),
+      h("p", { class: "muted small" },
+        "Changes start with the next ISO week, so this week's puzzles stay as they are. Everyone in your group needs the same choice to get the same puzzles."),
     );
   }
 
@@ -408,8 +431,12 @@ export class StatsScreen extends Screen {
         ),
         h("div", { class: "card" },
           h("h2", null, "Daily"),
+          h("div", { class: "tabs generator-tabs", role: "group", "aria-label": "Puzzle generator" },
+            GENERATOR_VERSIONS.map((v) => h("button", {
+              class: stats.generator === v && "active", "aria-pressed": String(stats.generator === v), onclick: () => app.showStatsGenerator(v),
+            }, generatorName(v)))),
           h("table", { class: "board-table stats-table" }, head("", "Played", "Best", "Average", "Recent"), h("tbody", null, daily)),
-          h("p", { class: "muted small" }, "Recent: your last times, oldest on the left. Higher is faster."),
+          h("p", { class: "muted small" }, "Recent: your last times, oldest on the left. Higher is faster. Daily numbers are per generator; the streak counts both."),
         ),
         h("div", { class: "card" },
           h("h2", null, ENDLESS_LABEL),
@@ -563,6 +590,7 @@ export class AboutScreen extends Screen {
         h("table", { class: "board-table" }, h("tbody", null,
           h("tr", null, h("td", null, "Web version"), h("td", { class: "time" }, WEB_VERSION)),
           h("tr", null, h("td", null, "Server version"), h("td", { class: "time" }, describeServer(app.serverInfo))),
+          app.week && h("tr", null, h("td", null, "Daily generator"), h("td", { class: "time" }, generatorSummary(app.generator))),
         )),
       ),
       h("div", { class: "actions" },
@@ -615,6 +643,7 @@ export class AdminScreen extends Screen {
           ? "This updates the server binary and the web client."
           : "This updates the server binary only. The web client is updated separately."),
       ),
+      this.#generator(m),
       this.#progress(m),
       this.#confirm(m),
       list && !m.confirm && h("div", { class: "card" },
@@ -640,6 +669,29 @@ export class AdminScreen extends Screen {
       ),
       m.loading && !list && h("p", { class: "boot" }, "Loading…"),
     ];
+  }
+
+  /** The puzzle generator: which one the dailies use, what is pending, the history, and the choice for next week. */
+  #generator(m: AdminModel): Child {
+    const g = m.generator;
+    if (!g && !m.generatorError) return null;
+    return h("div", { class: "card generator-admin" },
+      h("h2", null, "Puzzle generator"),
+      m.generatorError && h("p", { class: "error" }, m.generatorError),
+      g && [
+        h("p", null, `Active: ${generatorName(g.active)}`),
+        g.pending && h("p", { class: "generator-pending" }, `Pending: ${pendingLine(g.pending)} `,
+          h("button", { disabled: m.generatorBusy, onclick: () => void m.cancelGenerator() }, "Cancel")),
+        // A pending change is only cancelled; otherwise offer each other generator.
+        !g.pending && h("div", { class: "actions" },
+          GENERATOR_VERSIONS.filter((v) => v !== g.active).map((v) => h("button", {
+            disabled: m.generatorBusy, "data-version": v, onclick: () => void m.chooseGenerator(v),
+          }, `${generatorName(v)} from next week`))),
+        h("p", { class: "muted small" },
+          "Changes apply from the start of the next ISO week. Results and replays stay with the generator their week used, so switching back loses nothing."),
+        h("ul", { class: "generator-history" }, g.schedule.map((e) => h("li", null, historyLine(e)))),
+      ],
+    );
   }
 
   #progress(m: AdminModel): Child {

@@ -56,7 +56,7 @@ e.g. `Bearer dev:alice:Alice`. Dev tokens carry only the claims `sub` and `name`
 
 - `weekSeed = HMAC-SHA256(key = serverSecret, message = "sudoku-week:" + isoWeek)`, truncated to the **first 8 bytes**, read as a big-endian unsigned 64-bit integer, encoded as **16 lowercase hex characters**.
 - Hex (not a JSON number) because JS cannot represent 64-bit integers exactly. Clients parse it into a 64-bit value (`ULong`/`Long` bit pattern).
-- How a client turns `(weekSeed, dayOfWeek, level)` into a puzzle is defined by the client (`web/src/generator/`). The server has a bit-identical Go port (`server/internal/puzzle/`, pinned by the same golden puzzles) so it can check [replays](#replays) against the day's puzzle; it never stores puzzles.
+- How a client turns `(weekSeed, dayOfWeek, level)` into a puzzle is defined by the client (`web/src/generator/`). The server has a bit-identical Go port (`server/internal/puzzle/`, pinned by the same golden puzzles) so it can check [replays](#replays) against the day's puzzle (made by the [generator version](#generator-versions) that day's week uses); it never stores puzzles.
 
 ## Endless seed
 
@@ -75,14 +75,21 @@ h = mix(h + number)
 
 - The web client (`web/src/generator/`, `generateEndless`) and the server's Go port (`server/internal/puzzle/`, `GenerateEndless`) are pinned by the same golden puzzles. The server regenerates an endless puzzle to check [replays](#replays) and never stores puzzles.
 
-## Generator v2 (not yet used)
+## Generator versions
 
-The web client and the server's Go port also contain a second generator that grades puzzles by technique (`web/src/generator/generator-v2.ts` and `grader.ts`, `server/internal/puzzle/v2.go` and `grader.go`). No endpoint or replay check uses it yet; the seeds and puzzles above are still v1.
+There are two puzzle generators for the **daily** puzzles. Players know them as **Classic** (version `1`, the clue-count generator described above) and **Graded** (version `2`, which grades puzzles by technique). Endless puzzles are Classic only. The web client and the server's Go port contain both (`web/src/generator/generator.ts` and `generator-v2.ts` with `grader.ts`, `server/internal/puzzle/` `puzzle.go`, `v2.go` and `grader.go`).
 
-- The grader solves a puzzle with human techniques in a fixed order (hidden and naked singles, locked candidates, subsets, fish, wings, colouring, XY-chains) and reports the hardest level needed, 1 to 6, or 7 if it gets stuck.
-- Tiers accept grader levels: Easy 1, Medium 2, Hard 3 to 4, Expert 5, Diabolical 6. Generation tries up to 200 random puzzles per seed and takes the first inside the tier's band, or else the nearest non-stuck one.
-- The puzzle seed uses the same derivation as v1 with the version constant `2` in place of `GeneratorVersion` (`1`).
+- **Graded**: the grader solves a puzzle with human techniques in a fixed order (hidden and naked singles, locked candidates, subsets, fish, wings, colouring, XY-chains) and reports the hardest level needed, 1 to 6, or 7 if it gets stuck. Tiers accept grader levels: Easy 1, Medium 2, Hard 3 to 4, Expert 5, Diabolical 6. Generation tries up to 200 random puzzles per seed and takes the first inside the tier's band, or else the nearest non-stuck one.
+- The puzzle seed of Graded uses the same derivation as Classic with the version constant `2` in place of `GeneratorVersion` (`1`), so the two never share a puzzle for the same week, day and level.
 - Both implementations are pinned by `testdata/generator-v2.json` at the repo root, which holds daily, endless, forced-fallback and grader cases.
+
+### Generator schedule
+
+Which version a week's dailies use is set by a **generator schedule**, kept like the level schedule (see `levels` in [`GET /api/v1/week`](#get-apiv1week)): each entry is `(fromWeek, version)` and the entry with the latest `fromWeek` not after a week applies to it. A fresh or upgraded server starts with one entry, Classic from the very beginning, so every existing week keeps its puzzles.
+
+- **A change is always pending.** An admin choosing a version never changes the current week: the choice starts at the beginning of **next ISO week** (Pacific/Auckland, by the server's clock). Choosing again replaces a pending change, and choosing the version the current week uses cancels it.
+- **Nothing is reset.** Results, replays and leaderboards are keyed by date, so each belongs to the version its week used, and switching back loses nothing. A replay is checked against the puzzle of its date's week: the same replay is valid in a Graded week and fails in a Classic one (or the other way round).
+- The server uses the schedule everywhere it regenerates a daily puzzle: checking a submitted replay, and serving an admin a result's `givens`.
 
 ## Endpoints
 
@@ -121,9 +128,16 @@ The current ISO week's seed and boundaries.
   "weekEnd": "2026-11-01",
   "today": "2026-10-26",
   "dayOfWeek": 1,
-  "timezone": "Pacific/Auckland"
+  "timezone": "Pacific/Auckland",
+  "levels": 5,
+  "generator": 1,
+  "pendingGenerator": null
 }
 ```
+
+- `levels` is the number of games each day of this week has (`1..levels`).
+- `generator` is the [generator version](#generator-versions) this week's dailies use: `1` (Classic) or `2` (Graded). Clients treat a missing value (older servers) as `1`.
+- `pendingGenerator` is `{ "version": 2, "fromWeek": "2026-W45" }` while a change is scheduled to start at the beginning of next week, else `null`. Clients treat a missing value as `null`.
 
 Only the **current** week is served. There is no way to fetch a future week's seed.
 
@@ -235,12 +249,13 @@ All of the caller's endless results, ordered by difficulty then number. Lets a f
 }
 ```
 
-### `GET /api/v1/me/stats`
+### `GET /api/v1/me/stats?generator=1|2`
 
 The caller's streak and personal statistics, for the Stats screen.
 
 ```json
 {
+  "generator": 2,
   "today": "2026-11-05",
   "streak": { "current": 4, "best": 12, "lastDate": "2026-11-05" },
   "daily": [
@@ -259,6 +274,7 @@ The caller's streak and personal statistics, for the Stats screen.
 ```
 
 - `today` is today's game date in the server's timezone, as in `GET /api/v1/week`.
+- `generator` echoes the [generator version](#generator-versions) the `daily` numbers are for. The optional query parameter `generator` (`1` or `2`, else `400 bad_request`) picks it; it defaults to the version the current week uses. Only results from dates whose ISO week used that version are counted in `daily`, so a player keeps a separate record per generator. `streak` and `endless` do not depend on it: the streak is a daily habit across generators, not a per-generator record. Clients treat a missing `generator` (older servers) as `1`.
 - **Streak**, across all difficulties. A day counts when the caller has at least one daily result on that game date (any level) that is not flagged by an admin. The server's own automatic flags don't stop a day counting, since they are admin-only until confirmed and can be false positives; an admin flag, including a confirmed automatic one, does. Days are the stored game dates, so day boundaries match the daily puzzle, and consecutive means consecutive calendar days.
   - `current` is the number of consecutive counting days ending today, or ending yesterday when today has no counting result yet (today isn't over). Otherwise it is 0.
   - `best` is the longest run of consecutive counting days ever, and is never less than `current`.
@@ -491,6 +507,34 @@ Flags a result as suspicious, with the same body, limits and replacement semanti
 ### `DELETE /api/v1/admin/endless/results/{difficulty}/{number}/{userId}/flag`
 
 Removes the flag (automatic or not). `200` with the updated list item; also `200` if it wasn't flagged. `404 not_found` if there is no such result.
+
+## Admin endpoints (puzzle generator)
+
+The generator schedule, with the same access rules as the other admin endpoints (`401` / `403` otherwise), working whether or not the server has the updater. Versions are `1` (Classic) and `2` (Graded); anything else is `400 bad_request`. The week boundaries are the server's (Pacific/Auckland).
+
+### `GET /api/v1/admin/generator`
+
+```json
+{
+  "active": 1,
+  "pending": { "version": 2, "fromWeek": "2026-W45" },
+  "schedule": [
+    { "fromWeek": null, "version": 1 }
+  ]
+}
+```
+
+- `active` is the version the current week uses.
+- `pending` is the change scheduled for next week, or `null`.
+- `schedule` is every generator that has been in effect up to and including the active one, oldest first; a pending change is not in it. The first entry applies from the very beginning (the schedule's `0000-W00` sentinel), which is shown as `"fromWeek": null`.
+
+### `PUT /api/v1/admin/generator`
+
+Body `{ "version": 2 }`. Schedules `version` from the start of next ISO week, replacing any pending change; if `version` is the one the current week uses this instead cancels the pending change. A missing, non-integer or unknown `version` is `400 bad_request`. `200` with the object of `GET /api/v1/admin/generator`.
+
+### `DELETE /api/v1/admin/generator/pending`
+
+Cancels the pending change. `200` with the same object, also when nothing was pending.
 
 ## Admin endpoints (self-update)
 

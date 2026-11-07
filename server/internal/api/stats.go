@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/jesserockz/sudoku/server/internal/httpx"
 	"github.com/jesserockz/sudoku/server/internal/puzzle"
@@ -41,14 +42,34 @@ type endlessStatJSON struct {
 }
 
 type statsResponse struct {
-	Today   string            `json:"today"`
-	Streak  streakJSON        `json:"streak"`
-	Daily   []dailyStatJSON   `json:"daily"`
-	Endless []endlessStatJSON `json:"endless"`
+	// Generator is the generator version the per-difficulty daily stats are
+	// for; the streak and the endless stats are not tied to one.
+	Generator int               `json:"generator"`
+	Today     string            `json:"today"`
+	Streak    streakJSON        `json:"streak"`
+	Daily     []dailyStatJSON   `json:"daily"`
+	Endless   []endlessStatJSON `json:"endless"`
 }
 
 func (s *Server) getMyStats(w http.ResponseWriter, r *http.Request) {
 	uid := currentUser(r).ID
+	gens, err := s.deps.Store.GeneratorSchedule(r.Context())
+	if err != nil {
+		httpx.Internal(w, r, err)
+		return
+	}
+	today := s.today()
+	// The daily stats are for one generator version: the one asked for, else
+	// the one in use now.
+	gen := gens.VersionFor(today.ISOWeek())
+	if raw := r.URL.Query().Get("generator"); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || !validGeneratorVersion(v) {
+			httpx.Error(w, http.StatusBadRequest, httpx.CodeBadRequest, "generator must be 1 or 2")
+			return
+		}
+		gen = v
+	}
 	results, err := s.deps.Store.UserDailyResults(r.Context(), uid)
 	if err != nil {
 		httpx.Internal(w, r, err)
@@ -64,8 +85,7 @@ func (s *Server) getMyStats(w http.ResponseWriter, r *http.Request) {
 		httpx.Internal(w, r, err)
 		return
 	}
-	today := s.today()
-	httpx.WriteJSON(w, http.StatusOK, buildStats(today, results, schedule, endless))
+	httpx.WriteJSON(w, http.StatusOK, buildStats(today, results, schedule, gens, gen, endless))
 }
 
 // dailyAcc accumulates one tier's daily results.
@@ -78,8 +98,9 @@ type dailyAcc struct {
 
 // buildStats summarises a user's results. results must be ordered by date,
 // then level; each is assigned the tier its level has among that week's games
-// in schedule.
-func buildStats(today week.Date, results []store.UserDailyResult, schedule store.Schedule, endless []store.EndlessStat) statsResponse {
+// in schedule. The per-difficulty stats count only results from weeks whose
+// generator in gens was gen; the streak counts every week.
+func buildStats(today week.Date, results []store.UserDailyResult, schedule store.Schedule, gens store.GeneratorSchedule, gen int, endless []store.EndlessStat) statsResponse {
 	var acc [puzzle.Tiers]dailyAcc
 	var dates []week.Date
 	levelsOf := map[string]int{} // by ISO week, so each is resolved once
@@ -93,6 +114,9 @@ func buildStats(today week.Date, results []store.UserDailyResult, schedule store
 		}
 		if !r.AdminFlagged && (len(dates) == 0 || dates[len(dates)-1] != d) {
 			dates = append(dates, d)
+		}
+		if gens.VersionFor(iso) != gen {
+			continue
 		}
 		tier, err := puzzle.TierFor(r.Level, levels)
 		if err != nil {
@@ -112,10 +136,11 @@ func buildStats(today week.Date, results []store.UserDailyResult, schedule store
 	}
 
 	out := statsResponse{
-		Today:   today.String(),
-		Streak:  computeStreak(dates, today),
-		Daily:   make([]dailyStatJSON, puzzle.Tiers),
-		Endless: make([]endlessStatJSON, puzzle.Tiers),
+		Generator: gen,
+		Today:     today.String(),
+		Streak:    computeStreak(dates, today),
+		Daily:     make([]dailyStatJSON, puzzle.Tiers),
+		Endless:   make([]endlessStatJSON, puzzle.Tiers),
 	}
 	for i, a := range acc {
 		d := dailyStatJSON{Difficulty: i + 1, Completed: a.count, Recent: append([]recentJSON{}, a.recent...)}
