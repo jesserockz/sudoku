@@ -348,6 +348,11 @@ and the leaderboard's streak markers, with screenshots (including dark mode):
 `web/e2e/endless.cjs` (same server, any database) plays and submits an endless
 puzzle with a reload part way, and checks the tab, the leaderboards, that a
 second player gets the same puzzle and the admin list.
+`web/e2e/endless-series.cjs <url> <screenshot dir> <database file>` checks the
+Classic and Graded series: it flips the current week to Graded by writing a
+`generator_schedule` row into the database file (with `sqlite3`, removed
+again afterwards), plays both series and checks the unfinished game left in
+the other one, the leaderboards and Stats.
 
 The first signs in, goes offline and reloads, solves a puzzle offline, checks
 the result reaches `GET /api/v1/me/results` once back online, and covers the
@@ -451,7 +456,8 @@ In dev auth mode the app instead asks for a user id and display name and sends
   generator (a player who has played both has two records), and the screen
   opens on the generator the current week uses. Picking the other one fetches
   `GET /api/v1/me/stats?generator=N` again (`AppController.showStatsGenerator`);
-  a sync keeps the pick. The streak and the Endless table do not change with it.
+  a sync keeps the pick. The streak does not change with it; the Endless card follows the same
+  toggle, as endless numbers are kept per series (see below).
 
 ## Endless puzzles
 
@@ -470,17 +476,33 @@ endless puzzle shares a daily one's seed). The goldens in
 `test/generator.test.ts` are the same vectors as the server's Go port, so
 everyone gets the same puzzles and the server can check their replays.
 
+**Series.** Each generator version has its own numbered series of endless
+puzzles (`generateEndlessVersion(version, seed, tier, n)` in
+`src/generator/versions.ts`; v2 is `generateEndlessV2`), each starting at #1
+with its own progress, results and leaderboards. The tab plays the series of
+the generator the *current week* uses (`AppController.endlessGenerator`, from
+`week.generator`: the server's, or the seed's own schedule in seed play), and
+names it ("Graded series") in its heading. When the week flips, the tab
+switches series by itself, and switching back resumes the earlier one exactly
+where it was. Unfinished games of the other series stay resumable: the tab
+lists them under **Unfinished in another series**. Results carry a
+`generator` (missing means Classic, 1); the series is also shown in the play
+header ("Graded · Easy #3"), on the leaderboard (which has a Classic / Graded
+switch), in Stats and in the admin lists. Storage keeps Classic's keys as they
+were (`<tier>/<n>`) and prefixes the others (`g2/<tier>/<n>`):
+`endlessGameKey` and `parseEndlessGameKey` in `src/data/app-storage.ts`.
+
 - **The tab** lists each tier with how many the player has solved (and the
   highest number, when there are gaps) and a button for the lowest number not
   solved yet ("Play #13", or "Resume #13"). Other games in progress are linked
-  under it. **Open a puzzle** picks any tier and number.
+  under it. **Open a puzzle** picks any tier and number of the current series.
 - **Playing** works exactly as for dailies: games are saved on every move
   (`endless-games`) and resume after a reload, replays are recorded, and a
   solved puzzle's result is queued (`endless-pending`) and uploaded with
   `POST /api/v1/endless/results` whenever the server is reachable. Finished
   games are dropped from storage once `GET /api/v1/me/endless` has them. A
   number solved on another device opens its leaderboard instead.
-- **Leaderboard**: per tier, everyone's count of solved puzzles and highest
+- **Leaderboard**: for one series (the tab's, switchable), per tier, everyone's count of solved puzzles and highest
   number (ties share a rank), and any one puzzle's times, with Prev and Next
   by number. Admin flags show the same "suspicious" marker as on the daily
   boards.
@@ -540,7 +562,8 @@ passphrase, or a generated one) and gets the same daily games
   history of solve times (`seed-history-<fp>`). Endless puzzles are kept
   per seed the same way: games in progress (`seed-endless-games-<fp>`, never
   pruned, and dropped once solved) and solve times
-  (`seed-endless-history-<fp>`: difficulty, number, elapsed time, when).
+  (`seed-endless-history-<fp>`: generator, difficulty, number, elapsed time,
+  when; entries without a generator are Classic's).
   Switching seeds and back resumes where you were.
 
 In the app:
@@ -559,7 +582,7 @@ In the app:
 - **Today** works as with a server (offline, timer, notes) but with no sign-in,
   uploads or leaderboard. Under the games: **Share results**, **History**
   (every solved game, newest day first, then an **Endless** section with the
-  solve times of each difficulty by puzzle number), and the seed's card with
+  solve times of each series and difficulty by puzzle number), and the seed's card with
   the share link, **Copy link**, **Share…** (the system share sheet, where the
   browser has one), **Copy seed** and **Leave seed**.
   The card also has the **Puzzle generator** setting: the generator this week

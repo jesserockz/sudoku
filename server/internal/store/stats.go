@@ -116,11 +116,12 @@ type EndlessStat struct {
 }
 
 // UserEndlessStats returns a user's endless summary for each tier they have
-// played, ordered by difficulty. Flagged results are included.
-func (s *Store) UserEndlessStats(ctx context.Context, userID int64) ([]EndlessStat, error) {
+// played in one generator's series, ordered by difficulty. Flagged results
+// are included.
+func (s *Store) UserEndlessStats(ctx context.Context, userID int64, generator int) ([]EndlessStat, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT difficulty, COUNT(*), MAX(number), MIN(elapsed_ms), SUM(elapsed_ms)
-		FROM endless_results WHERE user_id = ? GROUP BY difficulty ORDER BY difficulty`, userID)
+		FROM endless_results WHERE user_id = ? AND generator = ? GROUP BY difficulty ORDER BY difficulty`, userID, generator)
 	if err != nil {
 		return nil, fmt.Errorf("user endless stats: %w", err)
 	}

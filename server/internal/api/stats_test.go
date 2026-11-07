@@ -219,9 +219,11 @@ func TestMyStatsEndToEnd(t *testing.T) {
 	put(c, "2026-10-25", 4, 99000, "")
 
 	for _, r := range []store.EndlessResult{
-		{UserID: a, Difficulty: 2, Number: 3, ElapsedMs: 120000},
-		{UserID: a, Difficulty: 2, Number: 12, ElapsedMs: 181000},
-		{UserID: a, Difficulty: 2, Number: 5, ElapsedMs: 100000, AutoFlag: "No replay submitted"},
+		{UserID: a, Generator: 1, Difficulty: 2, Number: 3, ElapsedMs: 120000},
+		{UserID: a, Generator: 1, Difficulty: 2, Number: 12, ElapsedMs: 181000},
+		{UserID: a, Generator: 1, Difficulty: 2, Number: 5, ElapsedMs: 100000, AutoFlag: "No replay submitted"},
+		// Another series is not in the Classic stats.
+		{UserID: a, Generator: 2, Difficulty: 2, Number: 1, ElapsedMs: 5000},
 	} {
 		r.CompletedAt, r.ReplayStatus = "x", "missing"
 		if _, _, err := st.InsertEndlessResult(ctx, r); err != nil {

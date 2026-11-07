@@ -16,7 +16,7 @@ async function ready(c: AppController): Promise<void> {
   assert.equal(c.phase.kind, "ready");
 }
 
-const REF: EndlessRef = { difficulty: 2, number: 3 };
+const REF: EndlessRef = { generator: 1, difficulty: 2, number: 3 };
 
 interface Env {
   c: AppController;
@@ -107,7 +107,7 @@ test("playing and solving an endless puzzle in seed play lands in the history, n
   c.openToday();
 
   // Opening a solved puzzle whose game is gone goes to History too.
-  c.openEndless({ difficulty: 1, number: 1 });
+  c.openEndless({ generator: 1, difficulty: 1, number: 1 });
   c.openEndless(REF);
   assert.equal(c.screen.kind, "history");
 });

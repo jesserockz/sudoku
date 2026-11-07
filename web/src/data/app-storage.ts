@@ -4,6 +4,7 @@ import {
 } from "../api/models.ts";
 import type { SavedGame } from "../game/game.ts";
 import { decodeReplayEvent } from "../game/replay.ts";
+import { GENERATOR_CLASSIC } from "../generator/versions.ts";
 import { type KeyValueStore, StoredValue, bool, list, num, obj, optional, record, str } from "./store.ts";
 
 export interface DevUser {
@@ -38,8 +39,21 @@ export interface PendingAuth {
 }
 
 export const gameKey = (date: string, level: number): string => `${date}/${level}`;
-/** Where an endless game is kept: its difficulty and number. */
-export const endlessGameKey = (difficulty: number, number: number): string => `${difficulty}/${number}`;
+/**
+ * Where an endless game is kept: its generator's series, difficulty and number. Classic (generator 1) keeps
+ * the plain `difficulty/number` it always had, so games and queued results from before the series existed
+ * still match; other series are prefixed `g<generator>/`.
+ */
+export const endlessGameKey = (generator: number, difficulty: number, number: number): string =>
+  generator === GENERATOR_CLASSIC ? `${difficulty}/${number}` : `g${generator}/${difficulty}/${number}`;
+
+/** The inverse of {@link endlessGameKey}. */
+export function parseEndlessGameKey(key: string): { generator: number; difficulty: number; number: number } {
+  const parts = key.split("/");
+  const generator = parts.length === 3 ? Number(parts.shift()!.slice(1)) : GENERATOR_CLASSIC;
+  const [difficulty, number] = parts.map(Number) as [number, number];
+  return { generator, difficulty, number };
+}
 
 /** The home page's tabs. */
 export type HomeTab = "daily" | "endless";

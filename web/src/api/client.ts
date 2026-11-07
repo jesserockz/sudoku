@@ -112,14 +112,14 @@ export class SudokuApi {
     return this.#submit("endless/results", result, decodeEndlessResult);
   }
 
-  /** How many endless puzzles of each difficulty everyone has solved. */
-  async endlessProgress(): Promise<EndlessProgress> {
-    return decodeEndlessProgress(await this.#get("endless/leaderboard"));
+  /** How many endless puzzles of each difficulty everyone has solved in `generator`'s series. */
+  async endlessProgress(generator: number): Promise<EndlessProgress> {
+    return decodeEndlessProgress(await this.#get(`endless/leaderboard?generator=${generator}`));
   }
 
-  /** One endless puzzle's leaderboard. */
-  async endlessBoard(difficulty: number, number: number): Promise<EndlessBoard> {
-    return decodeEndlessBoard(await this.#get(`endless/leaderboard/${difficulty}/${number}`));
+  /** One endless puzzle's leaderboard, in `generator`'s series. */
+  async endlessBoard(generator: number, difficulty: number, number: number): Promise<EndlessBoard> {
+    return decodeEndlessBoard(await this.#get(`endless/leaderboard/${difficulty}/${number}?generator=${generator}`));
   }
 
   async #submit<T>(path: string, result: T, decode: (json: unknown) => T): Promise<SubmitOutcome<T>> {
@@ -176,18 +176,18 @@ export class SudokuApi {
   }
 
   /** Admin only: one endless result's replay, with the puzzle's givens. */
-  async adminEndlessReplay(difficulty: number, number: number, userId: string): Promise<EndlessReplayDetail> {
-    return decodeEndlessReplayDetail(await this.#get(`${endlessResultPath(difficulty, number, userId)}/replay`));
+  async adminEndlessReplay(generator: number, difficulty: number, number: number, userId: string): Promise<EndlessReplayDetail> {
+    return decodeEndlessReplayDetail(await this.#get(`${endlessResultPath(difficulty, number, userId)}/replay?generator=${generator}`));
   }
 
   /** Admin only: flags an endless result as suspicious, replacing any earlier flag. */
-  async flagEndlessResult(difficulty: number, number: number, userId: string, reason: string): Promise<AdminEndlessResult> {
-    return decodeAdminEndlessResult(await this.#send("PUT", `${endlessResultPath(difficulty, number, userId)}/flag`, { reason }));
+  async flagEndlessResult(generator: number, difficulty: number, number: number, userId: string, reason: string): Promise<AdminEndlessResult> {
+    return decodeAdminEndlessResult(await this.#send("PUT", `${endlessResultPath(difficulty, number, userId)}/flag?generator=${generator}`, { reason }));
   }
 
   /** Admin only: removes an endless result's flag. */
-  async unflagEndlessResult(difficulty: number, number: number, userId: string): Promise<AdminEndlessResult> {
-    return decodeAdminEndlessResult(await this.#send("DELETE", `${endlessResultPath(difficulty, number, userId)}/flag`));
+  async unflagEndlessResult(generator: number, difficulty: number, number: number, userId: string): Promise<AdminEndlessResult> {
+    return decodeAdminEndlessResult(await this.#send("DELETE", `${endlessResultPath(difficulty, number, userId)}/flag?generator=${generator}`));
   }
 
   /** Admin only: the puzzle generator in use, what is scheduled and its history. */

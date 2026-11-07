@@ -60,14 +60,14 @@ e.g. `Bearer dev:alice:Alice`. Dev tokens carry only the claims `sub` and `name`
 
 ## Endless seed
 
-Endless puzzles are numbered puzzles per difficulty, unlimited and shared by everyone, kept forever. `difficulty` is the tier `1..5` (Easy 40, Medium 36, Hard 32, Expert 28, Diabolical 24 givens), which is not the daily `level`. `number` is `1..9007199254740991` (2^53-1, the largest integer JavaScript represents exactly).
+Endless puzzles are numbered puzzles per difficulty, unlimited and shared by everyone, kept forever. There is one **series** per [generator version](#generator-versions): Classic (`1`) and Graded (`2`), each numbered from `#1` with its own results, progress and leaderboards. A puzzle is named by `(generator, difficulty, number)`; every `generator` below is `1` or `2` and a missing one means `1`, so data and clients from before the series existed are Classic's. `difficulty` is the tier `1..5` (Easy 40, Medium 36, Hard 32, Expert 28, Diabolical 24 givens), which is not the daily `level`. `number` is `1..9007199254740991` (2^53-1, the largest integer JavaScript represents exactly).
 
 - `endlessSeed = HMAC-SHA256(key = serverSecret, message = "sudoku-endless")`, truncated to the **first 8 bytes**, encoded as **16 lowercase hex characters**, exactly as the weekly seed is. It never changes for a given server secret, so a client can fetch it once.
 - The puzzle seed is derived with SplitMix64 (all arithmetic on unsigned 64-bit integers, wrapping), then fed to the same generator as the dailies (grid, cell removal to the tier's target, up to 8 attempts):
 
 ```
 ENDLESS_DOMAIN = 0x656e646c657373   // "endless" in ASCII
-h = mix(ENDLESS_DOMAIN + GeneratorVersion)
+h = mix(ENDLESS_DOMAIN + generatorVersion)   // 1 for Classic, 2 for Graded
 h = mix(h ^ endlessSeed)
 h = mix(h + difficulty)
 h = mix(h + number)
@@ -77,7 +77,7 @@ h = mix(h + number)
 
 ## Generator versions
 
-There are two puzzle generators for the **daily** puzzles. Players know them as **Classic** (version `1`, the clue-count generator described above) and **Graded** (version `2`, which grades puzzles by technique). Endless puzzles are Classic only. The web client and the server's Go port contain both (`web/src/generator/generator.ts` and `generator-v2.ts` with `grader.ts`, `server/internal/puzzle/` `puzzle.go`, `v2.go` and `grader.go`).
+There are two puzzle generators for the **daily** puzzles. Players know them as **Classic** (version `1`, the clue-count generator described above) and **Graded** (version `2`, which grades puzzles by technique). Endless puzzles come in both, as separate [series](#endless-seed). The web client and the server's Go port contain both (`web/src/generator/generator.ts` and `generator-v2.ts` with `grader.ts`, `server/internal/puzzle/` `puzzle.go`, `v2.go` and `grader.go`).
 
 - **Graded**: the grader solves a puzzle with human techniques in a fixed order (hidden and naked singles, locked candidates, subsets, fish, wings, colouring, XY-chains) and reports the hardest level needed, 1 to 6, or 7 if it gets stuck. Tiers accept grader levels: Easy 1, Medium 2, Hard 3 to 4, Expert 5, Diabolical 6. Generation tries up to 200 random puzzles per seed and takes the first inside the tier's band, or else the nearest non-stuck one.
 - The puzzle seed of Graded uses the same derivation as Classic with the version constant `2` in place of `GeneratorVersion` (`1`), so the two never share a puzzle for the same week, day and level.
@@ -239,7 +239,7 @@ The [endless seed](#endless-seed).
 
 ### `GET /api/v1/me/endless`
 
-All of the caller's endless results, ordered by difficulty then number. Lets a fresh device know which puzzles are already solved.
+All of the caller's endless results of every series, ordered by `generator`, difficulty then number; each carries its `generator`. Lets a fresh device know which puzzles are already solved.
 
 ```json
 {
@@ -274,7 +274,7 @@ The caller's streak and personal statistics, for the Stats screen.
 ```
 
 - `today` is today's game date in the server's timezone, as in `GET /api/v1/week`.
-- `generator` echoes the [generator version](#generator-versions) the `daily` numbers are for. The optional query parameter `generator` (`1` or `2`, else `400 bad_request`) picks it; it defaults to the version the current week uses. Only results from dates whose ISO week used that version are counted in `daily`, so a player keeps a separate record per generator. `streak` and `endless` do not depend on it: the streak is a daily habit across generators, not a per-generator record. Clients treat a missing `generator` (older servers) as `1`.
+- `generator` echoes the [generator version](#generator-versions) the `daily` numbers are for. The optional query parameter `generator` (`1` or `2`, else `400 bad_request`) picks it; it defaults to the version the current week uses. Only results from dates whose ISO week used that version are counted in `daily`, so a player keeps a separate record per generator. `streak` does not depend on it: the streak is a daily habit across generators, not a per-generator record. The `endless` numbers do: each series is its own record. Clients treat a missing `generator` (older servers) as `1`.
 - **Streak**, across all difficulties. A day counts when the caller has at least one daily result on that game date (any level) that is not flagged by an admin. The server's own automatic flags don't stop a day counting, since they are admin-only until confirmed and can be false positives; an admin flag, including a confirmed automatic one, does. Days are the stored game dates, so day boundaries match the daily puzzle, and consecutive means consecutive calendar days.
   - `current` is the number of consecutive counting days ending today, or ending yesterday when today has no counting result yet (today isn't over). Otherwise it is 0.
   - `best` is the longest run of consecutive counting days ever, and is never less than `current`.
@@ -282,7 +282,7 @@ The caller's streak and personal statistics, for the Stats screen.
 - `daily` always has five entries, `difficulty` 1 (Easy) to 5 (Diabolical) in order. A daily result's difficulty is the tier of its level given the number of games on its day (the level schedule for that date's ISO week, see `levels` in `GET /api/v1/week`), the same mapping as for the endless tiers. It counts all of the caller's daily results, flagged or not: it is their own record.
   - `completed` is the number of results; `bestMs` is the fastest and `averageMs` the mean rounded to the nearest millisecond. Both are `null` when `completed` is 0.
   - `recent` is the caller's 20 most recent results of that difficulty, by date and then level, oldest first. It is empty when there are none.
-- `endless` always has five entries, `difficulty` 1 to 5 in order. `completed` is the number of puzzles solved, `highest` the highest puzzle number solved (0 when none), and `bestMs` and `averageMs` as above (`null` when none).
+- `endless` is for the same `generator` as `daily` (one series' numbers; the query parameter and its default are as above). It always has five entries, `difficulty` 1 to 5 in order. `completed` is the number of puzzles solved, `highest` the highest puzzle number solved (0 when none), and `bestMs` and `averageMs` as above (`null` when none).
 
 ### `POST /api/v1/endless/results`
 
@@ -290,6 +290,7 @@ Submit one completed endless puzzle.
 
 ```json
 {
+  "generator": 2,
   "difficulty": 1,
   "number": 12,
   "elapsedMs": 183000,
@@ -299,10 +300,11 @@ Submit one completed endless puzzle.
 ```
 
 - The rules are those of `POST /api/v1/results`, with `difficulty` and `number` in place of `date` and `level`, and no date limits: an endless puzzle can be solved at any time.
-- **Idempotent**: one result per `(user, difficulty, number)`. The first accepted submission wins; later ones are ignored.
+- `generator` is the series (`1` when missing; anything else is `400 invalid_result`). Any series is accepted at any time, whatever generator the current week uses, so results queued offline still land after the week changes. The replay is checked against that series' puzzle.
+- **Idempotent**: one result per `(user, generator, difficulty, number)`. The first accepted submission wins; later ones are ignored.
   - `201 Created` - stored.
   - `200 OK` - a result already existed; the body is the **stored** result, which may differ from the one submitted.
-  - Both return the result object `{ "difficulty", "number", "elapsedMs", "completedAt" }` (never the replay).
+  - Both return the result object `{ "generator", "difficulty", "number", "elapsedMs", "completedAt" }` (never the replay).
 - **Sanity caps** (`400 invalid_result` on failure):
   - `difficulty` in `1..5`.
   - `number` in `1..9007199254740991`.
@@ -316,10 +318,11 @@ Clients queue results offline and retry until they receive `200`/`201`. A `400` 
 
 ### `GET /api/v1/endless/leaderboard`
 
-Every player's progress in each difficulty.
+Every player's progress in each difficulty of one series. The query parameter `generator` (`1` or `2`, else `400 bad_request`) picks it; it defaults to the version the current week uses, as for `GET /api/v1/me/stats`.
 
 ```json
 {
+  "generator": 1,
   "difficulties": [
     {
       "difficulty": 1,
@@ -340,10 +343,11 @@ Every player's progress in each difficulty.
 
 ### `GET /api/v1/endless/leaderboard/{difficulty}/{number}`
 
-The times on one endless puzzle, laid out as a puzzle in the daily leaderboard.
+The times on one endless puzzle of one series (the optional `generator` parameter works as on the progress leaderboard), laid out as a puzzle in the daily leaderboard.
 
 ```json
 {
+  "generator": 1,
   "difficulty": 1,
   "number": 12,
   "entries": [
@@ -354,7 +358,7 @@ The times on one endless puzzle, laid out as a puzzle in the daily leaderboard.
 ```
 
 - Entries are sorted by time ascending, with the same ranking, tie ordering and `suspicious` rules as a daily puzzle. `entries` is empty when nobody has solved the puzzle.
-- `400 bad_request` if `difficulty` is not `1..5` or `number` is not `1..9007199254740991`.
+- `400 bad_request` if `difficulty` is not `1..5`, `number` is not `1..9007199254740991` or `generator` is not `1` or `2`.
 
 ## Replays
 
@@ -462,11 +466,11 @@ Removes the flag (automatic or not). `200` with the updated list item; also `200
 
 ## Admin endpoints (endless results)
 
-The same anti-cheat tools for [endless](#endless-seed) results, with the same access rules as the admin endpoints above.
+The same anti-cheat tools for [endless](#endless-seed) results, with the same access rules as the admin endpoints above. Each list item has its `generator`. The per-result routes below take an optional query parameter `generator` (`1` or `2`, default `1`, else `400 bad_request`) naming the series, so they address the right result and the replay's `givens` come from that series' puzzle.
 
 ### `GET /api/v1/admin/endless/results?date=YYYY-MM-DD`
 
-Every endless result **submitted** on a day (defaults to today, any past date allowed), where the day runs from midnight to midnight in the game timezone. Endless puzzles have no date of their own, so the submission time is what places a result on a day. Ordered by difficulty, then number, then time.
+Every endless result **submitted** on a day (defaults to today, any past date allowed), where the day runs from midnight to midnight in the game timezone. Endless puzzles have no date of their own, so the submission time is what places a result on a day. Ordered by generator, difficulty, number, then time.
 
 ```json
 {
@@ -475,6 +479,7 @@ Every endless result **submitted** on a day (defaults to today, any past date al
     {
       "userId": "2",
       "displayName": "Bob",
+      "generator": 1,
       "difficulty": 5,
       "number": 12,
       "elapsedMs": 120000,

@@ -103,9 +103,14 @@ func TestUserEndlessStats(t *testing.T) {
 	s, _ := openTemp(t)
 	alice, _ := s.UpsertUser(ctx, "alice", "Alice")
 	bob, _ := s.UpsertUser(ctx, "bob", "Bob")
+	var putGen func(uid int64, generator, difficulty int, number, ms int64)
 	put := func(uid int64, difficulty int, number, ms int64) {
 		t.Helper()
-		r := EndlessResult{UserID: uid, Difficulty: difficulty, Number: number, ElapsedMs: ms, CompletedAt: "x", ReplayStatus: "missing", AutoFlag: "No replay submitted"}
+		putGen(uid, 1, difficulty, number, ms)
+	}
+	putGen = func(uid int64, generator, difficulty int, number, ms int64) {
+		t.Helper()
+		r := EndlessResult{UserID: uid, Generator: generator, Difficulty: difficulty, Number: number, ElapsedMs: ms, CompletedAt: "x", ReplayStatus: "missing", AutoFlag: "No replay submitted"}
 		if _, _, err := s.InsertEndlessResult(ctx, r); err != nil {
 			t.Fatal(err)
 		}
@@ -114,14 +119,24 @@ func TestUserEndlessStats(t *testing.T) {
 	put(alice.ID, 1, 2, 5000)
 	put(alice.ID, 1, 9, 7000)
 	put(bob.ID, 1, 40, 1000)
+	putGen(alice.ID, 2, 1, 1, 4000)
+	putGen(alice.ID, 2, 1, 2, 6000)
 
-	got, err := s.UserEndlessStats(ctx, alice.ID)
+	got, err := s.UserEndlessStats(ctx, alice.ID, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []EndlessStat{{1, 2, 9, 5000, 12000}, {3, 1, 1, 9000, 9000}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("UserEndlessStats = %+v, want %+v", got, want)
+	}
+	// Each series has its own stats.
+	got, err = s.UserEndlessStats(ctx, alice.ID, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []EndlessStat{{1, 2, 2, 4000, 10000}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("UserEndlessStats(2) = %+v, want %+v", got, want)
 	}
 }
 
@@ -133,7 +148,7 @@ func TestStatsQueriesFailOnClosedStore(t *testing.T) {
 		"LevelSchedule":    func() error { _, err := s.LevelSchedule(ctx); return err }(),
 		"UserDailyResults": func() error { _, err := s.UserDailyResults(ctx, 1); return err }(),
 		"CountingDates":    func() error { _, err := s.CountingDates(ctx, "d"); return err }(),
-		"UserEndlessStats": func() error { _, err := s.UserEndlessStats(ctx, 1); return err }(),
+		"UserEndlessStats": func() error { _, err := s.UserEndlessStats(ctx, 1, 1); return err }(),
 	}
 	for name, err := range checks {
 		if err == nil {
@@ -166,7 +181,7 @@ func TestStatsQueriesFailOnUnscannableRows(t *testing.T) {
 	checks := map[string]error{
 		"LevelSchedule":    func() error { _, err := s.LevelSchedule(ctx); return err }(),
 		"UserDailyResults": func() error { _, err := s.UserDailyResults(ctx, 1); return err }(),
-		"UserEndlessStats": func() error { _, err := s.UserEndlessStats(ctx, 1); return err }(),
+		"UserEndlessStats": func() error { _, err := s.UserEndlessStats(ctx, 1, 1); return err }(),
 		"CountingDates":    func() error { _, err := s.CountingDates(ctx, "2026-10-26"); return err }(),
 	}
 	for name, err := range checks {

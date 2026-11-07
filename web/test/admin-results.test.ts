@@ -19,7 +19,7 @@ const detailOf = (r: AdminResult, date = TODAY): ReplayDetail => ({
 });
 
 const eres = (userId: string, difficulty: number, number: number, extra: Partial<AdminEndlessResult> = {}): AdminEndlessResult => ({
-  userId, displayName: userId.toUpperCase(), difficulty, number, elapsedMs: 1000 * number, completedAt: "c", submittedAt: "2026-10-27T01:00:00Z",
+  userId, displayName: userId.toUpperCase(), generator: 1, difficulty, number, elapsedMs: 1000 * number, completedAt: "c", submittedAt: "2026-10-27T01:00:00Z",
   replay: "valid", replayError: "", flag: null, ...extra,
 });
 const eday = (date: string, ...results: AdminEndlessResult[]): AdminEndlessResults => ({ date, results });
@@ -88,18 +88,18 @@ class FakeApi implements ResultsApi {
     return this.#answer(this.endlessDays.get(date) ?? eday(date));
   }
 
-  adminEndlessReplay(difficulty: number, number: number, userId: string): Promise<EndlessReplayDetail> {
-    this.calls.push(`ereplay:${difficulty}:${number}:${userId}`);
-    return this.#answer(this.endlessDetails.get(`${difficulty}:${number}:${userId}`));
+  adminEndlessReplay(generator: number, difficulty: number, number: number, userId: string): Promise<EndlessReplayDetail> {
+    this.calls.push(`ereplay:${generator}:${difficulty}:${number}:${userId}`);
+    return this.#answer(this.endlessDetails.get(`${generator}:${difficulty}:${number}:${userId}`));
   }
 
-  flagEndlessResult(difficulty: number, number: number, userId: string, reason: string): Promise<AdminEndlessResult> {
-    this.calls.push(`eflag:${difficulty}:${number}:${userId}:${reason}`);
+  flagEndlessResult(generator: number, difficulty: number, number: number, userId: string, reason: string): Promise<AdminEndlessResult> {
+    this.calls.push(`eflag:${generator}:${difficulty}:${number}:${userId}:${reason}`);
     return this.#answer(this.endlessChange);
   }
 
-  unflagEndlessResult(difficulty: number, number: number, userId: string): Promise<AdminEndlessResult> {
-    this.calls.push(`eunflag:${difficulty}:${number}:${userId}`);
+  unflagEndlessResult(generator: number, difficulty: number, number: number, userId: string): Promise<AdminEndlessResult> {
+    this.calls.push(`eunflag:${generator}:${difficulty}:${number}:${userId}`);
     return this.#answer(this.endlessChange);
   }
 }
@@ -510,7 +510,7 @@ test("endless load failures are reported and stale endless answers are ignored",
 test("endlessResultsFor groups by difficulty in the server's order, and find tells the lists apart", async () => {
   const { api, model } = setup();
   assert.deepEqual(model.endlessResultsFor(1), []);
-  assert.equal(model.find({ difficulty: 1, number: 1, userId: "a" }), null);
+  assert.equal(model.find({ generator: 1, difficulty: 1, number: 1, userId: "a" }), null);
   const a = eres("a", 2, 3);
   const b = eres("b", 2, 3);
   const c = eres("a", 2, 4);
@@ -523,32 +523,32 @@ test("endlessResultsFor groups by difficulty in the server's order, and find tel
   assert.deepEqual(model.endlessResultsFor(2), [a, b, c]);
   assert.deepEqual(model.endlessResultsFor(1), [d]);
   assert.deepEqual(model.endlessResultsFor(5), []);
-  assert.equal(model.find({ difficulty: 2, number: 3, userId: "b" }), b);
-  assert.equal(model.find({ difficulty: 2, number: 4, userId: "a" }), c);
-  assert.equal(model.find({ difficulty: 2, number: 3, userId: "z" }), null);
-  assert.equal(model.find({ difficulty: 1, number: 4, userId: "a" }), null);
-  assert.equal(model.find({ difficulty: 3, number: 3, userId: "a" }), null);
+  assert.equal(model.find({ generator: 1, difficulty: 2, number: 3, userId: "b" }), b);
+  assert.equal(model.find({ generator: 1, difficulty: 2, number: 4, userId: "a" }), c);
+  assert.equal(model.find({ generator: 1, difficulty: 2, number: 3, userId: "z" }), null);
+  assert.equal(model.find({ generator: 1, difficulty: 1, number: 4, userId: "a" }), null);
+  assert.equal(model.find({ generator: 1, difficulty: 3, number: 3, userId: "a" }), null);
   // A daily key never matches an endless row, even with the same player.
   assert.equal(model.find({ level: 2, userId: "a" }), null);
   await model.setMode("daily");
   assert.equal(model.find({ level: 2, userId: "a" }), daily);
   // And an endless key never matches a daily row.
-  assert.equal(model.find({ difficulty: 2, number: 3, userId: "a" }), null);
+  assert.equal(model.find({ generator: 1, difficulty: 2, number: 3, userId: "a" }), null);
 });
 
 test("open loads an endless replay, and a failure is reported", async () => {
   const { api, model } = setup();
   const a = eres("a", 2, 3);
-  api.endlessDetails.set("2:3:a", edetailOf(a));
-  const key = { difficulty: 2, number: 3, userId: "a" };
+  api.endlessDetails.set("1:2:3:a", edetailOf(a));
+  const key = { generator: 1, difficulty: 2, number: 3, userId: "a" };
   await model.open(key);
   assert.deepEqual(model.opened, key);
   assert.notEqual(model.opened, key);
   assert.equal(model.viewer!.revealDigits, false);
   assert.equal(model.viewer!.detail.userId, "a");
-  assert.deepEqual(api.calls, ["ereplay:2:3:a"]);
+  assert.deepEqual(api.calls, ["ereplay:1:2:3:a"]);
 
-  api.endlessDetails.set("2:3:a", forbidden);
+  api.endlessDetails.set("1:2:3:a", forbidden);
   await model.open(key);
   assert.equal(model.viewer, null);
   assert.equal(model.viewerError, "Your account isn't an admin");
@@ -559,35 +559,35 @@ test("endless flag and unflag use the endless endpoints and update the list and 
   const a = eres("a", 2, 3);
   const b = eres("b", 2, 3);
   api.endlessDays.set(TODAY, eday(TODAY, a, b));
-  api.endlessDetails.set("2:3:a", edetailOf(a));
+  api.endlessDetails.set("1:2:3:a", edetailOf(a));
   await model.setMode("endless");
-  await model.open({ difficulty: 2, number: 3, userId: "a" });
+  await model.open({ generator: 1, difficulty: 2, number: 3, userId: "a" });
 
   const flagged = eres("a", 2, 3, { flag: flag("too fast") });
   api.endlessChange = flagged;
-  await model.flag({ difficulty: 2, number: 3, userId: "a" }, "  too fast ");
-  assert.equal(api.calls.at(-1), "eflag:2:3:a:too fast");
-  assert.equal(model.find({ difficulty: 2, number: 3, userId: "a" }), flagged);
-  assert.equal(model.find({ difficulty: 2, number: 3, userId: "b" }), b);
+  await model.flag({ generator: 1, difficulty: 2, number: 3, userId: "a" }, "  too fast ");
+  assert.equal(api.calls.at(-1), "eflag:1:2:3:a:too fast");
+  assert.equal(model.find({ generator: 1, difficulty: 2, number: 3, userId: "a" }), flagged);
+  assert.equal(model.find({ generator: 1, difficulty: 2, number: 3, userId: "b" }), b);
   assert.deepEqual(model.viewer!.detail.flag, flagged.flag);
 
   api.endlessChange = a;
-  await model.unflag({ difficulty: 2, number: 3, userId: "a" });
-  assert.equal(api.calls.at(-1), "eunflag:2:3:a");
-  assert.equal(model.find({ difficulty: 2, number: 3, userId: "a" }), a);
+  await model.unflag({ generator: 1, difficulty: 2, number: 3, userId: "a" });
+  assert.equal(api.calls.at(-1), "eunflag:1:2:3:a");
+  assert.equal(model.find({ generator: 1, difficulty: 2, number: 3, userId: "a" }), a);
   assert.equal(model.viewer!.detail.flag, null);
 });
 
 test("an endless flag works with no endless list loaded, and failures set error", async () => {
   const { api, model } = setup();
   api.endlessChange = eres("a", 1, 1, { flag: flag("x") });
-  await model.flag({ difficulty: 1, number: 1, userId: "a" }, "x");
+  await model.flag({ generator: 1, difficulty: 1, number: 1, userId: "a" }, "x");
   assert.equal(model.endlessData, null);
   assert.equal(model.data, null);
   assert.equal(model.error, null);
 
   api.endlessChange = forbidden;
-  await model.unflag({ difficulty: 1, number: 1, userId: "a" });
+  await model.unflag({ generator: 1, difficulty: 1, number: 1, userId: "a" });
   assert.equal(model.error, "Your account isn't an admin");
 });
 
@@ -596,6 +596,6 @@ test("an endless flag leaves a daily replay with the same player alone", async (
   api.details.set(`${TODAY}:1:a`, detailOf(res("a", 1)));
   await model.open({ level: 1, userId: "a" });
   api.endlessChange = eres("a", 1, 1, { flag: flag("x") });
-  await model.flag({ difficulty: 1, number: 1, userId: "a" }, "x");
+  await model.flag({ generator: 1, difficulty: 1, number: 1, userId: "a" }, "x");
   assert.equal(model.viewer!.detail.flag, null);
 });

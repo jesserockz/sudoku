@@ -153,6 +153,8 @@ export class TodayScreen extends Screen {
         h("button", { class: "primary", disabled: app.syncing, onclick: () => app.sync() }, app.syncing ? "Checking…" : "Try again"),
       );
     }
+    const generator = app.endlessGenerator;
+    const elsewhere = app.endlessElsewhere();
     const rows = summaries.map((d) => {
       const name = DIFFICULTIES[d.difficulty - 1]!.name;
       const resumingNext = d.inProgress.some((g) => g.number === d.next);
@@ -163,10 +165,10 @@ export class TodayScreen extends Screen {
           h("div", { class: ["status", d.solved > 0 && "done"] },
             d.solved === 0 ? "None solved yet" : `${d.solved} solved${d.highest > d.solved ? ` · up to #${d.highest}` : ""}`),
           others.length > 0 && h("div", { class: "status in-progress" }, "In progress: ",
-            others.map((g) => h("button", { class: "link", onclick: () => app.openEndless({ difficulty: d.difficulty, number: g.number }) },
+            others.map((g) => h("button", { class: "link", onclick: () => app.openEndless({ generator, difficulty: d.difficulty, number: g.number }) },
               `#${g.number} (${formatDuration(g.elapsedMs)})`))),
         ),
-        h("button", { class: "primary", onclick: () => app.openEndless({ difficulty: d.difficulty, number: d.next }) },
+        h("button", { class: "primary", onclick: () => app.openEndless({ generator, difficulty: d.difficulty, number: d.next }) },
           `${resumingNext ? "Resume" : "Play"} #${d.next}`),
       );
     });
@@ -175,15 +177,26 @@ export class TodayScreen extends Screen {
       e.preventDefault();
       const number = Number(this.#number.value);
       error.hidden = Number.isSafeInteger(number) && number >= 1;
-      if (error.hidden) app.openEndless({ difficulty: Number(this.#difficulty.value), number });
+      if (error.hidden) app.openEndless({ generator, difficulty: Number(this.#difficulty.value), number });
     };
     return [
       h("div", { class: "card" },
+        h("h2", { id: "endless-series" }, `${generatorName(generator)} series`),
         h("p", { class: "muted" }, app.seed
           ? "Numbered puzzles with no end. Everyone with your seed gets the same ones, and times count forever."
           : "Numbered puzzles with no end. Everyone gets the same ones, and times count forever.",
           app.me && ` · ${app.me.displayName}`),
+        h("p", { class: "muted small" }, "Each generator has its own series, numbered from #1. This tab plays the one this week's daily puzzles use."),
         h("ul", { class: "puzzles" }, rows),
+      ),
+      elsewhere.length > 0 && h("div", { class: "card", id: "endless-elsewhere" },
+        h("h2", null, "Unfinished in another series"),
+        h("ul", { class: "puzzles" }, elsewhere.map((g) => h("li", null,
+          h("div", null,
+            h("div", { class: "name" }, `${generatorName(g.generator)} ${endlessTitle(g.difficulty, g.number)}`),
+            h("div", { class: "status in-progress" }, `In progress (${formatDuration(g.elapsedMs)})`)),
+          h("button", { onclick: () => app.openEndless({ generator: g.generator, difficulty: g.difficulty, number: g.number }) }, "Resume"),
+        ))),
       ),
       h("div", { class: "card" },
         h("h2", null, "Open a puzzle"),
@@ -440,6 +453,7 @@ export class StatsScreen extends Screen {
         ),
         h("div", { class: "card" },
           h("h2", null, ENDLESS_LABEL),
+          h("p", { class: "muted small" }, `The ${generatorName(stats.generator)} series, following the generator chosen above.`),
           h("table", { class: "board-table stats-table" }, head("", "Solved", "Highest", "Best", "Average"), h("tbody", null, endless)),
         ),
       ];
@@ -457,7 +471,7 @@ export class EndlessScoresScreen extends Screen {
   protected render(): Child {
     const app = this.app;
     if (app.screen.kind !== "endless-scores") return null;
-    const { difficulty, number } = app.screen;
+    const { generator, difficulty, number } = app.screen;
     const meId = app.me?.id;
     const suspiciousBadge = (suspicious: boolean) =>
       suspicious && h("span", { class: "badge suspicious", title: "An admin flagged this result as suspicious" }, "suspicious");
@@ -494,26 +508,30 @@ export class EndlessScoresScreen extends Screen {
     const open = (e: Event) => {
       e.preventDefault();
       const n = Number(this.#number.value);
-      if (Number.isSafeInteger(n) && n >= 1) app.openEndlessScores(difficulty, n);
+      if (Number.isSafeInteger(n) && n >= 1) app.openEndlessScores(difficulty, n, generator);
     };
     return [
       topBar(`${ENDLESS_LABEL} leaderboard`, () => app.openToday()),
+      h("div", { class: "tabs generator-tabs", role: "group", "aria-label": "Series" },
+        GENERATOR_VERSIONS.map((v) => h("button", {
+          class: generator === v && "active", "aria-pressed": String(generator === v), onclick: () => app.openEndlessScores(difficulty, number, v),
+        }, generatorName(v)))),
       h("div", { class: "tabs" },
         DIFFICULTIES.map((d, i) => h("button", {
-          class: difficulty === i + 1 && "active", onclick: () => app.openEndlessScores(i + 1, number),
+          class: difficulty === i + 1 && "active", onclick: () => app.openEndlessScores(i + 1, number, generator),
         }, d.name))),
       number === null
-        ? h("div", { class: "card" }, h("h2", null, `${DIFFICULTIES[difficulty - 1]!.name}: puzzles solved`), body)
+        ? h("div", { class: "card" }, h("h2", null, `${generatorName(generator)} ${DIFFICULTIES[difficulty - 1]!.name}: puzzles solved`), body)
         : [
           h("div", { class: "date-nav" },
-            h("button", { class: "link", disabled: number <= 1, onclick: () => app.openEndlessScores(difficulty, number - 1) }, `‹ #${number - 1}`),
-            h("span", null, endlessTitle(difficulty, number)),
-            h("button", { class: "link", onclick: () => app.openEndlessScores(difficulty, number + 1) }, `#${number + 1} ›`),
+            h("button", { class: "link", disabled: number <= 1, onclick: () => app.openEndlessScores(difficulty, number - 1, generator) }, `‹ #${number - 1}`),
+            h("span", null, `${generatorName(generator)} ${endlessTitle(difficulty, number)}`),
+            h("button", { class: "link", onclick: () => app.openEndlessScores(difficulty, number + 1, generator) }, `#${number + 1} ›`),
           ),
           h("div", { class: "card" }, body),
           h("div", { class: "actions" },
-            h("button", { onclick: () => app.openEndless({ difficulty, number }) }, "Play this puzzle"),
-            h("button", { class: "link", onclick: () => app.openEndlessScores(difficulty) }, "Everyone's progress"),
+            h("button", { onclick: () => app.openEndless({ generator, difficulty, number }) }, "Play this puzzle"),
+            h("button", { class: "link", onclick: () => app.openEndlessScores(difficulty, null, generator) }, "Everyone's progress"),
           ),
         ],
       h("div", { class: "card" },
@@ -552,16 +570,22 @@ export class HistoryScreen extends Screen {
         )),
       endless.length > 0 && h("div", { class: "card", id: "history-endless" },
         h("h2", null, ENDLESS_LABEL),
-        DIFFICULTIES.map((d, i) => {
-          const solved = endless.filter((r) => r.difficulty === i + 1);
-          return solved.length > 0 && [
-            h("p", null, h("strong", null, d.name), ` (${solved.length} solved)`),
-            h("table", { class: "board-table" }, h("tbody", null,
-              solved.map((r) => h("tr", null,
-                h("td", null, endlessTitle(r.difficulty, r.number)),
-                h("td", { class: "time" }, formatDuration(r.elapsedMs)),
-              )),
-            )),
+        GENERATOR_VERSIONS.map((generator) => {
+          const inSeries = endless.filter((r) => r.generator === generator);
+          return inSeries.length > 0 && [
+            h("h3", null, `${generatorName(generator)} series`),
+            DIFFICULTIES.map((d, i) => {
+              const solved = inSeries.filter((r) => r.difficulty === i + 1);
+              return solved.length > 0 && [
+                h("p", null, h("strong", null, d.name), ` (${solved.length} solved)`),
+                h("table", { class: "board-table" }, h("tbody", null,
+                  solved.map((r) => h("tr", null,
+                    h("td", null, endlessTitle(r.difficulty, r.number)),
+                    h("td", { class: "time" }, formatDuration(r.elapsedMs)),
+                  )),
+                )),
+              ];
+            }),
           ];
         }),
       ),

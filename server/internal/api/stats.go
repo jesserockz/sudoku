@@ -2,7 +2,6 @@ package api
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/jesserockz/sudoku/server/internal/httpx"
 	"github.com/jesserockz/sudoku/server/internal/puzzle"
@@ -42,8 +41,8 @@ type endlessStatJSON struct {
 }
 
 type statsResponse struct {
-	// Generator is the generator version the per-difficulty daily stats are
-	// for; the streak and the endless stats are not tied to one.
+	// Generator is the generator version the per-difficulty daily and
+	// endless stats are for; the streak is not tied to one.
 	Generator int               `json:"generator"`
 	Today     string            `json:"today"`
 	Streak    streakJSON        `json:"streak"`
@@ -59,16 +58,11 @@ func (s *Server) getMyStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	today := s.today()
-	// The daily stats are for one generator version: the one asked for, else
-	// the one in use now.
-	gen := gens.VersionFor(today.ISOWeek())
-	if raw := r.URL.Query().Get("generator"); raw != "" {
-		v, err := strconv.Atoi(raw)
-		if err != nil || !validGeneratorVersion(v) {
-			httpx.Error(w, http.StatusBadRequest, httpx.CodeBadRequest, "generator must be 1 or 2")
-			return
-		}
-		gen = v
+	// The daily and endless stats are for one generator version: the one
+	// asked for, else the one in use now.
+	gen, ok := s.generatorParam(w, r, gens.VersionFor(today.ISOWeek()))
+	if !ok {
+		return
 	}
 	results, err := s.deps.Store.UserDailyResults(r.Context(), uid)
 	if err != nil {
@@ -80,7 +74,7 @@ func (s *Server) getMyStats(w http.ResponseWriter, r *http.Request) {
 		httpx.Internal(w, r, err)
 		return
 	}
-	endless, err := s.deps.Store.UserEndlessStats(r.Context(), uid)
+	endless, err := s.deps.Store.UserEndlessStats(r.Context(), uid, gen)
 	if err != nil {
 		httpx.Internal(w, r, err)
 		return

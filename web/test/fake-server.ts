@@ -93,7 +93,8 @@ export class FakeServer {
 
   readonly requests: { method: string; url: URL; headers: Headers; body: string }[] = [];
   readonly stored: GameResult[] = [];
-  readonly storedEndless: EndlessResult[] = [];
+  /** Stored endless results; one without a `generator` plays a result from before there were several series (Classic). */
+  readonly storedEndless: (Omit<EndlessResult, "generator"> & { generator?: number })[] = [];
 
   constructor(now: () => number, authMode: "dev" | "oidc" = "dev") {
     this.now = now;
@@ -159,10 +160,11 @@ export class FakeServer {
     const board = /^\/api\/v1\/endless\/leaderboard\/(\d+)\/(\d+)$/.exec(r.url.pathname);
     if (board) {
       const [difficulty, number] = [Number(board[1]), Number(board[2])];
-      const entries = this.storedEndless.filter((s) => s.difficulty === difficulty && s.number === number)
+      const generator = Number(r.url.searchParams.get("generator") ?? this.generator);
+      const entries = this.storedEndless.filter((s) => (s.generator ?? 1) === generator && s.difficulty === difficulty && s.number === number)
         .sort((a, b) => a.elapsedMs - b.elapsedMs)
         .map((s, i) => ({ rank: i + 1, userId: "alice", displayName: "Alice", elapsedMs: s.elapsedMs, suspicious: false }));
-      return json({ difficulty, number, entries });
+      return json({ generator, difficulty, number, entries });
     }
     if (r.url.pathname.startsWith("/api/v1/admin/results")) {
       if (!this.admin) return json({ error: { code: "forbidden", message: "admin access required" } }, 403);
@@ -220,15 +222,17 @@ export class FakeServer {
         }
         if (this.rejectAll) return json({ error: { code: "invalid_result", message: "nope" } }, 400);
         const result = JSON.parse(r.body) as EndlessResult;
-        const existing = this.storedEndless.find((s) => s.difficulty === result.difficulty && s.number === result.number);
+        const existing = this.storedEndless.find((s) => (s.generator ?? 1) === result.generator && s.difficulty === result.difficulty && s.number === result.number);
         if (existing) return json(existing, 200);
         this.storedEndless.push(result);
         return json(result, 201);
       }
-      case "/api/v1/endless/leaderboard":
+      case "/api/v1/endless/leaderboard": {
+        const generator = Number(r.url.searchParams.get("generator") ?? this.generator);
         return json({
+          generator,
           difficulties: [1, 2, 3, 4, 5].map((difficulty) => {
-            const mine = this.storedEndless.filter((s) => s.difficulty === difficulty);
+            const mine = this.storedEndless.filter((s) => (s.generator ?? 1) === generator && s.difficulty === difficulty);
             return {
               difficulty,
               players: mine.length === 0 ? [] : [{
@@ -238,6 +242,7 @@ export class FakeServer {
             };
           }),
         });
+      }
       case "/api/v1/leaderboard":
         return json({ date: r.url.searchParams.get("date"), puzzles: [], total: { entries: [] }, players: this.leaderboardPlayers });
       case "/api/v1/me/stats":

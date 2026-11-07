@@ -14,9 +14,9 @@ export interface ResultsApi {
   flagResult(date: string, level: number, userId: string, reason: string): Promise<AdminResult>;
   unflagResult(date: string, level: number, userId: string): Promise<AdminResult>;
   adminEndlessResults(date: string): Promise<AdminEndlessResults>;
-  adminEndlessReplay(difficulty: number, number: number, userId: string): Promise<EndlessReplayDetail>;
-  flagEndlessResult(difficulty: number, number: number, userId: string, reason: string): Promise<AdminEndlessResult>;
-  unflagEndlessResult(difficulty: number, number: number, userId: string): Promise<AdminEndlessResult>;
+  adminEndlessReplay(generator: number, difficulty: number, number: number, userId: string): Promise<EndlessReplayDetail>;
+  flagEndlessResult(generator: number, difficulty: number, number: number, userId: string, reason: string): Promise<AdminEndlessResult>;
+  unflagEndlessResult(generator: number, difficulty: number, number: number, userId: string): Promise<AdminEndlessResult>;
 }
 
 /** Which list the page shows: the day's games, or the endless puzzles submitted that day. */
@@ -30,6 +30,8 @@ export interface DailyResultKey {
 
 /** Names an endless result. */
 export interface EndlessResultKey {
+  /** The series: the generator version of the puzzle. */
+  generator: number;
   difficulty: number;
   number: number;
   userId: string;
@@ -42,13 +44,13 @@ const isEndlessKey = (k: ResultKey): k is EndlessResultKey => "difficulty" in k;
 
 const same = (a: ResultKey, b: ResultKey): boolean => {
   if (isEndlessKey(a) || isEndlessKey(b)) {
-    return isEndlessKey(a) && isEndlessKey(b) && a.difficulty === b.difficulty && a.number === b.number && a.userId === b.userId;
+    return isEndlessKey(a) && isEndlessKey(b) && a.generator === b.generator && a.difficulty === b.difficulty && a.number === b.number && a.userId === b.userId;
   }
   return a.level === b.level && a.userId === b.userId;
 };
 
 const copyKey = (k: ResultKey): ResultKey =>
-  isEndlessKey(k) ? { difficulty: k.difficulty, number: k.number, userId: k.userId } : { level: k.level, userId: k.userId };
+  isEndlessKey(k) ? { generator: k.generator, difficulty: k.difficulty, number: k.number, userId: k.userId } : { level: k.level, userId: k.userId };
 
 /** The difficulties an endless list is grouped by. */
 export const ENDLESS_DIFFICULTIES: readonly number[] = [1, 2, 3, 4, 5];
@@ -96,7 +98,7 @@ export class AdminResultsModel extends EventTarget {
     return this.data?.results.filter((r) => r.level === level) ?? [];
   }
 
-  /** The day's endless results for `difficulty`, in the server's order (by puzzle number, then fastest). */
+  /** The day's endless results for `difficulty`, in the server's order (by series, puzzle number, then fastest). */
   endlessResultsFor(difficulty: number): AdminEndlessResult[] {
     return this.endlessData?.results.filter((r) => r.difficulty === difficulty) ?? [];
   }
@@ -154,7 +156,7 @@ export class AdminResultsModel extends EventTarget {
     this.#changed();
     try {
       const detail = isEndlessKey(key)
-        ? await this.#api.adminEndlessReplay(key.difficulty, key.number, key.userId)
+        ? await this.#api.adminEndlessReplay(key.generator, key.difficulty, key.number, key.userId)
         : await this.#api.adminReplay(this.date, key.level, key.userId);
       if (this.opened !== opened) return;
       const viewer = new ReplayViewer(detail);
@@ -182,13 +184,13 @@ export class AdminResultsModel extends EventTarget {
   flag(key: ResultKey, reason: string): Promise<void> {
     const text = reason.trim();
     return this.#change(() => isEndlessKey(key)
-      ? this.#api.flagEndlessResult(key.difficulty, key.number, key.userId, text)
+      ? this.#api.flagEndlessResult(key.generator, key.difficulty, key.number, key.userId, text)
       : this.#api.flagResult(this.date, key.level, key.userId, text));
   }
 
   unflag(key: ResultKey): Promise<void> {
     return this.#change(() => isEndlessKey(key)
-      ? this.#api.unflagEndlessResult(key.difficulty, key.number, key.userId)
+      ? this.#api.unflagEndlessResult(key.generator, key.difficulty, key.number, key.userId)
       : this.#api.unflagResult(this.date, key.level, key.userId));
   }
 

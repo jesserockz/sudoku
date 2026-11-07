@@ -1,5 +1,6 @@
 import { ApiException, type SubmitOutcome } from "../api/client.ts";
 import type { EndlessResult, GameResult } from "../api/models.ts";
+import { endlessGameKey } from "./app-storage.ts";
 import { Mutex } from "./mutex.ts";
 import type { StoredValue } from "./store.ts";
 
@@ -20,8 +21,8 @@ export const isUnauthorized = (report: FlushReport<unknown>): boolean =>
 
 /** Daily results are one per `(date, level)`. */
 export const dailyKey = (r: GameResult): string => `${r.date}/${r.level}`;
-/** Endless results are one per `(difficulty, number)`. */
-export const endlessKey = (r: EndlessResult): string => `${r.difficulty}/${r.number}`;
+/** Endless results are one per `(generator, difficulty, number)`; see {@link endlessGameKey}. */
+export const endlessKey = (r: EndlessResult): string => endlessGameKey(r.generator, r.difficulty, r.number);
 
 /**
  * The offline result queue: completed puzzles are queued durably, then sent
