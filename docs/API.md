@@ -75,6 +75,15 @@ h = mix(h + number)
 
 - The web client (`web/src/generator/`, `generateEndless`) and the server's Go port (`server/internal/puzzle/`, `GenerateEndless`) are pinned by the same golden puzzles. The server regenerates an endless puzzle to check [replays](#replays) and never stores puzzles.
 
+## Generator v2 (not yet used)
+
+The web client and the server's Go port also contain a second generator that grades puzzles by technique (`web/src/generator/generator-v2.ts` and `grader.ts`, `server/internal/puzzle/v2.go` and `grader.go`). No endpoint or replay check uses it yet; the seeds and puzzles above are still v1.
+
+- The grader solves a puzzle with human techniques in a fixed order (hidden and naked singles, locked candidates, subsets, fish, wings, colouring, XY-chains) and reports the hardest level needed, 1 to 6, or 7 if it gets stuck.
+- Tiers accept grader levels: Easy 1, Medium 2, Hard 3 to 4, Expert 5, Diabolical 6. Generation tries up to 200 random puzzles per seed and takes the first inside the tier's band, or else the nearest non-stuck one.
+- The puzzle seed uses the same derivation as v1 with the version constant `2` in place of `GeneratorVersion` (`1`).
+- Both implementations are pinned by `testdata/generator-v2.json` at the repo root, which holds daily, endless, forced-fallback and grader cases.
+
 ## Endpoints
 
 ### `GET /healthz`

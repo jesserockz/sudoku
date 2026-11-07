@@ -27,9 +27,9 @@ export const DEFAULT_LEVELS = 5;
 export const MAX_LEVELS = 10;
 
 /** "sudoku" in ASCII; separates this seed derivation from any other use of the week seed. */
-const DOMAIN = 0x7375646f6b75n;
+export const DOMAIN = 0x7375646f6b75n;
 /** "endless" in ASCII: endless puzzles' derivation, so they never coincide with a daily puzzle's. */
-const ENDLESS_DOMAIN = 0x656e646c657373n;
+export const ENDLESS_DOMAIN = 0x656e646c657373n;
 /** The highest endless puzzle number: there's no real limit, but it must stay an exact integer in JSON. */
 export const MAX_ENDLESS_NUMBER = Number.MAX_SAFE_INTEGER;
 
@@ -213,7 +213,7 @@ export function checkLevels(levels: number): void {
   }
 }
 
-function removeCells(solution: number[], target: number, random: Xoshiro256StarStar): number[] {
+export function removeCells(solution: number[], target: number, random: Xoshiro256StarStar): number[] {
   const grid = solution.slice();
   const order = Array.from({ length: CELLS }, (_, i) => i);
   random.shuffle(order);
