@@ -10,7 +10,8 @@ import "fmt"
 // first attempt whose level falls in the tier's band is the puzzle. The shared
 // fixture testdata/generator-v2.json pins both implementations.
 //
-// Not used by the server yet.
+// Daily puzzles use it for the weeks the generator schedule says so; endless
+// puzzles do not use it yet.
 
 // GeneratorV2Version is the seed-derivation version for v2 (v1 is
 // GeneratorVersion = 1).
@@ -119,7 +120,7 @@ func buildV2(seed uint64, tier, maxAttempts int) Graded {
 }
 
 // GenerateV2 is Generate for v2: game level of levels on a day, with its
-// grade. dayOfWeek is 1 (Monday) to 7 (Sunday). Not yet used by the server.
+// grade. dayOfWeek is 1 (Monday) to 7 (Sunday).
 func GenerateV2(weekSeed uint64, dayOfWeek, level, levels int) (Graded, error) {
 	if dayOfWeek < 1 || dayOfWeek > 7 {
 		return Graded{}, fmt.Errorf("dayOfWeek must be 1 (Monday) to 7 (Sunday): %d", dayOfWeek)
@@ -133,7 +134,7 @@ func GenerateV2(weekSeed uint64, dayOfWeek, level, levels int) (Graded, error) {
 
 // GenerateEndlessV2 is GenerateEndless for v2: endless puzzle number
 // (1..MaxEndlessNumber) of tier difficulty (1 = Easy to 5 = Diabolical), with
-// its grade. Not yet used by the server.
+// its grade. Endless puzzles are still v1 only.
 func GenerateEndlessV2(endlessSeed uint64, difficulty int, number int64) (Graded, error) {
 	if difficulty < 1 || difficulty > Tiers {
 		return Graded{}, fmt.Errorf("difficulty must be 1..%d: %d", Tiers, difficulty)
@@ -142,4 +143,25 @@ func GenerateEndlessV2(endlessSeed uint64, difficulty int, number int64) (Graded
 		return Graded{}, fmt.Errorf("number must be 1..%d: %d", MaxEndlessNumber, number)
 	}
 	return buildV2(endlessPuzzleSeedV2(endlessSeed, difficulty, number), difficulty, MaxAttemptsV2), nil
+}
+
+// Generator versions of the daily puzzles, as in the generator schedule.
+const (
+	// VersionClassic is v1, Generate (shown to players as "Classic").
+	VersionClassic = 1
+	// VersionGraded is v2, GenerateV2 (shown as "Graded").
+	VersionGraded = 2
+)
+
+// GenerateVersion generates a daily puzzle with generator version 1 or 2, so
+// callers don't branch on the version. Other versions are an error.
+func GenerateVersion(version int, weekSeed uint64, dayOfWeek, level, levels int) (Puzzle, error) {
+	switch version {
+	case VersionClassic:
+		return Generate(weekSeed, dayOfWeek, level, levels)
+	case VersionGraded:
+		g, err := GenerateV2(weekSeed, dayOfWeek, level, levels)
+		return g.Puzzle, err
+	}
+	return Puzzle{}, fmt.Errorf("unknown generator version %d", version)
 }

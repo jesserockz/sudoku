@@ -8,7 +8,7 @@ import (
 )
 
 func TestScheduleLevelsFor(t *testing.T) {
-	sc := Schedule{{firstWeek, 5}, {"2026-W10", 7}, {"2026-W20", 3}}
+	sc := Schedule{{FirstWeek, 5}, {"2026-W10", 7}, {"2026-W20", 3}}
 	for week, want := range map[string]int{
 		"2025-W52": 5, "2026-W09": 5, "2026-W10": 7, "2026-W19": 7, "2026-W20": 3, "2027-W01": 3,
 	} {
@@ -25,7 +25,7 @@ func TestLevelSchedule(t *testing.T) {
 	ctx := context.Background()
 	s, _ := openTemp(t)
 	got, err := s.LevelSchedule(ctx)
-	if err != nil || !reflect.DeepEqual(got, Schedule{{firstWeek, 5}}) {
+	if err != nil || !reflect.DeepEqual(got, Schedule{{FirstWeek, 5}}) {
 		t.Fatalf("seeded schedule = %v, %v", got, err)
 	}
 	u, _ := s.UpsertUser(ctx, "alice", "Alice")
@@ -34,7 +34,7 @@ func TestLevelSchedule(t *testing.T) {
 	}
 	schedule(t, s, "2026-W44", "2026-W45", 7)
 	got, err = s.LevelSchedule(ctx)
-	if err != nil || !reflect.DeepEqual(got, Schedule{{firstWeek, 5}, {"2026-W45", 7}}) {
+	if err != nil || !reflect.DeepEqual(got, Schedule{{FirstWeek, 5}, {"2026-W45", 7}}) {
 		t.Fatalf("schedule = %v, %v", got, err)
 	}
 	if n := got.LevelsFor("2026-W44"); n != 5 {

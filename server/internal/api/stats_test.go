@@ -113,7 +113,7 @@ func TestBuildStatsTiersFollowEachWeeksLevelCount(t *testing.T) {
 		{Date: "2026-11-02", Level: 3, ElapsedMs: 7000},
 		{Date: "2026-11-02", Level: 4, ElapsedMs: 9000}, // beyond the week's three games
 	}
-	got := buildStats(days(t, "2026-11-02")[0], results, schedule, nil)
+	got := buildStats(days(t, "2026-11-02")[0], results, schedule, v1Only, 1, nil)
 
 	completed := make([]int, 5)
 	for i, d := range got.Daily {
@@ -149,7 +149,7 @@ func TestBuildStatsRecentKeepsLatestTwenty(t *testing.T) {
 	for i := 0; i < 25; i++ {
 		results = append(results, store.UserDailyResult{Date: start.AddDays(i).String(), Level: 1, ElapsedMs: int64(1000 + i)})
 	}
-	d := buildStats(start.AddDays(24), results, schedule, nil).Daily[0]
+	d := buildStats(start.AddDays(24), results, schedule, v1Only, 1, nil).Daily[0]
 	if d.Completed != 25 || len(d.Recent) != 20 {
 		t.Fatalf("completed %d, recent %d", d.Completed, len(d.Recent))
 	}
@@ -162,7 +162,7 @@ func TestBuildStatsRecentKeepsLatestTwenty(t *testing.T) {
 }
 
 func TestBuildStatsEmpty(t *testing.T) {
-	got := buildStats(days(t, "2026-11-05")[0], nil, store.Schedule{{EffectiveWeek: "0000-W00", Levels: 5}}, nil)
+	got := buildStats(days(t, "2026-11-05")[0], nil, store.Schedule{{EffectiveWeek: "0000-W00", Levels: 5}}, v1Only, 1, nil)
 	if got.Streak.LastDate != nil || got.Streak.Current != 0 || got.Streak.Best != 0 {
 		t.Errorf("streak = %+v", got.Streak)
 	}
@@ -282,7 +282,7 @@ func TestMyStatsEndToEnd(t *testing.T) {
 
 	// A newcomer gets zeros and the fixed shape.
 	body := decode[json.RawMessage](t, do(t, srv, "GET", "/api/v1/me/stats", "dev:eve:Eve", nil))
-	if !strings.HasPrefix(string(body), `{"today":"2026-10-26","streak":{"current":0,"best":0,"lastDate":null},"daily":[{"difficulty":1,"completed":0,"bestMs":null,"averageMs":null,"recent":[]}`) ||
+	if !strings.HasPrefix(string(body), `{"generator":1,"today":"2026-10-26","streak":{"current":0,"best":0,"lastDate":null},"daily":[{"difficulty":1,"completed":0,"bestMs":null,"averageMs":null,"recent":[]}`) ||
 		!strings.HasSuffix(string(body), `{"difficulty":5,"completed":0,"highest":0,"bestMs":null,"averageMs":null}]}`) {
 		t.Errorf("empty body = %s", body)
 	}
@@ -335,3 +335,6 @@ func TestLeaderboardStoreFailures(t *testing.T) {
 		})
 	}
 }
+
+// v1Only is a generator schedule that never leaves v1.
+var v1Only = store.GeneratorSchedule{{EffectiveWeek: "0000-W00", Version: 1}}

@@ -1,7 +1,7 @@
 // The Admin page's logic, free of the DOM: lists the server's releases, installs or rolls back one
 // after a confirmation, follows the progress and waits for the restarted server to report the new version.
 import { ApiException } from "../api/client.ts";
-import type { Release, ReleaseList, UpdateStatus } from "../api/models.ts";
+import type { GeneratorInfo, Release, ReleaseList, UpdateStatus } from "../api/models.ts";
 
 /** The parts of {@link SudokuApi} the admin page uses. */
 export interface AdminApi {
@@ -9,6 +9,9 @@ export interface AdminApi {
   adminUpdateStatus(): Promise<UpdateStatus>;
   startUpdate(tag: string, allowDowngrade: boolean): Promise<UpdateStatus>;
   rollback(): Promise<UpdateStatus>;
+  adminGenerator(): Promise<GeneratorInfo>;
+  setGenerator(version: number): Promise<GeneratorInfo>;
+  cancelGenerator(): Promise<GeneratorInfo>;
 }
 
 /** What the page needs from outside; tests supply their own clock and sleep. */
@@ -105,6 +108,12 @@ export class AdminModel extends EventTarget {
   /** Why the last request (choosing, starting) failed, or `null`. */
   error: string | null = null;
   progress: Progress = { kind: "none" };
+  /** The puzzle generator schedule, or `null` until loaded. */
+  generator: GeneratorInfo | null = null;
+  /** Loading or changing the generator failed (the message), or `null`. */
+  generatorError: string | null = null;
+  /** A generator change is in flight; its buttons are disabled. */
+  generatorBusy = false;
 
   readonly #api: AdminApi;
   readonly #host: AdminHost;
@@ -135,9 +144,9 @@ export class AdminModel extends EventTarget {
     this.dispatchEvent(new Event("change"));
   }
 
-  /** Loads the releases, and picks up an update that is already under way (e.g. the page was reopened). */
+  /** Loads the generator schedule and the releases, and picks up an update that is already under way (e.g. the page was reopened). */
   async load(): Promise<void> {
-    await this.#fetchList();
+    await Promise.all([this.#fetchGenerator(), this.#fetchList()]);
     const update = this.list?.update;
     if (!update || this.progress.kind !== "none") return;
     if (RUNNING.has(update.state) || update.state === "restarting") {
@@ -146,6 +155,34 @@ export class AdminModel extends EventTarget {
       this.progress = { kind: "failed", message: update.error || update.message || "The last update failed." };
       this.#changed();
     }
+  }
+
+  async #fetchGenerator(): Promise<void> {
+    await this.#generatorRequest(() => this.#api.adminGenerator());
+  }
+
+  /** Makes `version` the generator from next week; choosing the one in use cancels a pending change. */
+  async chooseGenerator(version: number): Promise<void> {
+    await this.#generatorRequest(() => this.#api.setGenerator(version));
+  }
+
+  /** Cancels the pending generator change. */
+  async cancelGenerator(): Promise<void> {
+    await this.#generatorRequest(() => this.#api.cancelGenerator());
+  }
+
+  async #generatorRequest(request: () => Promise<GeneratorInfo>): Promise<void> {
+    if (this.generatorBusy) return;
+    this.generatorBusy = true;
+    this.generatorError = null;
+    this.#changed();
+    try {
+      this.generator = await request();
+    } catch (e) {
+      this.generatorError = describeError(e);
+    }
+    this.generatorBusy = false;
+    this.#changed();
   }
 
   async #fetchList(): Promise<void> {

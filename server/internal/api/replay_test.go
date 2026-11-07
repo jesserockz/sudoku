@@ -71,6 +71,12 @@ func (e replayEnv) sabotage(t *testing.T, stmts ...string) {
 
 func testPuzzle(t *testing.T, level, levels int) puzzle.Puzzle {
 	t.Helper()
+	return testPuzzleV(t, puzzle.VersionClassic, level, levels)
+}
+
+// testPuzzleV is testPuzzle for generator version.
+func testPuzzleV(t *testing.T, version, level, levels int) puzzle.Puzzle {
+	t.Helper()
 	d, err := week.ParseDate(testDate)
 	if err != nil {
 		t.Fatal(err)
@@ -79,7 +85,7 @@ func testPuzzle(t *testing.T, level, levels int) puzzle.Puzzle {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := puzzle.Generate(ws, d.Weekday(), level, levels)
+	p, err := puzzle.GenerateVersion(version, ws, d.Weekday(), level, levels)
 	if err != nil {
 		t.Fatal(err)
 	}

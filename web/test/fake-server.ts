@@ -1,7 +1,8 @@
 // An in-memory v1 server and OIDC provider behind a fetch function, following docs/API.md.
 import type { EndlessResult, GameResult } from "../src/api/models.ts";
 import { createPkce } from "../src/api/oidc.ts";
-import { weekAt } from "../src/game/calendar.ts";
+import type { GeneratorInfo, PendingGenerator } from "../src/api/models.ts";
+import { addDays, weekAt } from "../src/game/calendar.ts";
 import { weekSeed } from "../src/serverless/seed.ts";
 
 export const ISSUER = "https://auth.test/o/sudoku/";
@@ -21,6 +22,15 @@ export class FakeServer {
   /** When set, the endless leaderboard endpoints wait for this promise before answering. */
   endlessBoardGate: Promise<void> | null = null;
   levels = 5;
+  /** The puzzle generator this week uses and the change pending for next week, as `GET /week` reports them. */
+  generator = 1;
+  pendingGenerator: PendingGenerator | null = null;
+  /** False plays an older server: `GET /week` and `GET /me/stats` leave the generator fields out. */
+  reportsGenerator = true;
+  /** The generator history `GET /admin/generator` reports; PUT and DELETE change `pendingGenerator` as the real server does. */
+  generatorHistory: GeneratorInfo["schedule"] = [{ fromWeek: null, version: 1 }];
+  /** When set, the admin generator endpoints answer this status. */
+  generatorStatus: number | null = null;
   /** Answer to `GET /me/stats`; `statsStatus` makes it fail instead, and `statsGate` holds the answer back. */
   stats: unknown = {
     today: "2026-10-27",
@@ -171,9 +181,21 @@ export class FakeServer {
       case "/api/v1/admin/rollback":
         if (!this.admin) return json({ error: { code: "forbidden", message: "admin access required" } }, 403);
         return json(this.adminStatus, 202);
+      case "/api/v1/admin/generator": {
+        if (!this.admin) return json({ error: { code: "forbidden", message: "admin access required" } }, 403);
+        if (this.generatorStatus !== null) return json({ error: { code: "boom", message: "generator broke" } }, this.generatorStatus);
+        if (r.method === "PUT") this.#chooseGenerator((JSON.parse(r.body) as { version: number }).version);
+        return json(this.#generatorInfo());
+      }
+      case "/api/v1/admin/generator/pending":
+        if (!this.admin) return json({ error: { code: "forbidden", message: "admin access required" } }, 403);
+        if (this.generatorStatus !== null) return json({ error: { code: "boom", message: "generator broke" } }, this.generatorStatus);
+        this.pendingGenerator = null;
+        return json(this.#generatorInfo());
       case "/api/v1/week": {
         const info = weekAt(this.now());
-        return json({ ...info, seed: await weekSeed(SECRET, info.isoWeek), timezone: "Pacific/Auckland", levels: this.levels });
+        const generator = this.reportsGenerator ? { generator: this.generator, pendingGenerator: this.pendingGenerator } : {};
+        return json({ ...info, seed: await weekSeed(SECRET, info.isoWeek), timezone: "Pacific/Auckland", levels: this.levels, ...generator });
       }
       case "/api/v1/me/results": {
         const date = r.url.searchParams.get("date") ?? weekAt(this.now()).today;
@@ -221,9 +243,24 @@ export class FakeServer {
       case "/api/v1/me/stats":
         await this.statsGate;
         if (this.statsStatus !== null) return json({ error: { code: "boom", message: "stats broke" } }, this.statsStatus);
-        return json(this.stats);
+        return json(this.#statsFor(r.url.searchParams.get("generator")));
     }
     return json({ error: { code: "not_found", message: "" } }, 404);
+  }
+
+  #statsFor(generator: string | null): unknown {
+    if (!this.reportsGenerator) return this.stats;
+    return { ...(this.stats as object), generator: generator === null ? this.generator : Number(generator) };
+  }
+
+  #generatorInfo(): GeneratorInfo {
+    return { active: this.generator, pending: this.pendingGenerator, schedule: this.generatorHistory };
+  }
+
+  /** As the real server: the current week keeps its generator, a different one starts next week, the same one cancels. */
+  #chooseGenerator(version: number): void {
+    const next = weekAt(this.now());
+    this.pendingGenerator = version === this.generator ? null : { version, fromWeek: weekAt(Date.parse(addDays(next.weekStart, 7) + "T12:00:00Z")).isoWeek };
   }
 
   #user(authorization: string | null): { id: string; displayName: string } | null {

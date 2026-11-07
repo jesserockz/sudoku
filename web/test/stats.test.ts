@@ -23,6 +23,7 @@ async function until(done: () => boolean, timeoutMs = 5000): Promise<void> {
 // Models and client
 
 const GOOD = {
+  generator: 1,
   today: "2026-10-27",
   streak: { current: 4, best: 12, lastDate: "2026-10-27" },
   daily: [{ difficulty: 1, completed: 2, bestMs: 5, averageMs: 7, recent: [{ date: "2026-10-26", level: 1, elapsedMs: 5 }] }],
@@ -41,6 +42,13 @@ test("decodeMyStats reads the stats, with null times when nothing is solved", ()
   assert.deepEqual(empty.daily[0], { difficulty: 2, completed: 0, bestMs: null, averageMs: null, recent: [] });
   assert.deepEqual(empty.endless[0], { difficulty: 2, completed: 0, highest: 0, bestMs: null, averageMs: null });
   assert.equal(decodeStreak({ current: 1, best: 1 }).lastDate, null);
+});
+
+test("decodeMyStats reads the generator, which is Classic for an older server", () => {
+  const { generator: _, ...old } = GOOD;
+  assert.equal(decodeMyStats(old).generator, 1);
+  assert.equal(decodeMyStats({ ...GOOD, generator: 2 }).generator, 2);
+  assert.throws(() => decodeMyStats({ ...GOOD, generator: 3 }), /unsupported generator version: 3/);
 });
 
 test("decodeMyStats rejects missing and badly typed fields", () => {

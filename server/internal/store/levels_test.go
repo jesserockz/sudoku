@@ -34,7 +34,7 @@ func TestLevelsDefaultToFive(t *testing.T) {
 
 func TestScheduleLevelsBeforeAnyPlayIsImmediate(t *testing.T) {
 	s, _ := openTemp(t)
-	if eff := schedule(t, s, "2026-W44", "2026-W45", 3); eff != firstWeek {
+	if eff := schedule(t, s, "2026-W44", "2026-W45", 3); eff != FirstWeek {
 		t.Errorf("effective = %s", eff)
 	}
 	for _, w := range []string{"2020-W01", "2026-W44", "2026-W45"} {

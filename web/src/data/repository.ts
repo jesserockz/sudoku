@@ -117,7 +117,7 @@ export class SudokuRepository implements EndlessSource {
   puzzles(date: string = this.today()): Puzzle[] | null {
     const week = this.weekFor(date);
     if (!week) return null;
-    const key = JSON.stringify([week.seed, week.levels, date]);
+    const key = JSON.stringify([week.seed, week.levels, week.generator, date]);
     if (this.#puzzleCache?.key !== key) this.#puzzleCache = { key, puzzles: weekPuzzles(week, date) };
     return this.#puzzleCache.puzzles;
   }
@@ -251,11 +251,12 @@ export class SudokuRepository implements EndlessSource {
   }
 
   /**
-   * Fetches the user's stats and keeps the streak for offline. Network and HTTP failures propagate (the stored
+   * Fetches the user's stats, with the daily numbers for `generator` (the one in use now when omitted), and keeps the
+   * streak for offline (it is the same for every generator). Network and HTTP failures propagate (the stored
    * streak is left as it was). A separate call from {@link refresh}: stats are nice to have and must not fail a sync.
    */
-  async fetchStats(): Promise<MyStats> {
-    const stats = await this.#client().myStats();
+  async fetchStats(generator?: number): Promise<MyStats> {
+    const stats = await this.#client().myStats(generator);
     this.#storage.streak.write(stats.streak);
     return stats;
   }

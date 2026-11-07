@@ -6,9 +6,9 @@ import (
 	"fmt"
 )
 
-// firstWeek sorts before every real ISO week; its schedule row covers all
+// FirstWeek sorts before every real ISO week; its schedule row covers all
 // weeks until the first change.
-const firstWeek = "0000-W00"
+const FirstWeek = "0000-W00"
 
 // LevelsForWeek returns the number of levels in effect for isoWeek.
 func (s *Store) LevelsForWeek(ctx context.Context, isoWeek string) (int, error) {
@@ -41,8 +41,8 @@ func (s *Store) ScheduleLevels(ctx context.Context, thisWeek, nextWeek string, l
 			if _, err := tx.ExecContext(ctx, `DELETE FROM level_schedule`); err != nil {
 				return err
 			}
-			effective = firstWeek
-			_, err := tx.ExecContext(ctx, `INSERT INTO level_schedule (effective_week, levels) VALUES (?, ?)`, firstWeek, levels)
+			effective = FirstWeek
+			_, err := tx.ExecContext(ctx, `INSERT INTO level_schedule (effective_week, levels) VALUES (?, ?)`, FirstWeek, levels)
 			return err
 		}
 

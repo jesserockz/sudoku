@@ -1,11 +1,13 @@
 import { type Week, weekPuzzles } from "../api/models.ts";
-import { inWeek, today, weekOf } from "../game/calendar.ts";
+import { addDays, inWeek, isoWeek, today, weekOf } from "../game/calendar.ts";
 import { Game, type SavedGame } from "../game/game.ts";
 import type { EndlessPuzzle, Puzzle } from "../generator/generator.ts";
 import { type KeyValueStore, StoredValue, list, num, obj, optional, record, str } from "../data/store.ts";
 import { decodeSavedGame, endlessGameKey, gameKey } from "../data/app-storage.ts";
 import { type EndlessInProgress, EndlessPuzzleCache, type EndlessSolved, type EndlessSource, endlessInProgressOf } from "../data/endless.ts";
 import { type EndlessResult, decodeEndlessResult } from "../api/models.ts";
+import { isGeneratorVersion } from "../generator/versions.ts";
+import { INITIAL_SCHEDULE, type ScheduleEntry, choose, decodeSchedule, pendingFor, versionFor } from "./generator-schedule.ts";
 import { endlessSeed, fingerprint, resultsSummary, seedSettings, seedWeekFor, type SeedSettings, weekSeed } from "./seed.ts";
 
 /** The seed being played, with its fingerprint worked out once. */
@@ -89,17 +91,31 @@ export class SeedRepository implements EndlessSource {
 
   /** The current week for the active seed. */
   async week(): Promise<Week> {
-    const { settings } = this.#requireProfile();
+    const profile = this.#requireProfile();
+    const { settings } = profile;
     const info = weekOf(this.today());
     const key = JSON.stringify([settings, info.isoWeek]);
     if (this.#seedCache?.key !== key) this.#seedCache = { key, seed: await weekSeed(settings.seed, info.isoWeek) };
-    return seedWeekFor(settings, info, this.#seedCache.seed);
+    const schedule = this.#schedule(profile);
+    return seedWeekFor(settings, info, this.#seedCache.seed, versionFor(schedule, info.isoWeek), pendingFor(schedule, info.isoWeek));
+  }
+
+  /**
+   * Chooses the puzzle generator for the active seed. It never changes the current week: the choice starts
+   * next ISO week, replacing any change already pending. Choosing the version this week uses cancels the pending change.
+   */
+  setGenerator(version: number): void {
+    if (!isGeneratorVersion(version)) throw new RangeError(`unknown generator version: ${version}`);
+    const profile = this.#requireProfile();
+    const info = weekOf(this.today());
+    const next = isoWeek(addDays(info.weekStart, 7));
+    this.#generators(profile).write(choose(this.#schedule(profile), info.isoWeek, next, version));
   }
 
   /** Today's games (or another day's in the current week). */
   async puzzles(date: string = this.today()): Promise<Puzzle[]> {
     const week = await this.week();
-    const key = JSON.stringify([week.seed, week.levels, date]);
+    const key = JSON.stringify([week.seed, week.levels, week.generator, date]);
     if (this.#puzzleCache?.key !== key) this.#puzzleCache = { key, puzzles: weekPuzzles(week, date) };
     return this.#puzzleCache.puzzles;
   }
@@ -221,6 +237,14 @@ export class SeedRepository implements EndlessSource {
 
   #games(): StoredValue<Record<string, SavedGame>> {
     return new StoredValue(this.#store, `seed-games-${this.#requireProfile().fingerprint.replace(/^#/, "")}`, (j) => record(j, decodeSavedGame));
+  }
+
+  #generators(profile: SeedProfile): StoredValue<ScheduleEntry[]> {
+    return new StoredValue(this.#store, `seed-generator-${profile.fingerprint.replace(/^#/, "")}`, decodeSchedule);
+  }
+
+  #schedule(profile: SeedProfile): readonly ScheduleEntry[] {
+    return this.#generators(profile).read() ?? INITIAL_SCHEDULE;
   }
 
   #history(profile: SeedProfile): StoredValue<SeedResult[]> {

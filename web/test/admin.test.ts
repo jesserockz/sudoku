@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
 import { ApiException } from "../src/api/client.ts";
-import type { Release, ReleaseList, UpdateStatus } from "../src/api/models.ts";
+import type { GeneratorInfo, Release, ReleaseList, UpdateStatus } from "../src/api/models.ts";
 import {
   AdminModel, POLL_MS, RESTART_TIMEOUT_MS, actionLabel, describeError, flavourOf, formatBytes, progressFraction,
   type AdminApi, type AdminHost,
@@ -27,6 +27,30 @@ class FakeApi implements AdminApi {
   startResult: UpdateStatus | Error = st("downloading");
   rollbackResult: UpdateStatus | Error = st("installing", { action: "rollback", target: "" });
   listError: Error | null = null;
+  generatorInfo: GeneratorInfo = { active: 1, pending: null, schedule: [{ fromWeek: null, version: 1 }] };
+  generatorCalls: string[] = [];
+  generatorError: Error | null = null;
+  /** Holds back the next generator answer until called. */
+  generatorGate: Promise<void> | null = null;
+
+  async #generator(call: string): Promise<GeneratorInfo> {
+    this.generatorCalls.push(call);
+    await this.generatorGate;
+    if (this.generatorError) throw this.generatorError;
+    return this.generatorInfo;
+  }
+
+  adminGenerator(): Promise<GeneratorInfo> {
+    return this.#generator("get");
+  }
+
+  setGenerator(version: number): Promise<GeneratorInfo> {
+    return this.#generator(`set:${version}`);
+  }
+
+  cancelGenerator(): Promise<GeneratorInfo> {
+    return this.#generator("cancel");
+  }
 
   async adminReleases(pre: boolean): Promise<ReleaseList> {
     this.calls.push(`releases:${pre}`);
@@ -504,4 +528,70 @@ test("a rollback that never changes the version times out; a status with no acti
   m.choose("v1.3.0");
   await m.confirmAction();
   assert.deepEqual(m.progress, { kind: "done", message: "Updated to 1.3.0" });
+});
+
+test("loading also loads the puzzle generator schedule", async () => {
+  api.generatorInfo = { active: 2, pending: { version: 1, fromWeek: "2026-W46" }, schedule: [{ fromWeek: null, version: 1 }, { fromWeek: "2026-W45", version: 2 }] };
+  const m = model();
+  assert.equal(m.generator, null);
+  await m.load();
+  assert.deepEqual(m.generator, api.generatorInfo);
+  assert.deepEqual(api.generatorCalls, ["get"]);
+  assert.equal(m.generatorError, null);
+  assert.equal(m.generatorBusy, false);
+});
+
+test("choosing a generator, and cancelling the pending change, show the server's new schedule", async () => {
+  const m = model();
+  await m.load();
+  api.generatorInfo = { active: 1, pending: { version: 2, fromWeek: "2026-W45" }, schedule: [{ fromWeek: null, version: 1 }] };
+  await m.chooseGenerator(2);
+  assert.deepEqual(m.generator!.pending, { version: 2, fromWeek: "2026-W45" });
+  api.generatorInfo = { active: 1, pending: null, schedule: [{ fromWeek: null, version: 1 }] };
+  await m.cancelGenerator();
+  assert.equal(m.generator!.pending, null);
+  assert.deepEqual(api.generatorCalls, ["get", "set:2", "cancel"]);
+});
+
+test("a failed generator request says why and keeps what was shown", async () => {
+  const m = model();
+  await m.load();
+  const before = m.generator;
+  api.generatorError = apiError(400, "version must be 1 or 2");
+  await m.chooseGenerator(3);
+  assert.equal(m.generatorError, "version must be 1 or 2");
+  assert.equal(m.generator, before);
+  assert.equal(m.generatorBusy, false);
+
+  api.generatorError = net();
+  await m.cancelGenerator();
+  assert.match(m.generatorError!, /Couldn't reach the server/);
+
+  // The next try clears the message.
+  api.generatorError = null;
+  await m.chooseGenerator(2);
+  assert.equal(m.generatorError, null);
+});
+
+test("a generator load that fails leaves the schedule empty with the reason", async () => {
+  api.generatorError = apiError(403, "admin access required");
+  const m = model();
+  await m.load();
+  assert.equal(m.generator, null);
+  assert.equal(m.generatorError, "Your account isn't an admin");
+});
+
+test("only one generator request runs at a time", async () => {
+  const m = model();
+  await m.load();
+  let release!: () => void;
+  api.generatorGate = new Promise((resolve) => { release = resolve; });
+  const first = m.chooseGenerator(2);
+  assert.equal(m.generatorBusy, true);
+  await m.chooseGenerator(1); // ignored while busy
+  await m.cancelGenerator(); // ignored too
+  release();
+  await first;
+  assert.deepEqual(api.generatorCalls, ["get", "set:2"]);
+  assert.equal(m.generatorBusy, false);
 });

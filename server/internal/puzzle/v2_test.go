@@ -310,3 +310,35 @@ func TestGraderNeverRemovesATrueCandidate(t *testing.T) {
 		t.Errorf("only %d techniques exercised", len(used))
 	}
 }
+
+func TestGenerateVersionDispatches(t *testing.T) {
+	const seed = 0x9f2c4a1b7e30d5c8
+	v1, err := Generate(seed, 2, 3, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g2, err := GenerateV2(seed, 2, 3, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := GenerateVersion(VersionClassic, seed, 2, 3, 5); err != nil || got != v1 {
+		t.Errorf("classic = %+v, %v", got, err)
+	}
+	if got, err := GenerateVersion(VersionGraded, seed, 2, 3, 5); err != nil || got != g2.Puzzle {
+		t.Errorf("graded = %+v, %v", got, err)
+	}
+	if v1 == g2.Puzzle {
+		t.Error("the two generators gave the same puzzle")
+	}
+	for _, v := range []int{0, 3, -1} {
+		if _, err := GenerateVersion(v, seed, 2, 3, 5); err == nil {
+			t.Errorf("version %d accepted", v)
+		}
+	}
+	// Argument errors come through from either generator.
+	for _, v := range []int{VersionClassic, VersionGraded} {
+		if _, err := GenerateVersion(v, seed, 8, 1, 5); err == nil {
+			t.Errorf("version %d accepted day 8", v)
+		}
+	}
+}
