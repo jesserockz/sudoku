@@ -567,3 +567,53 @@ the path of the served directory:
 ```sh
 node web/e2e/update.cjs http://localhost:8090/ web/dist
 ```
+
+### PR previews
+
+Every pull request that touches `web/` gets a live preview of the web client,
+and so does `main`, on [Cloudflare Pages](https://pages.cloudflare.com/). The
+**Web preview** workflow (`preview.yml`) deploys the bundle that the **Web**
+workflow already built, so nothing from a pull request is built or run with the
+Cloudflare secrets. A comment on the pull request links to the preview, and the
+deployment shows in the pull request's timeline.
+
+Deployments of `main` are recorded in the `cf-pages` environment, with the
+preview's link on the workflow run. Those of pull requests are recorded in the
+`preview` environment at the pull request's commit, which the pull request
+shows; the run's job summary links those previews.
+
+Pull request N is served at `https://pr-N.<project>.pages.dev` and `main` at
+the project's own URL, `https://<project>.pages.dev`. Each is a separate origin,
+so a preview's saved data and service worker never touch the real app's.
+
+Previews are seed play only. There is no server behind them, and sign-in
+redirects and the same-origin API do not work on a preview host, so there is no
+sign-in or leaderboards. Pages are marked `noindex`.
+
+- Pull requests from forks are only deployed with the `preview` label. Add it,
+  then re-run the pull request's **Web** workflow. A labelled fork's later
+  pushes are deployed too, so remove the label if in doubt.
+- A pull request that does not touch `web/` has no preview, since **Web** does
+  not run for it.
+- When a pull request closes, **Web preview cleanup** (`preview-cleanup.yml`)
+  deletes its deployments and replaces the comment. It also sweeps weekly for
+  any a failed run left behind, and can be run by hand.
+
+One-time setup:
+
+1. Create the Pages project, with `main` as its production branch:
+   `npx wrangler pages project create sudoku-time --production-branch main`.
+2. Create a Cloudflare API token with only the **Cloudflare Pages: Edit**
+   permission.
+3. In the repository's **Settings → Environments**, create an environment
+   named `cf-pages`. Under **Deployment branches and tags**, choose
+   **Selected branches and tags** and add `main`: both workflows run from
+   `main`, so no other branch's workflow can read the secrets. Add the
+   environment secrets `CLOUDFLARE_API_TOKEN` (that token) and
+   `CLOUDFLARE_ACCOUNT_ID`.
+4. If the project has another name, set the variable
+   `CLOUDFLARE_PAGES_PROJECT` to it, in the environment or the repository.
+5. Create a `preview` label.
+
+The scripts the workflows run are in `.github/scripts` and are tested by
+`.github/scripts/test-preview.sh` (the **Workflow scripts** workflow).
