@@ -29,6 +29,14 @@ jobs:
     name: Deploy preview
     if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    # The Cloudflare secrets live in this environment, which only main may use.
+    # Its history is main's preview: only a push to main records a deployment
+    # there (at main's commit, which preview-target.sh checks is the one built).
+    # A pull request's preview is recorded at its own commit, in `preview`.
+    environment:
+      name: cf-pages
+      deployment: ${{ github.event.workflow_run.event == 'push' }}
+      url: ${{ steps.deploy.outputs.url }}
     permissions:
       actions: read
       contents: read
@@ -81,8 +89,8 @@ jobs:
             exit 1
           fi
           echo "url=$url" >> "$GITHUB_OUTPUT"
-      - name: Record a GitHub deployment
-        if: steps.target.outputs.deploy == 'true'
+      - name: Record a deployment at the pull request's commit
+        if: steps.target.outputs.pr != ''
         # The preview is up either way; the comment below still links to it.
         continue-on-error: true
         env:
@@ -90,18 +98,14 @@ jobs:
           URL: ${{ steps.deploy.outputs.url }}
           LOG_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          environment=preview
-          if [ -z "$PR" ]; then
-            environment=preview-main
-          fi
-          if ! request=$(jq -n --arg ref "$HEAD_SHA" --arg environment "$environment" --arg pr "$PR" '{
+          if ! request=$(jq -n --arg ref "$HEAD_SHA" --arg pr "$PR" '{
             ref: $ref,
-            environment: $environment,
+            environment: "preview",
             auto_merge: false,
             required_contexts: [],
             transient_environment: true,
             production_environment: false,
-            payload: {pr: (if $pr == "" then null else ($pr | tonumber) end)},
+            payload: {pr: ($pr | tonumber)},
             description: "Cloudflare Pages preview"
           }'); then
             echo "::error::Could not build the deployment request"
@@ -114,7 +118,7 @@ jobs:
           gh api "repos/$REPO/deployments/$id/statuses" \
             -f state=success -f environment_url="$URL" -f log_url="$LOG_URL" -F auto_inactive=false > /dev/null
       - name: Comment on the pull request
-        if: steps.target.outputs.deploy == 'true' && steps.target.outputs.pr != ''
+        if: steps.target.outputs.pr != ''
         env:
           PR: ${{ steps.target.outputs.pr }}
           URL: ${{ steps.deploy.outputs.url }}
@@ -135,5 +139,11 @@ jobs:
       - name: Summarize
         if: steps.target.outputs.deploy == 'true'
         env:
+          PR: ${{ steps.target.outputs.pr }}
           URL: ${{ steps.deploy.outputs.url }}
-        run: echo "Preview $URL" >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          what=main
+          if [ -n "$PR" ]; then
+            what="#$PR"
+          fi
+          printf '### Preview of %s\n\n%s, built from %s\n' "$what" "$URL" "$HEAD_SHA" >> "$GITHUB_STEP_SUMMARY"

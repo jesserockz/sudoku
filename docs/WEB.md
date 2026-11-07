@@ -547,6 +547,11 @@ workflow already built, so nothing from a pull request is built or run with the
 Cloudflare secrets. A comment on the pull request links to the preview, and the
 deployment shows in the pull request's timeline.
 
+Deployments of `main` are recorded in the `cf-pages` environment, with the
+preview's link on the workflow run. Those of pull requests are recorded in the
+`preview` environment at the pull request's commit, which the pull request
+shows; the run's job summary links those previews.
+
 Pull request N is served at `https://pr-N.<project>.pages.dev` and `main` at
 the project's own URL, `https://<project>.pages.dev`. Each is a separate origin,
 so a preview's saved data and service worker never touch the real app's.
@@ -570,10 +575,14 @@ One-time setup:
    `npx wrangler pages project create sudoku-time --production-branch main`.
 2. Create a Cloudflare API token with only the **Cloudflare Pages: Edit**
    permission.
-3. Add the repository secrets `CLOUDFLARE_API_TOKEN` (that token) and
+3. In the repository's **Settings → Environments**, create an environment
+   named `cf-pages`. Under **Deployment branches and tags**, choose
+   **Selected branches and tags** and add `main`: both workflows run from
+   `main`, so no other branch's workflow can read the secrets. Add the
+   environment secrets `CLOUDFLARE_API_TOKEN` (that token) and
    `CLOUDFLARE_ACCOUNT_ID`.
-4. If the project has another name, set the repository variable
-   `CLOUDFLARE_PAGES_PROJECT` to it.
+4. If the project has another name, set the variable
+   `CLOUDFLARE_PAGES_PROJECT` to it, in the environment or the repository.
 5. Create a `preview` label.
 
 The scripts the workflows run are in `.github/scripts` and are tested by
