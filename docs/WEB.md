@@ -147,6 +147,36 @@ earlier Kotlin implementation produced, so existing groups keep their
 puzzles). If a change to the generator is ever intentional, bump
 `GENERATOR_VERSION` and the goldens.
 
+### Generator v2 (not used yet)
+
+`src/generator/generator-v2.ts` is a second generator that grades puzzles by
+the techniques a person would need, instead of by how many clues they have. The
+app does not use it yet; v1 above is unchanged, and its goldens still pass.
+
+- **The grader** (`src/generator/grader.ts`) solves a grid one step at a time:
+  it tries the techniques in a fixed order, applies only the first one that
+  works, then starts again from the first. The order is hidden single, naked
+  single, locked candidates (pointing, claiming), naked and hidden pairs,
+  triples and quads, X-Wing, Swordfish, XY-Wing, XYZ-Wing, simple colouring and
+  XY-chains. Each technique has a level 1 to 6; a puzzle's grade is the
+  hardest level it needed, or 7 if the grader got stuck (never accepted).
+  Everything is integer and bitmask maths with documented scan orders, so the
+  Go port gives identical grades.
+- **Bands** (`BANDS`): Easy needs level 1 only, Medium level 2, Hard levels 3
+  to 4, Expert level 5 and Diabolical level 6. Easy and Medium stop removing
+  clues at 38 and 30; the others remove every clue they can.
+- **Building** (`buildV2`): up to 200 attempts, each a random solution with
+  cells removed and then graded; the first attempt inside the band wins. If
+  none is, the non-stuck attempt nearest the band is used (the easier on equal
+  distance, then the earliest). Seeds use their own version constant (2), so
+  they never equal v1's. `generateV2` and `generateEndlessV2` return the usual
+  `Puzzle` / `EndlessPuzzle` plus the grade and the attempts used.
+- **Shared fixture**: `testdata/generator-v2.json` (at the repo root) holds the
+  expected daily, endless, forced-fallback and grader results. The web tests
+  (`test/generator-v2.test.ts`) and the server's Go tests read it, so the two
+  implementations must agree. Regenerate it, only when a change is intentional,
+  with `node scripts/generator-v2-fixture.ts`.
+
 ### Games per day and difficulty
 
 The server decides how many games each day has (`levels` in `/api/v1/week`,
