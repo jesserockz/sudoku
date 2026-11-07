@@ -121,9 +121,15 @@ function solve(grid) {
   await page.reload();
   await page.getByText("Connect to the internet once this week", { exact: false }).waitFor();
   check(true, "a stale week asks to connect once this week");
+  // Back online the app syncs by itself (the "online" event or its retry), which
+  // can replace this screen before "Try again" is clicked, so click it only if
+  // it is still there.
   await context.setOffline(false);
-  await page.getByText("Try again").click();
-  await page.getByText("Easy", { exact: true }).waitFor();
+  const easy = page.getByText("Easy", { exact: true });
+  const tryAgain = page.getByText("Try again");
+  await easy.or(tryAgain).first().waitFor();
+  if (await tryAgain.isVisible()) await tryAgain.click().catch(() => {});
+  await easy.waitFor();
   check(true, "connecting fetches the current week");
   await context.close();
 
