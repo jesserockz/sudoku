@@ -45,6 +45,19 @@ async function openAdmin(page) {
   await page.locator(".generator-admin").waitFor();
 }
 
+// Checks the "Classic and Graded puzzles" dialog that is open (title, five levels, this week's line) and closes it.
+async function checkExplainer(page, where, lead, seed = false) {
+  const dialog = page.getByRole("dialog", { name: "Classic and Graded puzzles" });
+  await dialog.waitFor();
+  check(await dialog.locator("li strong").allInnerTexts().then((t) => t.join(" ") === "Easy: Medium: Hard: Expert: Diabolical:"), `${where}: the explainer lists the five levels`);
+  const text = await dialog.innerText();
+  check(text.includes(lead), `${where}: the explainer starts with "${lead}"`);
+  check(/choose/i.test(text) === seed, `${where}: ${seed ? "seed play points to the choice" : "players with a server are not offered a choice"}`);
+  await dialog.getByRole("button", { name: "Got it" }).click();
+  await dialog.waitFor({ state: "detached" });
+  check(true, `${where}: the explainer closes`);
+}
+
 const phone = { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 };
 
 (async () => {
@@ -92,11 +105,15 @@ const phone = { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 };
   await signIn(player, "bob" + run, "Bob" + run);
   const notice = player.locator(".generator-notice");
   await notice.waitFor();
-  check((await notice.innerText()) === `From next week (${nextWeek}), daily puzzles use the Graded generator.`, "players see the pending notice on the Daily tab");
+  check((await notice.innerText()) === `From next week (${nextWeek}), daily puzzles use the Graded generator. What's this?`, "players see the pending notice on the Daily tab");
   await shot(player, "player-pending-notice");
+  await notice.getByRole("button", { name: "What's this?" }).click();
+  await checkExplainer(player, "Daily notice", `From next week (${nextWeek}), puzzles switch from Classic to Graded.`);
   await player.getByRole("button", { name: "About", exact: true }).click();
   await player.getByText("Daily generator").waitFor();
   check((await player.locator("tr", { hasText: "Daily generator" }).innerText()).includes("Classic (this week)"), "About shows this week's generator");
+  await player.getByRole("button", { name: "Classic and Graded", exact: true }).click();
+  await checkExplainer(player, "About", `From next week (${nextWeek}), puzzles switch from Classic to Graded.`);
   await player.getByRole("button", { name: "‹ Back", exact: true }).click();
 
   // Stats toggle.
@@ -131,6 +148,8 @@ const phone = { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 };
   const setting = seedPage.locator(".generator-setting");
   check((await setting.innerText()).includes("This week: Classic."), "the seed card shows this week's generator");
   check(await seedPage.locator(".generator-notice").count() === 0, "no notice while nothing is pending");
+  await setting.getByRole("button", { name: "What's this?" }).click();
+  await checkExplainer(seedPage, "seed card", "This seed's puzzles use Classic.", true);
   await setting.getByRole("button", { name: "Graded from next week" }).click();
   await seedPage.locator(".generator-pending").waitFor();
   const seedNotice = seedPage.locator(".generator-notice");
@@ -138,6 +157,8 @@ const phone = { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 };
   const stored = await seedPage.evaluate(() => Object.entries(localStorage).filter(([k]) => k.startsWith("sudoku.seed-generator-")).map(([, v]) => JSON.parse(v)));
   check(stored.length === 1 && stored[0].length === 2 && stored[0][0].fromWeek === "0000-W00" && stored[0][1].fromWeek === nextWeek && stored[0][1].version === 2,
     "the choice is a schedule history in localStorage");
+  await seedNotice.getByRole("button", { name: "What's this?" }).click();
+  await checkExplainer(seedPage, "seed notice", `From next week (${nextWeek}), puzzles switch from Classic to Graded.`, true);
   await setting.scrollIntoViewIfNeeded();
   await shot(seedPage, "seed-generator-pending");
   await seedPage.reload();

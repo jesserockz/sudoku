@@ -38,7 +38,7 @@ export type Phase =
 export const ENDLESS_LABEL = "Endless";
 
 /** Which "how it works" explainer is open over the screen. */
-export type HelpTopic = HomeTab;
+export type HelpTopic = HomeTab | "generators";
 
 /**
  * An endless puzzle: `number` (from 1) of difficulty tier `difficulty` (1 = Easy .. 5 = Diabolical) in the series

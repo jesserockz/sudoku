@@ -263,7 +263,8 @@ export class TodayScreen extends Screen {
     });
     const pending = app.pendingGenerator;
     return [header, [
-      pending && h("div", { class: "notice generator-notice" }, pendingNotice(pending)),
+      pending && h("div", { class: "notice generator-notice" }, `${pendingNotice(pending)} `,
+        h("button", { class: "link inline", onclick: () => app.openHelp("generators") }, "What's this?")),
       h("div", { class: "card" },
         h("p", { class: "muted" }, describeDate(app.today), app.me && ` · ${app.me.displayName}`),
         streak && h("p", { class: "streak" }, h("span", { class: "flame", "aria-hidden": "true" }, "\u{1F525}"), streak),
@@ -326,7 +327,8 @@ export class TodayScreen extends Screen {
     const pending = app.pendingGenerator;
     return h("div", { class: "generator-setting" },
       h("h2", null, "Puzzle generator"),
-      h("p", null, `This week: ${generatorName(app.generator)}.`),
+      h("p", null, `This week: ${generatorName(app.generator)}. `,
+        h("button", { class: "link inline", onclick: () => app.openHelp("generators") }, "What's this?")),
       pending && h("p", { class: "generator-pending" }, `Pending: ${pendingLine(pending)}. `,
         h("button", { class: "link", onclick: () => void app.setSeedGenerator(app.generator) }, "Cancel")),
       !pending && h("div", { class: "actions" },
@@ -620,6 +622,7 @@ export class AboutScreen extends Screen {
       h("div", { class: "actions" },
         h("button", { onclick: () => app.openHelp("daily") }, "How Daily works"),
         app.hasEndless && h("button", { onclick: () => app.openHelp("endless") }, `How ${ENDLESS_LABEL} works`),
+        h("button", { onclick: () => app.openHelp("generators") }, "Classic and Graded"),
       ),
       app.me?.admin && !app.seed && h("div", { class: "actions" },
         h("button", { onclick: () => app.openAdmin() }, "Admin"),

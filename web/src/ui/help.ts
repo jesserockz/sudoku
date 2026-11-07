@@ -1,5 +1,6 @@
 import { ENDLESS_LABEL, type AppController, type HelpTopic } from "./controller.ts";
 import { type Child, h } from "./dom.ts";
+import { generatorHelp } from "./generator.ts";
 
 /** The title and paragraphs of each "how it works" explainer. */
 function content(app: AppController, topic: HelpTopic): { title: string; body: Child[] } {
@@ -15,6 +16,17 @@ function content(app: AppController, topic: HelpTopic): { title: string; body: C
         app.seed
           ? h("p", null, "History lists your times for every puzzle you've solved, by difficulty.")
           : h("p", null, "The leaderboard shows how many puzzles each player has solved in each difficulty, and the times on any one puzzle."),
+      ],
+    };
+  }
+  if (topic === "generators") {
+    const help = generatorHelp({ current: app.week ? app.generator : null, pending: app.pendingGenerator, seed: !!app.seed });
+    return {
+      title: help.title,
+      body: [
+        help.intro.map((t) => h("p", null, t)),
+        h("ul", { class: "generator-levels" }, help.levels.map((l) => h("li", null, h("strong", null, `${l.name}:`), ` ${l.text}`))),
+        help.outro.map((t) => h("p", null, t)),
       ],
     };
   }

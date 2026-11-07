@@ -218,6 +218,7 @@ sudoku-play > header.bar { flex: none; margin-bottom: 0; }
 .home-tabs { margin: 0 0 12px; }
 .home-tabs button { flex: 1 1 0; }
 .puzzles .status.in-progress button.link { padding: 0 4px; min-height: 0; font-size: inherit; }
+button.link.inline { padding: 0; min-height: 0; font-size: inherit; text-decoration: underline; }
 form.login.endless-open select { width: auto; flex: none; }
 form.login.endless-open input { width: auto; }
 .date-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
