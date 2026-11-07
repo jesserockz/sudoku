@@ -5,10 +5,12 @@ on:
     branches: [main]
     paths:
       - "web/**"
+      - "testdata/**"
       - ".github/workflows/web.yml"
   pull_request:
     paths:
       - "web/**"
+      - "testdata/**"
       - ".github/workflows/web.yml"
 
 permissions:
