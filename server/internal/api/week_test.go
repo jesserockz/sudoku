@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"reflect"
 	"testing"
 	"time"
 
@@ -25,10 +26,10 @@ func TestGetWeekRollsOverAtAucklandMidnight(t *testing.T) {
 	sunday := get()
 	want := weekResponse{
 		ISOWeek: "2026-W43", WeekStart: "2026-10-19", WeekEnd: "2026-10-25",
-		Today: "2026-10-25", DayOfWeek: 7, Timezone: "Pacific/Auckland", Levels: 5, Generator: 1,
+		Today: "2026-10-25", DayOfWeek: 7, Timezone: "Pacific/Auckland", Levels: 5, Generators: []int{1}, Generator: 1,
 	}
 	want.Seed = sunday.Seed
-	if sunday != want {
+	if !reflect.DeepEqual(sunday, want) {
 		t.Errorf("sunday = %+v\nwant %+v", sunday, want)
 	}
 
@@ -36,9 +37,9 @@ func TestGetWeekRollsOverAtAucklandMidnight(t *testing.T) {
 	monday := get()
 	want = weekResponse{
 		ISOWeek: "2026-W44", Seed: "e4d2e1e00e3549cc", WeekStart: "2026-10-26", WeekEnd: "2026-11-01",
-		Today: "2026-10-26", DayOfWeek: 1, Timezone: "Pacific/Auckland", Levels: 5, Generator: 1,
+		Today: "2026-10-26", DayOfWeek: 1, Timezone: "Pacific/Auckland", Levels: 5, Generators: []int{1}, Generator: 1,
 	}
-	if monday != want {
+	if !reflect.DeepEqual(monday, want) {
 		t.Errorf("monday = %+v\nwant %+v", monday, want)
 	}
 	if sunday.Seed == monday.Seed {

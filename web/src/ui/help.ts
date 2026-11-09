@@ -20,7 +20,7 @@ function content(app: AppController, topic: HelpTopic): { title: string; body: C
     };
   }
   if (topic === "generators") {
-    const help = generatorHelp({ current: app.week ? app.generator : null, pending: app.pendingGenerator, seed: !!app.seed });
+    const help = generatorHelp({ enabled: app.week ? app.generators : null, seed: !!app.seed });
     return {
       title: help.title,
       body: [

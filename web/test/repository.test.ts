@@ -30,7 +30,7 @@ beforeEach(() => {
 });
 
 function solved(r: SudokuRepository, level: number, ms = 90_000): Game {
-  const p = r.puzzles()!.find((x) => x.level === level)!;
+  const p = r.puzzles(r.today(), 1)!.find((x) => x.level === level)!;
   let g = Game.create(p.givens).resume(0);
   for (let i = 0; i < 81; i++) if (p.givens[i] === "0") g = g.place(i, Number(p.solution[i]), ms);
   assert.ok(g.isComplete);
@@ -45,16 +45,16 @@ async function signInOidc(r: SudokuRepository): Promise<void> {
 test("sign-in fetches the week, and its puzzles play offline", async () => {
   const r = repo();
   assert.ok(!r.isSignedIn);
-  assert.equal(r.puzzles(), null);
+  assert.equal(r.puzzles(r.today(), 1), null);
   await r.signInDev("sudoku.test", "alice", "Alice");
   assert.ok(r.isSignedIn);
   assert.deepEqual(r.me(), { id: "alice", displayName: "Alice", admin: false });
   assert.equal(r.settings().serverUrl, "https://sudoku.test");
-  const puzzles = r.puzzles()!;
+  const puzzles = r.puzzles(r.today(), 1)!;
   assert.equal(puzzles.length, 5);
   // Offline, and from a fresh start: the cached week still plays.
   server.online = false;
-  assert.deepEqual(repo().puzzles()!.map((p) => p.givens), puzzles.map((p) => p.givens));
+  assert.deepEqual(repo().puzzles(repo().today(), 1)!.map((p) => p.givens), puzzles.map((p) => p.givens));
   const week = repo().weekFor()!;
   assert.deepEqual(puzzles.map((p) => p.givens), generateDay(parseWeekSeed(week.seed), 2).map((p) => p.givens));
 });
@@ -63,20 +63,20 @@ test("later days of the week play offline, but not the next week", async () => {
   await repo().signInDev("https://sudoku.test", "alice", "Alice");
   server.online = false;
   now += 5 * DAY; // Sunday
-  assert.equal(repo().puzzles()!.length, 5);
+  assert.equal(repo().puzzles(repo().today(), 1)!.length, 5);
   now += DAY; // next Monday
-  assert.equal(repo().puzzles(), null);
+  assert.equal(repo().puzzles(repo().today(), 1), null);
   await assert.rejects(repo().refresh());
   server.online = true;
   await repo().refresh();
-  assert.equal(repo().puzzles()!.length, 5);
+  assert.equal(repo().puzzles(repo().today(), 1)!.length, 5);
 });
 
 test("results queue offline and upload later", async () => {
   const r = repo();
   await r.signInDev("https://sudoku.test", "alice", "Alice");
   server.online = false;
-  const result = await r.complete(r.today(), 1, solved(r, 1));
+  const result = await r.complete(1, r.today(), 1, solved(r, 1));
   assert.match(result.completedAt, /^2026-10-27T14:00:00\+13:00$/);
   const offline = await r.flush();
   assert.ok(offline.failure instanceof TypeError);
@@ -86,21 +86,21 @@ test("results queue offline and upload later", async () => {
   assert.deepEqual(report.accepted, [result]);
   assert.deepEqual(repo().pending(), []);
   assert.deepEqual(server.stored, [result]);
-  assert.equal(repo().serverResults(r.today()).get(1)?.elapsedMs, 90_000);
+  assert.equal(repo().serverResults(r.today(), 1).get(1)?.elapsedMs, 90_000);
 });
 
 test("weeks with more games spread the tiers", async () => {
   server.levels = 7;
   const r = repo();
   await r.signInDev("https://sudoku.test", "alice", "Alice");
-  assert.deepEqual(r.puzzles()!.map((p) => p.title), ["Easy", "Medium 1", "Medium 2", "Hard", "Expert 1", "Expert 2", "Diabolical"]);
+  assert.deepEqual(r.puzzles(r.today(), 1)!.map((p) => p.title), ["Easy", "Medium 1", "Medium 2", "Hard", "Expert 1", "Expert 2", "Diabolical"]);
 });
 
 test("rejected results are dropped", async () => {
   const r = repo();
   await r.signInDev("https://sudoku.test", "alice", "Alice");
   server.rejectAll = true;
-  await r.complete(r.today(), 1, solved(r, 1));
+  await r.complete(1, r.today(), 1, solved(r, 1));
   const report = await r.flush();
   assert.equal(report.rejected.length, 1);
   assert.deepEqual(r.pending(), []);
@@ -110,17 +110,17 @@ test("rejected results are dropped", async () => {
 test("games persist, and games from other weeks are pruned", async () => {
   const r = repo();
   await r.signInDev("https://sudoku.test", "alice", "Alice");
-  const p = r.puzzles()![0]!;
+  const p = r.puzzles(r.today(), 1)![0]!;
   const g = Game.create(p.givens).resume(0).place(p.givens.indexOf("0"), 1, 0);
-  r.saveGame(r.today(), 1, g, 5000);
-  const loaded = repo().loadGame(r.today(), p)!;
+  r.saveGame(1, r.today(), 1, g, 5000);
+  const loaded = repo().loadGame(1, r.today(), p)!;
   assert.equal(loaded.board.toCompactString(), g.board.toCompactString());
   assert.equal(loaded.elapsedMs(0), 5000);
   // Another puzzle in the same slot (e.g. a changed generator) doesn't match.
-  assert.equal(repo().loadGame(r.today(), r.puzzles()![1]!), null);
+  assert.equal(repo().loadGame(1, r.today(), r.puzzles(r.today(), 1)![1]!), null);
   now += 7 * DAY;
   await repo().refresh();
-  assert.equal(repo().loadGame("2026-10-27", p), null);
+  assert.equal(repo().loadGame(1, "2026-10-27", p), null);
   assert.equal(new AppStorage(store).games.read() !== null && Object.keys(new AppStorage(store).games.read()!).length, 0);
 });
 
@@ -135,7 +135,7 @@ test("a failed sign-in restores the previous settings", async () => {
 test("sign-out forgets user data but keeps the server", async () => {
   const r = repo();
   await r.signInDev("https://sudoku.test", "alice", "Alice");
-  await r.complete(r.today(), 1, solved(r, 1));
+  await r.complete(1, r.today(), 1, solved(r, 1));
   server.online = false;
   r.signOut();
   assert.ok(!r.isSignedIn);
@@ -164,7 +164,7 @@ test("OIDC sign-in uses PKCE and the redirect URI", async () => {
   await r.completeOidcSignIn(server.authorize(url.href));
   assert.ok(r.isSignedIn && !r.needsSignIn);
   assert.equal(r.me()?.id, "alice");
-  assert.equal(r.puzzles()!.length, 5);
+  assert.equal(r.puzzles(r.today(), 1)!.length, 5);
 });
 
 test("forged or stale redirects are rejected", async () => {
@@ -189,12 +189,12 @@ test("tokens refresh, and a revoked session keeps offline play and queued result
   assert.equal(server.refreshGrants, 1);
   server.refreshRevoked = true;
   now += 10 * MINUTE;
-  await r.complete(r.today(), 1, solved(r, 1));
+  await r.complete(1, r.today(), 1, solved(r, 1));
   const report = await r.flush();
   assert.ok(isUnauthorized(report));
   assert.ok(r.isSignedIn && r.needsSignIn);
   assert.equal(r.pending().length, 1);
-  assert.equal(r.puzzles()!.length, 5);
+  assert.equal(r.puzzles(r.today(), 1)!.length, 5);
   // Signing in again uploads the queue.
   server.refreshRevoked = false;
   await signInOidc(r);
@@ -216,7 +216,7 @@ test("a different account starts fresh", async () => {
   const r = repo();
   await signInOidc(r);
   server.online = false;
-  await r.complete(r.today(), 1, solved(r, 1));
+  await r.complete(1, r.today(), 1, solved(r, 1));
   server.online = true;
   server.oidcSub = "bob";
   server.rejectAll = true; // would show if alice's result were uploaded as bob's
@@ -421,7 +421,7 @@ test("retries resend the body of uploads and admin changes", async () => {
   assert.equal(upload.bodies[0], upload.bodies[1]);
   assert.notEqual(upload.bodies[1], "");
   const flag = scripted([401, 200], fresh);
-  await flag.api.flagResult("2026-10-27", 1, "alice", "odd");
+  await flag.api.flagResult(1, "2026-10-27", 1, "alice", "odd");
   assert.deepEqual(flag.bodies, ['{"reason":"odd"}', '{"reason":"odd"}']);
 });
 

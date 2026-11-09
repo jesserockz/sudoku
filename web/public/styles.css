@@ -274,13 +274,14 @@ form.login select {
 .badge.current { border-color: var(--done); color: var(--done); }
 .releases button { flex: none; }
 
-/* Puzzle generator setting (admin screen and serverless play) */
+/* Puzzle generators: the admin and seed cards' setting, and the Classic / Graded switch */
 .generator-setting { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
-.generator-pending { font-weight: 600; }
-.generator-history { list-style: none; margin: 8px 0 0; padding: 0; font-size: 0.9rem; color: var(--muted); }
 .generator-tabs { margin: 8px 0; }
-/* News, not a problem: the plain notice colours are for errors. */
-.generator-notice { background: var(--same); color: var(--text); }
+.generator-switch { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; margin: 0 0 12px; }
+.generator-switch .generator-tabs { margin: 0; padding-bottom: 0; }
+.generator-switch .generator-tabs button { min-width: 88px; }
+/* The setting in force can't be chosen again, but stays marked rather than greyed out. */
+.generator-choices button.active:disabled { opacity: 1; cursor: default; }
 
 /* Anti-cheat: suspicious results and the replay viewer */
 .badge.suspicious { border-color: var(--conflict); color: var(--conflict); margin-left: 6px; }

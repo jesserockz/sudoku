@@ -285,10 +285,10 @@ function play(e: Env, r: EndlessRef, leave = 0): () => void {
   return () => place(rest.shift()!);
 }
 
-test("the Endless tab plays the series of the week's generator, and it follows the week", async () => {
-  const e = await env((server) => { server.generator = 2; });
+test("the Endless tab plays the series of the enabled generator, and follows the server's setting", async () => {
+  const e = await env((server) => { server.generators = [2]; });
   const { c, server } = e;
-  assert.equal(c.endlessGenerator, G);
+  assert.equal(c.generator, G);
   assert.deepEqual(c.endlessSummaries()![0], { difficulty: 1, solved: 0, highest: 0, next: 1, inProgress: [] });
 
   // Solve Graded #1 of Easy, and leave Graded #2 half done.
@@ -303,10 +303,10 @@ test("the Endless tab plays the series of the week's generator, and it follows t
   c.openToday();
   assert.deepEqual(c.endlessSummaries()![0], { difficulty: 1, solved: 1, highest: 1, next: 2, inProgress: [{ number: 2, elapsedMs: c.endlessStatusOf(ref(G, 1, 2)).kind === "in-progress" ? e.repo.endlessInProgress()[0]!.elapsedMs : -1 }] });
 
-  // The week flips back to Classic: that series starts at #1, and the unfinished Graded game is listed as elsewhere.
-  server.generator = 1;
+  // The admin switches back to Classic: that series starts at #1, and the unfinished Graded game is listed as elsewhere.
+  server.generators = [1];
   await syncNow(c);
-  assert.equal(c.endlessGenerator, C);
+  assert.equal(c.generator, C);
   assert.deepEqual(c.endlessSummaries()![0], { difficulty: 1, solved: 0, highest: 0, next: 1, inProgress: [] });
   assert.deepEqual(c.endlessElsewhere().map((g) => [g.generator, g.difficulty, g.number]), [[G, 1, 2]]);
 
@@ -318,9 +318,9 @@ test("the Endless tab plays the series of the week's generator, and it follows t
 
   // Back to Graded: progress is where it was.
   c.openToday();
-  server.generator = 2;
+  server.generators = [2];
   await syncNow(c);
-  assert.equal(c.endlessGenerator, G);
+  assert.equal(c.generator, G);
   const back = c.endlessSummaries()![0]!;
   assert.deepEqual([back.solved, back.next, back.inProgress.map((g) => g.number)], [1, 2, [2]]);
   assert.deepEqual(c.endlessElsewhere(), []);
@@ -329,11 +329,11 @@ test("the Endless tab plays the series of the week's generator, and it follows t
 test("both series are played at once with the same numbers", async () => {
   const e = await env();
   const { c, server } = e;
-  assert.equal(c.endlessGenerator, C);
+  assert.equal(c.generator, C);
   play(e, ref(C, 1, 1), 0);
   await until(() => server.storedEndless.length === 1);
   c.openToday();
-  server.generator = 2;
+  server.generators = [2];
   await syncNow(c);
   // #1 of Graded is a different, unsolved puzzle.
   assert.deepEqual(c.endlessStatusOf(ref(G, 1, 1)), { kind: "in-progress", elapsedMs: 0 });
@@ -357,7 +357,7 @@ test("an unknown series is not opened", async () => {
 
 test("the leaderboards are per series: the current one by default, any with an explicit series", async () => {
   const e = await env((server) => {
-    server.generator = 2;
+    server.generators = [2];
     server.storedEndless.push({ generator: 2, difficulty: 1, number: 3, elapsedMs: 5000, completedAt: "x" }, { difficulty: 1, number: 3, elapsedMs: 6000, completedAt: "x" });
   });
   const { c, server } = e;
@@ -397,36 +397,32 @@ test("without a week the tab plays Classic", async () => {
   const { c } = await env();
   await c.signOut();
   assert.equal(c.week, null);
-  assert.equal(c.endlessGenerator, C);
+  assert.equal(c.generator, C);
 });
 
 // Controller, serverless
 
-test("seed play follows its own generator schedule for the Endless tab", async () => {
+test("seed play follows its own enabled generators for the Endless tab", async () => {
   const clock = { mono: 10_000 };
-  let now = NOW;
   const store = new MemoryStore();
   const repo = new SudokuRepository(new AppStorage(store), REDIRECT, "");
-  const seeds = new SeedRepository(store, () => now);
+  const seeds = new SeedRepository(store, () => NOW);
   await seeds.use(s("test-secret-0123456789"));
-  seeds.setGenerator(G); // starts next week
-  let c = await startController(repo, seeds, clock);
-  assert.equal(c.endlessGenerator, C);
+  const c = await startController(repo, seeds, clock);
+  assert.equal(c.generator, C);
 
-  // Solve a Classic puzzle and start a Graded-to-be one later.
-  const e: Env = { c, repo, server: new FakeServer(() => now), clock };
+  // Solve a Classic puzzle and leave another unfinished.
+  const e: Env = { c, repo, server: new FakeServer(() => NOW), clock };
   play(e, ref(C, 1, 1), 0);
   await settled();
   assert.deepEqual(c.endlessSummaries()![0], { difficulty: 1, solved: 1, highest: 1, next: 2, inProgress: [] });
   play(e, ref(C, 1, 2), 2);
   c.openToday();
 
-  // Next week the schedule moves to Graded: a fresh series, and the unfinished Classic game is listed.
-  now += 7 * 24 * 3_600_000;
-  c = await startController(repo, seeds, clock);
-  e.c = c;
-  assert.equal(c.week!.generator, G);
-  assert.equal(c.endlessGenerator, G);
+  // The seed moves to Graded, straight away: a fresh series, and the unfinished Classic game is listed.
+  await c.setSeedGenerators([G]);
+  assert.deepEqual(c.week!.generators, [G]);
+  assert.equal(c.generator, G);
   assert.deepEqual(c.endlessSummaries()![0], { difficulty: 1, solved: 0, highest: 0, next: 1, inProgress: [] });
   assert.deepEqual(c.endlessElsewhere().map((g) => [g.generator, g.number]), [[C, 2]]);
   const finish = play(e, ref(G, 1, 1), 1);

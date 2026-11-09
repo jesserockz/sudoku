@@ -42,8 +42,8 @@ func (s *Server) endlessPuzzleFor(generator, difficulty int, number int64) puzzl
 }
 
 // generatorParam reads the optional ?generator= query parameter (1 or 2). A
-// missing one is def, unless def is 0, which means the generator the current
-// week uses. On a bad value it writes a 400 and returns false.
+// missing one is def, unless def is 0, which means the default (first
+// enabled) generator. On a bad value it writes a 400 and returns false.
 func (s *Server) generatorParam(w http.ResponseWriter, r *http.Request, def int) (int, bool) {
 	if raw := r.URL.Query().Get("generator"); raw != "" {
 		v, err := strconv.Atoi(raw)
@@ -56,12 +56,12 @@ func (s *Server) generatorParam(w http.ResponseWriter, r *http.Request, def int)
 	if def != 0 {
 		return def, true
 	}
-	gens, err := s.deps.Store.GeneratorSchedule(r.Context())
+	gen, err := s.defaultGenerator(r.Context())
 	if err != nil {
 		httpx.Internal(w, r, err)
 		return 0, false
 	}
-	return gens.VersionFor(s.today().ISOWeek()), true
+	return gen, true
 }
 
 type endlessResultJSON struct {

@@ -35,7 +35,7 @@ export class SudokuApp extends HTMLElement {
     const [tag, key] = phase.kind !== "ready"
       ? [`sudoku-${phase.kind}`, phase.kind]
       : screen.kind === "play"
-        ? ["sudoku-play", `play-${screen.level}`]
+        ? ["sudoku-play", `play-${screen.generator}-${screen.level}`]
         : screen.kind === "endless-play"
           ? ["sudoku-play", `endless-play-${screen.generator}-${screen.difficulty}-${screen.number}`]
           : [`sudoku-${screen.kind}`, screen.kind];

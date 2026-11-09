@@ -1,6 +1,7 @@
 import { ApiException, type SubmitOutcome } from "../api/client.ts";
 import type { EndlessResult, GameResult } from "../api/models.ts";
-import { endlessGameKey } from "./app-storage.ts";
+import { GENERATOR_CLASSIC } from "../generator/versions.ts";
+import { endlessGameKey, gameKey } from "./app-storage.ts";
 import { Mutex } from "./mutex.ts";
 import type { StoredValue } from "./store.ts";
 
@@ -19,8 +20,11 @@ export interface FlushReport<T = GameResult> {
 export const isUnauthorized = (report: FlushReport<unknown>): boolean =>
   report.failure instanceof ApiException && report.failure.isUnauthorized;
 
-/** Daily results are one per `(date, level)`. */
-export const dailyKey = (r: GameResult): string => `${r.date}/${r.level}`;
+/**
+ * Daily results are one per `(generator, date, level)`; see {@link gameKey}. One queued by an older version of the app has
+ * no generator and is keyed as Classic's, as its key always was.
+ */
+export const dailyKey = (r: GameResult): string => gameKey(r.generator ?? GENERATOR_CLASSIC, r.date, r.level);
 /** Endless results are one per `(generator, difficulty, number)`; see {@link endlessGameKey}. */
 export const endlessKey = (r: EndlessResult): string => endlessGameKey(r.generator, r.difficulty, r.number);
 

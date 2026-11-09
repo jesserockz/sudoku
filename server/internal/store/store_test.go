@@ -36,7 +36,7 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	if err := s2.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 6 {
+	if version != 7 {
 		t.Errorf("user_version = %d", version)
 	}
 	u, err := s2.UpsertUser(ctx, "alice", "Alice")
@@ -109,7 +109,7 @@ func TestInsertResultIdempotent(t *testing.T) {
 	s, _ := openTemp(t)
 	u, _ := s.UpsertUser(ctx, "alice", "Alice")
 
-	first := Result{UserID: u.ID, Date: "2026-10-26", Level: 1, ElapsedMs: 183000, CompletedAt: "2026-10-26T09:15:00+13:00"}
+	first := Result{Generator: 1, UserID: u.ID, Date: "2026-10-26", Level: 1, ElapsedMs: 183000, CompletedAt: "2026-10-26T09:15:00+13:00"}
 	got, created, err := s.InsertResult(ctx, first)
 	if err != nil || !created || got != first {
 		t.Fatalf("first insert: %+v %v %v", got, created, err)
@@ -135,7 +135,7 @@ func TestInsertResultIdempotent(t *testing.T) {
 
 func TestInsertResultRejectsUnknownUser(t *testing.T) {
 	s, _ := openTemp(t)
-	_, _, err := s.InsertResult(context.Background(), Result{UserID: 42, Date: "2026-10-26", Level: 1, ElapsedMs: 1, CompletedAt: "x"})
+	_, _, err := s.InsertResult(context.Background(), Result{Generator: 1, UserID: 42, Date: "2026-10-26", Level: 1, ElapsedMs: 1, CompletedAt: "x"})
 	if err == nil {
 		t.Error("expected foreign key error")
 	}
@@ -148,7 +148,7 @@ func TestUserAndDayResults(t *testing.T) {
 	bob, _ := s.UpsertUser(ctx, "bob", "Bob")
 	add := func(u User, date string, level int, ms int64) {
 		t.Helper()
-		if _, _, err := s.InsertResult(ctx, Result{UserID: u.ID, Date: date, Level: level, ElapsedMs: ms, CompletedAt: date + "T12:00:00+13:00"}); err != nil {
+		if _, _, err := s.InsertResult(ctx, Result{Generator: 1, UserID: u.ID, Date: date, Level: level, ElapsedMs: ms, CompletedAt: date + "T12:00:00+13:00"}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -169,7 +169,7 @@ func TestUserAndDayResults(t *testing.T) {
 		t.Errorf("empty results = %#v %v", empty, err)
 	}
 
-	day, err := s.DayResults(ctx, "2026-10-26")
+	day, err := s.DayResults(ctx, 1, "2026-10-26")
 	if err != nil {
 		t.Fatal(err)
 	}

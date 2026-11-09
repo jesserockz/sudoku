@@ -1,13 +1,12 @@
 import { type Week, weekPuzzles } from "../api/models.ts";
-import { addDays, inWeek, isoWeek, today, weekOf } from "../game/calendar.ts";
+import { inWeek, today, weekOf } from "../game/calendar.ts";
 import { Game, type SavedGame } from "../game/game.ts";
 import type { EndlessPuzzle, Puzzle } from "../generator/generator.ts";
 import { type KeyValueStore, StoredValue, list, num, obj, optional, record, str } from "../data/store.ts";
-import { decodeSavedGame, endlessGameKey, gameKey } from "../data/app-storage.ts";
+import { decodeSavedGame, endlessGameKey, gameKey, gameKeyDate } from "../data/app-storage.ts";
 import { type EndlessInProgress, EndlessPuzzleCache, type EndlessSolved, type EndlessSource, endlessInProgressOf } from "../data/endless.ts";
 import { type EndlessResult, decodeEndlessResult } from "../api/models.ts";
-import { isGeneratorVersion } from "../generator/versions.ts";
-import { INITIAL_SCHEDULE, type ScheduleEntry, choose, decodeSchedule, pendingFor, versionFor } from "./generator-schedule.ts";
+import { GENERATOR_CLASSIC, enabledGenerators } from "../generator/versions.ts";
 import { endlessSeed, fingerprint, resultsSummary, seedSettings, seedWeekFor, type SeedSettings, weekSeed } from "./seed.ts";
 
 /** The seed being played, with its fingerprint worked out once. */
@@ -18,6 +17,8 @@ export interface SeedProfile {
 
 /** A puzzle solved in serverless play: the local stand-in for a leaderboard entry. */
 export interface SeedResult {
+  /** The generator the puzzle came from. History from before there were several generators has none: Classic. */
+  generator: number;
   date: string;
   level: number;
   /** The day's game count when it was played, which names the game (e.g. "Medium 2"). */
@@ -38,7 +39,25 @@ function decodeProfile(json: unknown): SeedProfile {
 
 function decodeResult(json: unknown): SeedResult {
   const o = obj(json);
-  return { date: str(o.date), level: num(o.level), levels: num(o.levels), elapsedMs: num(o.elapsedMs), completedAt: str(o.completedAt) };
+  return {
+    generator: optional(o.generator, num) ?? GENERATOR_CLASSIC, date: str(o.date), level: num(o.level), levels: num(o.levels),
+    elapsedMs: num(o.elapsedMs), completedAt: str(o.completedAt),
+  };
+}
+
+/**
+ * A seed's enabled generators: `[1]`, `[2]` or `[1, 2]`. Before generators could be enabled together, a seed kept a
+ * schedule of `{ fromWeek, version }` entries where a change waited for the next ISO week; such a schedule reads as
+ * its latest entry's version alone, so a change that was still waiting applies now.
+ */
+export function decodeSeedGenerators(json: unknown): number[] {
+  const entries = list(json, (e) => e);
+  if (entries.some((e) => typeof e === "object" && e !== null)) {
+    const latest = list(entries, (e) => ({ fromWeek: str(obj(e).fromWeek), version: num(obj(e).version) }))
+      .reduce((a, b) => (b.fromWeek >= a.fromWeek ? b : a));
+    return enabledGenerators([latest.version]);
+  }
+  return enabledGenerators(list(entries, num));
 }
 
 /**
@@ -97,78 +116,78 @@ export class SeedRepository implements EndlessSource {
     const info = weekOf(this.today());
     const key = JSON.stringify([settings, info.isoWeek]);
     if (this.#seedCache?.key !== key) this.#seedCache = { key, seed: await weekSeed(settings.seed, info.isoWeek) };
-    const schedule = this.#schedule(profile);
-    return seedWeekFor(settings, info, this.#seedCache.seed, versionFor(schedule, info.isoWeek), pendingFor(schedule, info.isoWeek));
+    return seedWeekFor(settings, info, this.#seedCache.seed, this.#enabled(profile));
   }
 
-  /**
-   * Chooses the puzzle generator for the active seed. It never changes the current week: the choice starts
-   * next ISO week, replacing any change already pending. Choosing the version this week uses cancels the pending change.
-   */
-  setGenerator(version: number): void {
-    if (!isGeneratorVersion(version)) throw new RangeError(`unknown generator version: ${version}`);
-    const profile = this.#requireProfile();
-    const info = weekOf(this.today());
-    const next = isoWeek(addDays(info.weekStart, 7));
-    this.#generators(profile).write(choose(this.#schedule(profile), info.isoWeek, next, version));
+  /** The generators enabled for the active seed: Classic alone until the player chooses. */
+  generators(): number[] {
+    return this.#enabled(this.#requireProfile());
   }
 
-  /** Today's games (or another day's in the current week). */
-  async puzzles(date: string = this.today()): Promise<Puzzle[]> {
+  /** Enables exactly `enabled` (non-empty, known versions) for the active seed, straight away. Throws a `TypeError` otherwise. */
+  setGenerators(enabled: readonly number[]): void {
+    const set = enabledGenerators(enabled);
+    this.#generators(this.#requireProfile()).write(set);
+  }
+
+  /** Today's games (or another day's in the current week) from `generator`. */
+  async puzzles(date: string, generator: number): Promise<Puzzle[]> {
     const week = await this.week();
-    const key = JSON.stringify([week.seed, week.levels, week.generator, date]);
-    if (this.#puzzleCache?.key !== key) this.#puzzleCache = { key, puzzles: weekPuzzles(week, date) };
+    const key = JSON.stringify([week.seed, week.levels, generator, date]);
+    if (this.#puzzleCache?.key !== key) this.#puzzleCache = { key, puzzles: weekPuzzles(week, generator, date) };
     return this.#puzzleCache.puzzles;
   }
 
-  /** A saved game for `puzzle` on `date`, if it still matches the puzzle. */
-  loadGame(date: string, puzzle: Puzzle): Game | null {
-    const saved = this.#games().read()?.[gameKey(date, puzzle.level)];
+  /** A saved game for `puzzle` (from `generator`) on `date`, if it still matches the puzzle. */
+  loadGame(generator: number, date: string, puzzle: Puzzle): Game | null {
+    const saved = this.#games().read()?.[gameKey(generator, date, puzzle.level)];
     return saved && saved.givens === puzzle.givens ? Game.restore(saved) : null;
   }
 
   /** Saves a game, dropping saved games from other weeks: they can't be finished any more. */
-  saveGame(date: string, level: number, game: Game, nowMs: number): void {
+  saveGame(generator: number, date: string, level: number, game: Game, nowMs: number): void {
     const week = weekOf(date);
     this.#games().update((saved) => ({
-      ...Object.fromEntries(Object.entries(saved ?? {}).filter(([k]) => inWeek(week, k.split("/")[0]!))),
-      [gameKey(date, level)]: game.save(nowMs),
+      ...Object.fromEntries(Object.entries(saved ?? {}).filter(([k]) => inWeek(week, gameKeyDate(k)))),
+      [gameKey(generator, date, level)]: game.save(nowMs),
     }));
   }
 
-  /** Records a just-finished game in the history. The first result for a game counts; replays don't. */
-  complete(date: string, level: number, game: Game): SeedResult {
+  /** Records a just-finished game from `generator` in the history. The first result for a game counts; replays don't. */
+  complete(generator: number, date: string, level: number, game: Game): SeedResult {
     const profile = this.#requireProfile();
     if (game.completedElapsedMs === null) throw new Error("game isn't complete");
     const result: SeedResult = {
-      date, level, levels: profile.settings.levels, elapsedMs: game.completedElapsedMs, completedAt: new Date(this.#now()).toISOString().replace(".000Z", "Z"),
+      generator, date, level, levels: profile.settings.levels, elapsedMs: game.completedElapsedMs,
+      completedAt: new Date(this.#now()).toISOString().replace(".000Z", "Z"),
     };
     const history = this.#history(profile);
-    const existing = (history.read() ?? []).find((r) => r.date === date && r.level === level && r.levels === result.levels);
+    const existing = (history.read() ?? [])
+      .find((r) => r.generator === generator && r.date === date && r.level === level && r.levels === result.levels);
     if (existing) return existing;
     history.update((h) => [...(h ?? []), result]);
     return result;
   }
 
-  /** Every result for the active seed, newest day first. */
+  /** Every result for the active seed, newest day first, then by generator and level. */
   history(): SeedResult[] {
     const profile = this.profile();
     const results = profile ? (this.#history(profile).read() ?? []) : [];
-    return results.sort((a, b) => (a.date === b.date ? a.level - b.level : a.date < b.date ? 1 : -1));
+    return results.sort((a, b) => (a.date === b.date ? a.generator - b.generator || a.level - b.level : a.date < b.date ? 1 : -1));
   }
 
-  /** `date`'s results at the active seed's game count, by level. */
-  results(date: string = this.today()): Map<number, SeedResult> {
+  /** `generator`'s results on `date` at the active seed's game count, by level. */
+  results(date: string, generator: number): Map<number, SeedResult> {
     const levels = this.profile()?.settings.levels;
     if (levels === undefined) return new Map();
-    return new Map(this.history().filter((r) => r.date === date && r.levels === levels).map((r) => [r.level, r]));
+    return new Map(this.history().filter((r) => r.generator === generator && r.date === date && r.levels === levels).map((r) => [r.level, r]));
   }
 
-  /** The "Share results" text for `date`. */
-  async summary(date: string = this.today()): Promise<string> {
+  /** The "Share results" text for `generator`'s games on `date`. */
+  async summary(date: string, generator: number): Promise<string> {
     const profile = this.#requireProfile();
-    const results = this.results(date);
-    const games = (await this.puzzles(date)).map((p) => ({ title: p.title, elapsedMs: results.get(p.level)?.elapsedMs ?? null }));
+    const results = this.results(date, generator);
+    const games = (await this.puzzles(date, generator)).map((p) => ({ title: p.title, elapsedMs: results.get(p.level)?.elapsedMs ?? null }));
     return resultsSummary(date, profile.fingerprint, games);
   }
 
@@ -245,12 +264,12 @@ export class SeedRepository implements EndlessSource {
     return new StoredValue(this.#store, `seed-games-${this.#requireProfile().fingerprint.replace(/^#/, "")}`, (j) => record(j, decodeSavedGame));
   }
 
-  #generators(profile: SeedProfile): StoredValue<ScheduleEntry[]> {
-    return new StoredValue(this.#store, `seed-generator-${profile.fingerprint.replace(/^#/, "")}`, decodeSchedule);
+  #generators(profile: SeedProfile): StoredValue<number[]> {
+    return new StoredValue(this.#store, `seed-generator-${profile.fingerprint.replace(/^#/, "")}`, decodeSeedGenerators);
   }
 
-  #schedule(profile: SeedProfile): readonly ScheduleEntry[] {
-    return this.#generators(profile).read() ?? INITIAL_SCHEDULE;
+  #enabled(profile: SeedProfile): number[] {
+    return this.#generators(profile).read() ?? [GENERATOR_CLASSIC];
   }
 
   #history(profile: SeedProfile): StoredValue<SeedResult[]> {

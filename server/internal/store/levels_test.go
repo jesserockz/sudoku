@@ -48,7 +48,7 @@ func TestScheduleLevelsAfterPlayStartsNextWeek(t *testing.T) {
 	ctx := context.Background()
 	s, _ := openTemp(t)
 	u, _ := s.UpsertUser(ctx, "alice", "Alice")
-	if _, _, err := s.InsertResult(ctx, Result{UserID: u.ID, Date: "2026-10-26", Level: 1, ElapsedMs: 6000, CompletedAt: "x"}); err != nil {
+	if _, _, err := s.InsertResult(ctx, Result{Generator: 1, UserID: u.ID, Date: "2026-10-26", Level: 1, ElapsedMs: 6000, CompletedAt: "x"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -95,10 +95,10 @@ func TestResultsAcceptLevelsAboveFive(t *testing.T) {
 	ctx := context.Background()
 	s, _ := openTemp(t)
 	u, _ := s.UpsertUser(ctx, "alice", "Alice")
-	if _, _, err := s.InsertResult(ctx, Result{UserID: u.ID, Date: "2026-10-26", Level: 8, ElapsedMs: 6000, CompletedAt: "x"}); err != nil {
+	if _, _, err := s.InsertResult(ctx, Result{Generator: 1, UserID: u.ID, Date: "2026-10-26", Level: 8, ElapsedMs: 6000, CompletedAt: "x"}); err != nil {
 		t.Errorf("level 8 rejected by schema: %v", err)
 	}
-	if _, _, err := s.InsertResult(ctx, Result{UserID: u.ID, Date: "2026-10-26", Level: 0, ElapsedMs: 6000, CompletedAt: "x"}); err == nil {
+	if _, _, err := s.InsertResult(ctx, Result{Generator: 1, UserID: u.ID, Date: "2026-10-26", Level: 0, ElapsedMs: 6000, CompletedAt: "x"}); err == nil {
 		t.Error("level 0 should still be rejected")
 	}
 }

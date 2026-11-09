@@ -49,6 +49,8 @@ func (sc Schedule) LevelsFor(isoWeek string) int {
 
 // UserDailyResult is one of a user's daily results, for their stats.
 type UserDailyResult struct {
+	// Generator is the version the game was played with.
+	Generator int
 	Date      string
 	Level     int
 	ElapsedMs int64
@@ -57,12 +59,12 @@ type UserDailyResult struct {
 	AdminFlagged bool
 }
 
-// UserDailyResults returns all of a user's daily results, oldest first, then
-// by level.
+// UserDailyResults returns all of a user's daily results of every
+// generator, oldest first, then by level and generator.
 func (s *Store) UserDailyResults(ctx context.Context, userID int64) ([]UserDailyResult, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT date, level, elapsed_ms, flagged_at IS NOT NULL AND flag_auto = 0
-		FROM results WHERE user_id = ? ORDER BY date, level`, userID)
+		SELECT generator, date, level, elapsed_ms, flagged_at IS NOT NULL AND flag_auto = 0
+		FROM results WHERE user_id = ? ORDER BY date, level, generator`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("user daily results: %w", err)
 	}
@@ -70,7 +72,7 @@ func (s *Store) UserDailyResults(ctx context.Context, userID int64) ([]UserDaily
 	var out []UserDailyResult
 	for rows.Next() {
 		var r UserDailyResult
-		if err := rows.Scan(&r.Date, &r.Level, &r.ElapsedMs, &r.AdminFlagged); err != nil {
+		if err := rows.Scan(&r.Generator, &r.Date, &r.Level, &r.ElapsedMs, &r.AdminFlagged); err != nil {
 			return nil, fmt.Errorf("user daily results: %w", err)
 		}
 		out = append(out, r)
@@ -79,9 +81,9 @@ func (s *Store) UserDailyResults(ctx context.Context, userID int64) ([]UserDaily
 }
 
 // CountingDates returns, for every user with a result on date, the distinct
-// dates up to and including date on which they have a result that is not
-// admin-flagged, oldest first. These are the days that count towards a
-// streak.
+// dates up to and including date on which they have a result (of any
+// generator) that is not admin-flagged, oldest first. These are the days that
+// count towards a streak.
 func (s *Store) CountingDates(ctx context.Context, date string) (map[int64][]string, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT DISTINCT r.user_id, r.date FROM results r

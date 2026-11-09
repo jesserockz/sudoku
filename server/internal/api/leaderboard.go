@@ -12,10 +12,12 @@ import (
 )
 
 type leaderboardResponse struct {
-	Date    string        `json:"date"`
-	Puzzles []puzzleBoard `json:"puzzles"`
-	Total   totalBoard    `json:"total"`
-	Players []playerJSON  `json:"players"`
+	Date string `json:"date"`
+	// Generator is the generator version the board ranks.
+	Generator int           `json:"generator"`
+	Puzzles   []puzzleBoard `json:"puzzles"`
+	Total     totalBoard    `json:"total"`
+	Players   []playerJSON  `json:"players"`
 }
 
 type puzzleBoard struct {
@@ -57,12 +59,16 @@ func (s *Server) getLeaderboard(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	gen, ok := s.generatorParam(w, r, 0)
+	if !ok {
+		return
+	}
 	counting, err := s.deps.Store.CountingDates(r.Context(), date.String())
 	if err != nil {
 		httpx.Internal(w, r, err)
 		return
 	}
-	rows, err := s.deps.Store.DayResults(r.Context(), date.String())
+	rows, err := s.deps.Store.DayResults(r.Context(), gen, date.String())
 	if err != nil {
 		httpx.Internal(w, r, err)
 		return
@@ -74,6 +80,7 @@ func (s *Server) getLeaderboard(w http.ResponseWriter, r *http.Request) {
 	}
 	lb := buildLeaderboard(rows, levels)
 	lb.Date = date.String()
+	lb.Generator = gen
 	addStreaks(&lb, counting, date)
 	httpx.WriteJSON(w, http.StatusOK, lb)
 }

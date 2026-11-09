@@ -9,7 +9,7 @@ const TODAY = "2026-10-27";
 const puzzle = "530070000600195000098000060800060003400803001700020006060000280000419005000080079";
 
 const res = (userId: string, level: number, extra: Partial<AdminResult> = {}): AdminResult => ({
-  userId, displayName: userId.toUpperCase(), level, elapsedMs: 1000 * level, completedAt: "c", submittedAt: "s",
+  generator: 1, userId, displayName: userId.toUpperCase(), level, elapsedMs: 1000 * level, completedAt: "c", submittedAt: "s",
   replay: "valid", replayError: "", flag: null, ...extra,
 });
 const flag = (reason: string, auto = false): NonNullable<AdminResult["flag"]> => ({ reason, auto, flaggedBy: null, flaggedAt: "f" });
@@ -26,6 +26,8 @@ const eday = (date: string, ...results: AdminEndlessResult[]): AdminEndlessResul
 const edetailOf = (r: AdminEndlessResult): EndlessReplayDetail => ({
   ...r, givens: puzzle, events: [{ a: "start", t: 0, w: 1 }, { a: "place", t: 100, w: 2, c: 2, d: 4 }],
 });
+
+const g = (generator: number) => (generator === 1 ? "" : `:g${generator}`);
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -68,18 +70,19 @@ class FakeApi implements ResultsApi {
     return this.#answer(this.days.get(date) ?? day(date));
   }
 
-  adminReplay(date: string, level: number, userId: string): Promise<ReplayDetail> {
-    this.calls.push(`replay:${date}:${level}:${userId}`);
-    return this.#answer(this.details.get(`${date}:${level}:${userId}`));
+  // Classic's calls read as they did before there were several generators; others are suffixed `:g<generator>`.
+  adminReplay(generator: number, date: string, level: number, userId: string): Promise<ReplayDetail> {
+    this.calls.push(`replay:${date}:${level}:${userId}${g(generator)}`);
+    return this.#answer(this.details.get(`${date}:${level}:${userId}${g(generator)}`));
   }
 
-  flagResult(date: string, level: number, userId: string, reason: string): Promise<AdminResult> {
-    this.calls.push(`flag:${date}:${level}:${userId}:${reason}`);
+  flagResult(generator: number, date: string, level: number, userId: string, reason: string): Promise<AdminResult> {
+    this.calls.push(`flag:${date}:${level}:${userId}:${reason}${g(generator)}`);
     return this.#answer(this.change);
   }
 
-  unflagResult(date: string, level: number, userId: string): Promise<AdminResult> {
-    this.calls.push(`unflag:${date}:${level}:${userId}`);
+  unflagResult(generator: number, date: string, level: number, userId: string): Promise<AdminResult> {
+    this.calls.push(`unflag:${date}:${level}:${userId}${g(generator)}`);
     return this.#answer(this.change);
   }
 
@@ -214,7 +217,7 @@ test("shiftDate moves the list by days but never past today", async () => {
 test("resultsFor and find read the loaded list", async () => {
   const { api, model } = setup();
   assert.deepEqual(model.resultsFor(1), []);
-  assert.equal(model.find({ level: 1, userId: "a" }), null);
+  assert.equal(model.find({ generator: 1, level: 1, userId: "a" }), null);
   const a1 = res("a", 1);
   const b1 = res("b", 1);
   const a2 = res("a", 2);
@@ -223,10 +226,10 @@ test("resultsFor and find read the loaded list", async () => {
   assert.deepEqual(model.resultsFor(1), [a1, b1]);
   assert.deepEqual(model.resultsFor(2), [a2]);
   assert.deepEqual(model.resultsFor(3), []);
-  assert.equal(model.find({ level: 2, userId: "a" }), a2);
-  assert.equal(model.find({ level: 1, userId: "b" }), b1);
-  assert.equal(model.find({ level: 2, userId: "b" }), null);
-  assert.equal(model.find({ level: 3, userId: "a" }), null);
+  assert.equal(model.find({ generator: 1, level: 2, userId: "a" }), a2);
+  assert.equal(model.find({ generator: 1, level: 1, userId: "b" }), b1);
+  assert.equal(model.find({ generator: 1, level: 2, userId: "b" }), null);
+  assert.equal(model.find({ generator: 1, level: 3, userId: "a" }), null);
 });
 
 test("open loads the replay into a viewer with the digits hidden", async () => {
@@ -235,7 +238,7 @@ test("open loads the replay into a viewer with the digits hidden", async () => {
   api.details.set(`${TODAY}:1:a`, detailOf(a1));
   const gate = deferred<void>();
   api.gate = gate;
-  const key = { level: 1, userId: "a" };
+  const key = { generator: 1, level: 1, userId: "a" };
   const opening = model.open(key);
   assert.deepEqual(model.opened, key);
   assert.notEqual(model.opened, key);
@@ -255,33 +258,33 @@ test("opening another replay starts a fresh viewer, hidden again after a reveal"
   const { api, model } = setup();
   api.details.set(`${TODAY}:1:a`, detailOf(res("a", 1)));
   api.details.set(`${TODAY}:2:b`, detailOf(res("b", 2)));
-  await model.open({ level: 1, userId: "a" });
+  await model.open({ generator: 1, level: 1, userId: "a" });
   const first = model.viewer!;
   first.setRevealDigits(true);
   first.play();
-  await model.open({ level: 2, userId: "b" });
+  await model.open({ generator: 1, level: 2, userId: "b" });
   assert.notEqual(model.viewer, first);
   assert.ok(!first.playing);
   assert.equal(model.viewer!.revealDigits, false);
   assert.equal(model.viewer!.detail.userId, "b");
 
   // Same replay again, too.
-  await model.open({ level: 2, userId: "b" });
+  await model.open({ generator: 1, level: 2, userId: "b" });
   model.viewer!.setRevealDigits(true);
-  await model.open({ level: 2, userId: "b" });
+  await model.open({ generator: 1, level: 2, userId: "b" });
   assert.equal(model.viewer!.revealDigits, false);
 });
 
 test("a failed open reports why and leaves no viewer", async () => {
   const { api, model } = setup();
   api.details.set(`${TODAY}:1:a`, forbidden);
-  await model.open({ level: 1, userId: "a" });
+  await model.open({ generator: 1, level: 1, userId: "a" });
   assert.equal(model.viewer, null);
   assert.equal(model.viewerError, "Your account isn't an admin");
-  assert.deepEqual(model.opened, { level: 1, userId: "a" });
+  assert.deepEqual(model.opened, { generator: 1, level: 1, userId: "a" });
 
   api.details.set(`${TODAY}:1:a`, detailOf(res("a", 1)));
-  await model.open({ level: 1, userId: "a" });
+  await model.open({ generator: 1, level: 1, userId: "a" });
   assert.equal(model.viewerError, null);
   assert.ok(model.viewer);
 });
@@ -295,18 +298,18 @@ test("an open that answers after another open or a close is ignored", async () =
   // A slow success, overtaken by another open.
   const slow = deferred<void>();
   api.gate = slow;
-  const first = model.open({ level: 1, userId: "a" });
-  await model.open({ level: 2, userId: "b" });
+  const first = model.open({ generator: 1, level: 1, userId: "a" });
+  await model.open({ generator: 1, level: 2, userId: "b" });
   slow.resolve();
   await first;
   assert.equal(model.viewer!.detail.userId, "b");
-  assert.deepEqual(model.opened, { level: 2, userId: "b" });
+  assert.deepEqual(model.opened, { generator: 1, level: 2, userId: "b" });
 
   // A slow failure, overtaken by another open.
   const slowFail = deferred<void>();
   api.gate = slowFail;
-  const failing = model.open({ level: 3, userId: "c" });
-  await model.open({ level: 1, userId: "a" });
+  const failing = model.open({ generator: 1, level: 3, userId: "c" });
+  await model.open({ generator: 1, level: 1, userId: "a" });
   slowFail.resolve();
   await failing;
   assert.equal(model.viewerError, null);
@@ -315,7 +318,7 @@ test("an open that answers after another open or a close is ignored", async () =
   // A slow success, overtaken by a close.
   const slowClose = deferred<void>();
   api.gate = slowClose;
-  const closing = model.open({ level: 2, userId: "b" });
+  const closing = model.open({ generator: 1, level: 2, userId: "b" });
   model.close();
   slowClose.resolve();
   await closing;
@@ -329,7 +332,7 @@ test("close pauses and drops the viewer, and is fine with none open", async () =
   model.close();
   assert.equal(changes(), before + 1);
   api.details.set(`${TODAY}:1:a`, detailOf(res("a", 1)));
-  await model.open({ level: 1, userId: "a" });
+  await model.open({ generator: 1, level: 1, userId: "a" });
   const viewer = model.viewer!;
   viewer.play();
   assert.ok(viewer.playing);
@@ -342,7 +345,7 @@ test("close pauses and drops the viewer, and is fine with none open", async () =
   assert.equal(changes(), afterClose);
 
   api.details.set(`${TODAY}:1:a`, offline);
-  await model.open({ level: 1, userId: "a" });
+  await model.open({ generator: 1, level: 1, userId: "a" });
   assert.ok(model.viewerError);
   model.close();
   assert.equal(model.viewerError, null);
@@ -355,25 +358,25 @@ test("flag sends the trimmed reason and updates the list and the open replay", a
   api.days.set(TODAY, day(TODAY, a1, b1));
   api.details.set(`${TODAY}:1:a`, detailOf(a1));
   await model.load();
-  await model.open({ level: 1, userId: "a" });
+  await model.open({ generator: 1, level: 1, userId: "a" });
 
   const flagged = res("a", 1, { flag: flag("too fast") });
   api.change = flagged;
-  const sending = model.flag({ level: 1, userId: "a" }, "  too fast \n");
+  const sending = model.flag({ generator: 1, level: 1, userId: "a" }, "  too fast \n");
   assert.ok(model.busy);
   await sending;
   assert.ok(!model.busy);
   assert.equal(model.error, null);
   assert.deepEqual(api.calls.at(-1), `flag:${TODAY}:1:a:too fast`);
-  assert.equal(model.find({ level: 1, userId: "a" }), flagged);
-  assert.equal(model.find({ level: 1, userId: "b" }), b1);
+  assert.equal(model.find({ generator: 1, level: 1, userId: "a" }), flagged);
+  assert.equal(model.find({ generator: 1, level: 1, userId: "b" }), b1);
   assert.deepEqual(model.viewer!.detail.flag, flagged.flag);
 
   // And off again.
   api.change = a1;
-  await model.unflag({ level: 1, userId: "a" });
+  await model.unflag({ generator: 1, level: 1, userId: "a" });
   assert.deepEqual(api.calls.at(-1), `unflag:${TODAY}:1:a`);
-  assert.equal(model.find({ level: 1, userId: "a" }), a1);
+  assert.equal(model.find({ generator: 1, level: 1, userId: "a" }), a1);
   assert.equal(model.viewer!.detail.flag, null);
 });
 
@@ -383,17 +386,17 @@ test("a flag leaves an open replay of a different result alone", async () => {
   api.days.set(TODAY, day(TODAY, a1, res("b", 1)));
   api.details.set(`${TODAY}:1:a`, detailOf(a1));
   await model.load();
-  await model.open({ level: 1, userId: "a" });
+  await model.open({ generator: 1, level: 1, userId: "a" });
   api.change = res("b", 1, { flag: flag("odd") });
-  await model.flag({ level: 1, userId: "b" }, "odd");
+  await model.flag({ generator: 1, level: 1, userId: "b" }, "odd");
   assert.equal(model.viewer!.detail.flag, null);
-  assert.equal(model.find({ level: 1, userId: "b" })!.flag!.reason, "odd");
+  assert.equal(model.find({ generator: 1, level: 1, userId: "b" })!.flag!.reason, "odd");
 });
 
 test("flagging works with no list loaded and no replay open", async () => {
   const { api, model } = setup();
   api.change = res("a", 1, { flag: flag("x") });
-  await model.flag({ level: 1, userId: "a" }, "x");
+  await model.flag({ generator: 1, level: 1, userId: "a" }, "x");
   assert.equal(model.data, null);
   assert.equal(model.viewer, null);
   assert.equal(model.error, null);
@@ -407,17 +410,17 @@ test("a failed flag or unflag sets error and leaves the data alone; the next suc
   await model.load();
 
   api.change = forbidden;
-  await model.flag({ level: 1, userId: "a" }, "x");
+  await model.flag({ generator: 1, level: 1, userId: "a" }, "x");
   assert.equal(model.error, "Your account isn't an admin");
   assert.ok(!model.busy);
-  assert.equal(model.find({ level: 1, userId: "a" }), a1);
+  assert.equal(model.find({ generator: 1, level: 1, userId: "a" }), a1);
 
   api.change = offline;
-  await model.unflag({ level: 1, userId: "a" });
+  await model.unflag({ generator: 1, level: 1, userId: "a" });
   assert.match(model.error!, /Couldn't reach the server/);
 
   api.change = res("a", 1, { flag: flag("ok") });
-  await model.flag({ level: 1, userId: "a" }, "ok");
+  await model.flag({ generator: 1, level: 1, userId: "a" }, "ok");
   assert.equal(model.error, null);
 });
 
@@ -426,10 +429,10 @@ test("a flag request while another is under way is ignored", async () => {
   const gate = deferred<void>();
   api.gate = gate;
   api.change = res("a", 1, { flag: flag("x") });
-  const first = model.flag({ level: 1, userId: "a" }, "x");
+  const first = model.flag({ generator: 1, level: 1, userId: "a" }, "x");
   const seen = changes();
-  await model.flag({ level: 1, userId: "b" }, "y");
-  await model.unflag({ level: 1, userId: "b" });
+  await model.flag({ generator: 1, level: 1, userId: "b" }, "y");
+  await model.unflag({ generator: 1, level: 1, userId: "b" });
   assert.equal(changes(), seen);
   assert.equal(api.calls.length, 1);
   gate.resolve();
@@ -439,14 +442,14 @@ test("a flag request while another is under way is ignored", async () => {
   assert.equal(api.calls.length, 1);
 
   // Once it's done, the next one goes through.
-  await model.unflag({ level: 1, userId: "b" });
+  await model.unflag({ generator: 1, level: 1, userId: "b" });
   assert.equal(api.calls.length, 2);
 });
 
 test("the open viewer's change events are forwarded as the model's own", async () => {
   const { api, model, changes } = setup();
   api.details.set(`${TODAY}:1:a`, detailOf(res("a", 1)));
-  await model.open({ level: 1, userId: "a" });
+  await model.open({ generator: 1, level: 1, userId: "a" });
   const viewer = model.viewer!;
   const before = changes();
   viewer.setRevealDigits(true);
@@ -529,9 +532,9 @@ test("endlessResultsFor groups by difficulty in the server's order, and find tel
   assert.equal(model.find({ generator: 1, difficulty: 1, number: 4, userId: "a" }), null);
   assert.equal(model.find({ generator: 1, difficulty: 3, number: 3, userId: "a" }), null);
   // A daily key never matches an endless row, even with the same player.
-  assert.equal(model.find({ level: 2, userId: "a" }), null);
+  assert.equal(model.find({ generator: 1, level: 2, userId: "a" }), null);
   await model.setMode("daily");
-  assert.equal(model.find({ level: 2, userId: "a" }), daily);
+  assert.equal(model.find({ generator: 1, level: 2, userId: "a" }), daily);
   // And an endless key never matches a daily row.
   assert.equal(model.find({ generator: 1, difficulty: 2, number: 3, userId: "a" }), null);
 });
@@ -594,7 +597,7 @@ test("an endless flag works with no endless list loaded, and failures set error"
 test("an endless flag leaves a daily replay with the same player alone", async () => {
   const { api, model } = setup();
   api.details.set(`${TODAY}:1:a`, detailOf(res("a", 1)));
-  await model.open({ level: 1, userId: "a" });
+  await model.open({ generator: 1, level: 1, userId: "a" });
   api.endlessChange = eres("a", 1, 1, { flag: flag("x") });
   await model.flag({ generator: 1, difficulty: 1, number: 1, userId: "a" }, "x");
   assert.equal(model.viewer!.detail.flag, null);

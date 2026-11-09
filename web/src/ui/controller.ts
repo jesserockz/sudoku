@@ -1,5 +1,5 @@
 import { ApiException } from "../api/client.ts";
-import type { AppConfig, EndlessBoard, EndlessProgress, EndlessResult, Leaderboard, Me, MyStats, PendingGenerator, Streak, Week } from "../api/models.ts";
+import type { AppConfig, EndlessBoard, EndlessProgress, EndlessResult, Leaderboard, Me, MyStats, Streak, Week } from "../api/models.ts";
 import { type HomeTab, endlessGameKey, parseEndlessGameKey } from "../data/app-storage.ts";
 import type { EndlessInProgress, EndlessSource } from "../data/endless.ts";
 import { OidcException } from "../api/oidc.ts";
@@ -50,7 +50,7 @@ export interface EndlessRef {
   number: number;
 }
 
-/** A puzzle being played: today's game `level`, or an endless puzzle. */
+/** A puzzle being played: today's game `level` (from the generator in use, {@link AppController.generator}), or an endless puzzle. */
 export type PuzzleRef = number | EndlessRef;
 
 /** One difficulty on the endless tab, in the current series. `next` is the lowest number not solved yet. */
@@ -65,11 +65,12 @@ export interface EndlessSummary {
 
 export type Screen =
   | { kind: "today" }
-  | { kind: "play"; level: number }
+  | { kind: "play"; generator: number; level: number }
   | { kind: "endless-play"; generator: number; difficulty: number; number: number }
   /** The endless leaderboard of `generator`'s series: everyone's progress in `difficulty`, or with `number` that puzzle's times. */
   | { kind: "endless-scores"; generator: number; difficulty: number; number: number | null }
-  | { kind: "scores"; date: string; tab: number }
+  /** The daily leaderboard of `generator`'s puzzles on `date`: the total (`tab` 0) or one game. */
+  | { kind: "scores"; date: string; tab: number; generator: number }
   /** The signed-in player's streak and personal stats. */
   | { kind: "stats" }
   /** Serverless play's local history of solve times. */
@@ -152,7 +153,7 @@ export class AppController extends EventTarget {
   /** The Stats screen's data, and why it couldn't load. */
   stats: MyStats | null = null;
   statsError: string | null = null;
-  /** The generator the player picked on the Stats screen, or `null` for the one in use now. */
+  /** The generator the Stats screen shows, or `null` before it has been opened (the server's default then). */
   statsGenerator: number | null = null;
   /** The home page tab; remembered on this device. */
   homeTab: HomeTab;
@@ -262,22 +263,23 @@ export class AppController extends EventTarget {
     this.me = this.#repo.me();
     this.streak = this.#repo.streak();
     this.today = this.#repo.today();
-    this.puzzles = this.#repo.puzzles(this.today);
     this.week = this.#repo.weekFor(this.today);
+    const generator = this.generator;
+    this.puzzles = this.#repo.puzzles(this.today, generator);
     this.games.clear();
     for (const p of this.puzzles ?? []) {
-      const g = this.#repo.loadGame(this.today, p);
+      const g = this.#repo.loadGame(generator, this.today, p);
       if (g) this.games.set(p.level, g);
     }
     this.#serverDone.clear();
-    for (const [level, r] of this.#repo.serverResults(this.today)) this.#serverDone.set(level, r.elapsedMs);
+    for (const [level, r] of this.#repo.serverResults(this.today, generator)) this.#serverDone.set(level, r.elapsedMs);
     this.#refreshQueued();
     this.#changed();
   }
 
   #refreshQueued(): void {
     this.#queued.clear();
-    for (const r of this.#repo.pending()) if (r.date === this.today) this.#queued.set(r.level, r.elapsedMs);
+    for (const [level, r] of this.#repo.pendingFor(this.today, this.generator)) this.#queued.set(level, r.elapsedMs);
   }
 
   /**
@@ -316,7 +318,7 @@ export class AppController extends EventTarget {
         if (this.screen.kind !== "play" && this.screen.kind !== "endless-play") this.#loadLocal();
         else this.#refreshQueued();
         // A leaderboard that failed (e.g. offline) tries again.
-        if (this.screen.kind === "scores" && this.leaderboardError !== null) this.#loadLeaderboard(this.screen.date);
+        if (this.screen.kind === "scores" && this.leaderboardError !== null) this.#loadLeaderboard(this.screen.date, this.screen.generator);
         if (this.screen.kind === "stats" && this.statsError !== null) this.openStats();
         if (this.screen.kind === "endless-scores" && this.leaderboardError !== null) this.openEndlessScores(this.screen.difficulty, this.screen.number, this.screen.generator);
         this.#changed();
@@ -339,14 +341,28 @@ export class AppController extends EventTarget {
     this.statsError = null;
   }
 
-  /** The puzzle generator this week's dailies use. */
-  get generator(): number {
-    return this.week?.generator ?? GENERATOR_CLASSIC;
+  /** The generators players can play (the server's, or the seed's): Classic alone until a week is known. */
+  get generators(): number[] {
+    return this.week?.generators ?? [GENERATOR_CLASSIC];
   }
 
-  /** A generator change that starts next week, or `null`. */
-  get pendingGenerator(): PendingGenerator | null {
-    return this.week?.pendingGenerator ?? null;
+  /**
+   * The generator the Daily and Endless tabs play: the player's pick with the switch while it is enabled, else the
+   * first enabled one. With one enabled there is no switch, and this is that one.
+   */
+  get generator(): number {
+    const enabled = this.generators;
+    const pick = this.#repo.generatorPick();
+    return pick !== null && enabled.includes(pick) ? pick : enabled[0]!;
+  }
+
+  /** The Classic / Graded switch on the Daily and Endless tabs: plays `version` from now on (remembered on this device). */
+  async chooseGenerator(version: number): Promise<void> {
+    if (!this.generators.includes(version)) return;
+    this.#repo.setGeneratorPick(version);
+    if (this.seed) await this.#loadSeedDay();
+    else this.#loadLocal();
+    this.#changed();
   }
 
   /** The home page's streak line, or `null` when there is nothing to show (serverless play, or no streak known yet). */
@@ -450,33 +466,34 @@ export class AppController extends EventTarget {
 
   async #loadSeedDay(): Promise<void> {
     const day = this.#seeds.today();
-    const list = await this.#seeds.puzzles(day);
     const week = await this.#seeds.week();
+    this.week = week;
+    const generator = this.generator;
+    const list = await this.#seeds.puzzles(day, generator);
     await this.#seeds.loadEndless();
     this.today = day;
     this.puzzles = list;
-    this.week = week;
     this.me = null;
     this.streak = null;
     this.needsSignIn = false;
     this.games.clear();
     for (const p of list) {
-      const g = this.#seeds.loadGame(day, p);
+      const g = this.#seeds.loadGame(generator, day, p);
       if (g) this.games.set(p.level, g);
     }
     this.#queued.clear();
     this.#serverDone.clear();
-    for (const [level, r] of this.#seeds.results(day)) this.#serverDone.set(level, r.elapsedMs);
+    for (const [level, r] of this.#seeds.results(day, generator)) this.#serverDone.set(level, r.elapsedMs);
   }
 
   /**
-   * Serverless play: chooses the puzzle generator for this seed from next week on (the current week never changes).
-   * Choosing the one this week uses cancels a change that is pending.
+   * Serverless play: enables exactly the generators in `enabled` for this seed, straight away. Throws a `TypeError`
+   * for an empty set or an unknown version, before anything is stored.
    */
-  async setSeedGenerator(version: number): Promise<void> {
+  async setSeedGenerators(enabled: readonly number[]): Promise<void> {
     if (!this.seed) return;
-    this.#seeds.setGenerator(version);
-    this.week = await this.#seeds.week();
+    this.#seeds.setGenerators(enabled);
+    await this.#loadSeedDay();
     this.#changed();
   }
 
@@ -485,9 +502,9 @@ export class AppController extends EventTarget {
     return this.seed ? buildShareLink(this.#host.baseUri().split(/[#?]/)[0]!, this.seed.settings) : null;
   }
 
-  /** The "Share results" text for today. */
+  /** The "Share results" text for today's games from the generator in use. */
   resultsSummary(): Promise<string> {
-    return this.#seeds.summary(this.today);
+    return this.#seeds.summary(this.today, this.generator);
   }
 
   /** Serverless play's history of solve times, newest day first. */
@@ -519,6 +536,7 @@ export class AppController extends EventTarget {
       serverVersion: async () => (await this.#repo.fetchConfig(this.#repo.settings().serverUrl)).version ?? null,
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
       now: () => this.#host.nowMs(),
+      generatorsChanged: () => this.sync(),
     });
     this.admin = model;
     this.#set({ screen: { kind: "admin" } });
@@ -646,18 +664,10 @@ export class AppController extends EventTarget {
     return this.#seeds.endlessHistory();
   }
 
-  /**
-   * The series the Endless tab plays: the generator the current week uses. It follows the week, so when the
-   * generator changes the tab switches series by itself, and switching back resumes the earlier series.
-   */
-  get endlessGenerator(): number {
-    return this.week?.generator ?? GENERATOR_CLASSIC;
-  }
-
   /** The endless tab for the current series, per difficulty, or `null` until the endless seed has been downloaded once. */
   endlessSummaries(): EndlessSummary[] | null {
     if (!this.#endlessSource.endlessReady()) return null;
-    const generator = this.endlessGenerator;
+    const generator = this.generator;
     const solved = this.#endlessSource.endlessSolved();
     const inProgress = this.#endlessSource.endlessInProgress();
     return DIFFICULTIES.map((_, i) => {
@@ -672,9 +682,12 @@ export class AppController extends EventTarget {
     });
   }
 
-  /** Unfinished games of the series the tab isn't playing now (e.g. Classic after the week moved to Graded), which can still be resumed. */
+  /**
+   * Unfinished games of the series the tab isn't playing now (the other pick, or a generator that is no longer
+   * enabled), which can still be resumed.
+   */
   endlessElsewhere(): EndlessInProgress[] {
-    return this.#endlessSource.endlessInProgress().filter((g) => g.generator !== this.endlessGenerator);
+    return this.#endlessSource.endlessInProgress().filter((g) => g.generator !== this.generator);
   }
 
   /** An endless puzzle's state, as {@link statusOf} for today's. */
@@ -713,7 +726,7 @@ export class AppController extends EventTarget {
    * The endless leaderboard of `generator`'s series (the current one when omitted): progress in `difficulty`, or one
    * puzzle's times with `number`. In serverless play, the history.
    */
-  openEndlessScores(difficulty: number, number: number | null = null, generator: number = this.endlessGenerator): void {
+  openEndlessScores(difficulty: number, number: number | null = null, generator: number = this.generator): void {
     // No leaderboard without a server: serverless play's history lists endless solves too.
     if (this.seed) {
       this.openHistory();
@@ -766,24 +779,30 @@ export class AppController extends EventTarget {
     const p = this.puzzle(level);
     if (!p) return;
     if (!this.games.has(level)) this.games.set(level, this.#stamp(Game.create(p.givens), { a: "start" }));
-    this.#set({ screen: { kind: "play", level } });
+    this.#set({ screen: { kind: "play", generator: this.generator, level } });
   }
 
-  openScores(tab = 0, date: string = this.today): void {
+  /** The daily leaderboard of `generator`'s puzzles (the one in use when omitted) on `date`, on tab `tab`. */
+  openScores(tab = 0, date: string = this.today, generator: number = this.generator): void {
     // No leaderboard without a server: serverless play has its own history instead.
     if (this.seed) {
       this.openHistory();
       return;
     }
-    this.screen = { kind: "scores", date, tab };
-    this.#loadLeaderboard(date);
+    this.screen = { kind: "scores", date, tab, generator };
+    this.#loadLeaderboard(date, generator);
   }
 
-  /** The Stats screen. It needs the server, like the leaderboard. */
+  /** The leaderboard's Classic / Graded switch: the same day and tab, for `generator`'s puzzles. */
+  showScoresGenerator(generator: number): void {
+    if (this.screen.kind === "scores") this.openScores(this.screen.tab, this.screen.date, generator);
+  }
+
+  /** The Stats screen, on the generator in use. It needs the server, like the leaderboard. */
   openStats(): void {
     if (this.seed) return;
     this.screen = { kind: "stats" };
-    this.#loadStats(null);
+    this.#loadStats(this.generator);
   }
 
   /** Shows the Stats screen's daily numbers for generator `version`. The streak is the same for every generator. */
@@ -792,13 +811,13 @@ export class AppController extends EventTarget {
     this.#loadStats(version);
   }
 
-  #loadStats(generator: number | null): void {
+  #loadStats(generator: number): void {
     this.statsGenerator = generator;
     const request = ++this.#statsRequest;
     this.stats = null;
     this.statsError = null;
     this.#changed();
-    this.#repo.fetchStats(generator ?? undefined).then(
+    this.#repo.fetchStats(generator).then(
       (stats) => {
         if (request === this.#statsRequest) this.#setStats(stats);
       },
@@ -818,15 +837,15 @@ export class AppController extends EventTarget {
     if (this.screen.kind !== "scores") return;
     const next = addDays(this.screen.date, days);
     if (next > this.today || next < addDays(this.today, -8)) return;
-    this.openScores(this.screen.tab, next);
+    this.openScores(this.screen.tab, next, this.screen.generator);
   }
 
-  #loadLeaderboard(date: string): void {
+  #loadLeaderboard(date: string, generator: number): void {
     const request = ++this.#leaderboardRequest;
     this.leaderboard = null;
     this.leaderboardError = null;
     this.#changed();
-    this.#repo.leaderboard(date).then(
+    this.#repo.leaderboard(date, generator).then(
       (board) => {
         if (request === this.#leaderboardRequest) this.leaderboard = board;
       },
@@ -861,15 +880,16 @@ export class AppController extends EventTarget {
       return;
     }
     const level = ref;
+    const generator = this.generator;
     this.games.set(level, after);
     if (this.seed) {
-      this.#seeds.saveGame(this.today, level, after, this.nowMs());
-      if (finished) this.#serverDone.set(level, this.#seeds.complete(this.today, level, after).elapsedMs);
+      this.#seeds.saveGame(generator, this.today, level, after, this.nowMs());
+      if (finished) this.#serverDone.set(level, this.#seeds.complete(generator, this.today, level, after).elapsedMs);
     } else {
-      this.#repo.saveGame(this.today, level, after, this.nowMs());
+      this.#repo.saveGame(generator, this.today, level, after, this.nowMs());
       if (finished) {
         this.#queued.set(level, after.completedElapsedMs!);
-        void this.#repo.complete(this.today, level, after).then(() => this.sync());
+        void this.#repo.complete(generator, this.today, level, after).then(() => this.sync());
       }
     }
     this.#changed();

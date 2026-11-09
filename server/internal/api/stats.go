@@ -52,15 +52,10 @@ type statsResponse struct {
 
 func (s *Server) getMyStats(w http.ResponseWriter, r *http.Request) {
 	uid := currentUser(r).ID
-	gens, err := s.deps.Store.GeneratorSchedule(r.Context())
-	if err != nil {
-		httpx.Internal(w, r, err)
-		return
-	}
 	today := s.today()
 	// The daily and endless stats are for one generator version: the one
-	// asked for, else the one in use now.
-	gen, ok := s.generatorParam(w, r, gens.VersionFor(today.ISOWeek()))
+	// asked for, else the default (first enabled) one.
+	gen, ok := s.generatorParam(w, r, 0)
 	if !ok {
 		return
 	}
@@ -79,7 +74,7 @@ func (s *Server) getMyStats(w http.ResponseWriter, r *http.Request) {
 		httpx.Internal(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, buildStats(today, results, schedule, gens, gen, endless))
+	httpx.WriteJSON(w, http.StatusOK, buildStats(today, results, schedule, gen, endless))
 }
 
 // dailyAcc accumulates one tier's daily results.
@@ -92,9 +87,9 @@ type dailyAcc struct {
 
 // buildStats summarises a user's results. results must be ordered by date,
 // then level; each is assigned the tier its level has among that week's games
-// in schedule. The per-difficulty stats count only results from weeks whose
-// generator in gens was gen; the streak counts every week.
-func buildStats(today week.Date, results []store.UserDailyResult, schedule store.Schedule, gens store.GeneratorSchedule, gen int, endless []store.EndlessStat) statsResponse {
+// in schedule. The per-difficulty stats count only results played with
+// generator gen; the streak counts every generator.
+func buildStats(today week.Date, results []store.UserDailyResult, schedule store.Schedule, gen int, endless []store.EndlessStat) statsResponse {
 	var acc [puzzle.Tiers]dailyAcc
 	var dates []week.Date
 	levelsOf := map[string]int{} // by ISO week, so each is resolved once
@@ -109,7 +104,7 @@ func buildStats(today week.Date, results []store.UserDailyResult, schedule store
 		if !r.AdminFlagged && (len(dates) == 0 || dates[len(dates)-1] != d) {
 			dates = append(dates, d)
 		}
-		if gens.VersionFor(iso) != gen {
+		if r.Generator != gen {
 			continue
 		}
 		tier, err := puzzle.TierFor(r.Level, levels)

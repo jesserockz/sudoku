@@ -177,7 +177,8 @@ export class PlayScreen extends Component {
     }
 
     return [
-      topBar(typeof ref === "number" ? puzzle.title : `${generatorName(ref.generator)} · ${puzzle.title}`, () => app.openToday(),
+      topBar(typeof ref !== "number" ? `${generatorName(ref.generator)} · ${puzzle.title}`
+        : app.generators.length > 1 ? `${generatorName(app.generator)} · ${puzzle.title}` : puzzle.title, () => app.openToday(),
         this.#timer,
         !game.isComplete && !paused && h("button", { class: "link", onclick: () => this.#pause() }, "Pause")),
       h("div", { class: "play-area" },

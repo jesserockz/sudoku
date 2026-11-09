@@ -2,7 +2,7 @@
 // with decoders that check what the server (or localStorage) gave us.
 import { dayOfWeek, inWeek, isIsoDate } from "../game/calendar.ts";
 import { DEFAULT_LEVELS, type Puzzle } from "../generator/generator.ts";
-import { GENERATOR_CLASSIC, generateDayVersion, isGeneratorVersion } from "../generator/versions.ts";
+import { GENERATOR_CLASSIC, enabledGenerators, generateDayVersion, isGeneratorVersion } from "../generator/versions.ts";
 import { parseWeekSeed } from "../generator/week-seed.ts";
 import { type Replay, type ReplayEvent, decodeReplay, decodeReplayEvent } from "../game/replay.ts";
 import { bool, list, num, obj, optional, str } from "../data/store.ts";
@@ -28,12 +28,6 @@ export interface AppConfig {
   version?: string;
 }
 
-/** A generator change that starts at the beginning of ISO week `fromWeek`. */
-export interface PendingGenerator {
-  version: number;
-  fromWeek: string;
-}
-
 /** `GET /api/v1/week`. The seed is 16 lowercase hex characters. */
 export interface Week {
   isoWeek: string;
@@ -45,10 +39,11 @@ export interface Week {
   timezone: string;
   /** Games per day this week (levels `1..levels`). Servers that predate it always had 5. */
   levels: number;
-  /** The puzzle generator this week's dailies use (1 Classic, 2 Graded). Servers that predate it only had 1. */
-  generator: number;
-  /** A generator change that starts next week, or `null`. */
-  pendingGenerator: PendingGenerator | null;
+  /**
+   * The puzzle generators players can play (1 Classic, 2 Graded): `[1]`, `[2]` or `[1, 2]`. The first is the default,
+   * which the server assumes when a request doesn't name one. Servers that predate it only had `generator` (or nothing: Classic).
+   */
+  generators: number[];
 }
 
 /** `GET /api/v1/me` */
@@ -113,9 +108,11 @@ export interface ReleaseList {
 
 /**
  * One result: the body of `POST /api/v1/results` and its response. `completedAt` is RFC 3339 with offset.
- * `replay` is only sent, never returned.
+ * `replay` is only sent, never returned. `generator` is the generator version the puzzle came from; results queued
+ * by older versions of the app and those of older servers have none, which means the week's default generator.
  */
 export interface GameResult {
+  generator?: number;
   date: string;
   level: number;
   elapsedMs: number;
@@ -187,8 +184,9 @@ export interface ResultFlag {
   flaggedAt: string;
 }
 
-/** One result as admins see it, from `GET /api/v1/admin/results`. */
+/** One result as admins see it, from `GET /api/v1/admin/results`. `generator` is the puzzle's generator (older servers: Classic). */
 export interface AdminResult {
+  generator: number;
   userId: string;
   displayName: string;
   level: number;
@@ -276,43 +274,29 @@ export interface EndlessReplayDetail extends AdminEndlessResult {
   events: ReplayEvent[];
 }
 
-/** One generator in the schedule's history: `fromWeek` is `null` for the first, which applied from the very beginning. */
-export interface GeneratorEntry {
-  fromWeek: string | null;
-  version: number;
+/** `GET /api/v1/admin/generator`, and the answer to changing it: the generators players can play, ascending. */
+export interface GeneratorSettings {
+  enabled: number[];
 }
 
-/** `GET /api/v1/admin/generator`, and the answer to changing it. `schedule` is what has been in effect, up to `active`. */
-export interface GeneratorInfo {
-  active: number;
-  pending: PendingGenerator | null;
-  schedule: GeneratorEntry[];
-}
-
-/** The day's games for `date`, which must be in `week`, from the generator the week uses. */
-export function weekPuzzles(week: Week, date: string = week.today): Puzzle[] {
+/** The day's games for `date`, which must be in `week`, from generator version `generator`. */
+export function weekPuzzles(week: Week, generator: number, date: string = week.today): Puzzle[] {
   if (!inWeek(week, date)) throw new RangeError(`${date} is outside ${week.isoWeek}`);
-  return generateDayVersion(week.generator, parseWeekSeed(week.seed), dayOfWeek(date), week.levels);
+  return generateDayVersion(generator, parseWeekSeed(week.seed), dayOfWeek(date), week.levels);
 }
 
-const generatorVersion = (json: unknown) => {
+/** A known generator version. */
+export const decodeGeneratorVersion = (json: unknown): number => {
   const v = num(json);
   if (!isGeneratorVersion(v)) throw new TypeError(`unsupported generator version: ${v}`);
   return v;
 };
 
-export function decodePendingGenerator(json: unknown): PendingGenerator {
-  const o = obj(json);
-  return { version: generatorVersion(o.version), fromWeek: str(o.fromWeek) };
-}
+/** A non-empty set of known generator versions, ascending and without duplicates. */
+const generatorSet = (json: unknown): number[] => enabledGenerators(list(json, num));
 
-export function decodeGeneratorInfo(json: unknown): GeneratorInfo {
-  const o = obj(json);
-  return {
-    active: generatorVersion(o.active),
-    pending: optional(o.pending, decodePendingGenerator),
-    schedule: list(o.schedule, (e) => ({ fromWeek: optional(obj(e).fromWeek, str), version: generatorVersion(obj(e).version) })),
-  };
+export function decodeGeneratorSettings(json: unknown): GeneratorSettings {
+  return { enabled: generatorSet(obj(json).enabled) };
 }
 
 const date = (json: unknown) => {
@@ -346,8 +330,7 @@ export function decodeWeek(json: unknown): Week {
   return {
     isoWeek: str(o.isoWeek), seed, weekStart: date(o.weekStart), weekEnd: date(o.weekEnd), today: date(o.today),
     dayOfWeek: num(o.dayOfWeek), timezone: str(o.timezone), levels: optional(o.levels, num) ?? DEFAULT_LEVELS,
-    generator: optional(o.generator, generatorVersion) ?? GENERATOR_CLASSIC,
-    pendingGenerator: optional(o.pendingGenerator, decodePendingGenerator),
+    generators: optional(o.generators, generatorSet) ?? [optional(o.generator, decodeGeneratorVersion) ?? GENERATOR_CLASSIC],
   };
 }
 
@@ -404,10 +387,10 @@ export function decodeResultFlag(json: unknown): ResultFlag {
 }
 
 export function decodeAdminResult(json: unknown): AdminResult {
-  return { level: num(obj(json).level), ...decodeAdminResultBase(json) };
+  return { generator: decodeGenerator(obj(json).generator), level: num(obj(json).level), ...decodeAdminResultBase(json) };
 }
 
-function decodeAdminResultBase(json: unknown): Omit<AdminResult, "level"> {
+function decodeAdminResultBase(json: unknown): Omit<AdminResult, "generator" | "level"> {
   const o = obj(json);
   return {
     userId: str(o.userId), displayName: str(o.displayName), elapsedMs: num(o.elapsedMs),
@@ -453,8 +436,8 @@ export function decodeEndlessInfo(json: unknown): EndlessInfo {
   return { seed };
 }
 
-/** The series of an endless result: results from before there were several series have none, and are Classic's. */
-const decodeGenerator = (json: unknown): number => optional(json, generatorVersion) ?? GENERATOR_CLASSIC;
+/** The generator of an endless or admin result: results from before there were several generators have none, and are Classic's. */
+const decodeGenerator = (json: unknown): number => optional(json, decodeGeneratorVersion) ?? GENERATOR_CLASSIC;
 
 export function decodeEndlessResult(json: unknown): EndlessResult {
   const o = obj(json);
@@ -503,7 +486,8 @@ export function decodeEndlessBoard(json: unknown): EndlessBoard {
 
 export function decodeDayResult(json: unknown): DayResult {
   const o = obj(json);
-  return { level: num(o.level), elapsedMs: num(o.elapsedMs), completedAt: str(o.completedAt) };
+  const generator = optional(o.generator, decodeGeneratorVersion);
+  return { ...(generator === null ? {} : { generator }), level: num(o.level), elapsedMs: num(o.elapsedMs), completedAt: str(o.completedAt) };
 }
 
 export function decodeGameResult(json: unknown): GameResult {
@@ -555,7 +539,7 @@ export function decodeStreak(json: unknown): Streak {
 export function decodeMyStats(json: unknown): MyStats {
   const o = obj(json);
   return {
-    generator: optional(o.generator, generatorVersion) ?? GENERATOR_CLASSIC,
+    generator: optional(o.generator, decodeGeneratorVersion) ?? GENERATOR_CLASSIC,
     today: date(o.today),
     streak: decodeStreak(o.streak),
     daily: list(o.daily, (d) => {

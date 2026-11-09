@@ -93,21 +93,20 @@ is under way it picks it up. When the server has a previous binary, "Roll back
 to previous binary" does the same after a confirmation. Errors show the
 server's message; a 403 reads "Your account isn't an admin".
 
-**Puzzle generator.** The page also has a Puzzle generator card (admins only):
-the generator the current week uses, any pending change ("Graded from
-2026-W46" with a **Cancel** button), two buttons that schedule Classic or
-Graded **from next week** (the one that is already the end state is disabled;
-choosing the active one while a change is pending cancels it, as on the
-server), and the history of generators that have been in effect ("Classic from
-the beginning", "Graded from 2026-W45"). A line explains that changes apply from
-the start of the next ISO week and that results and replays stay with the
-generator their week used. It uses `GET`/`PUT /api/v1/admin/generator` and
-`DELETE /api/v1/admin/generator/pending` (see `docs/API.md`).
+**Puzzle generators.** The page also has a Puzzle generators card (admins
+only): which generators players can play ("On: Classic and Graded") and three
+buttons, **Classic**, **Graded** and **Both**, with the setting in force marked
+(`aria-pressed`, and it can't be chosen again). A change applies straight away
+for every player; there is no pending change and no history. A line explains
+that with both on players pick one with a switch, and that results and replays
+keep the generator they were played with. After a change the admin's own app
+syncs, so its Daily tab follows. It uses `GET`/`PUT /api/v1/admin/generator`
+(`{ "enabled": [1, 2] }`, see `docs/API.md`).
 
 The logic is in `src/ui/admin.ts` (`AdminModel`, with an injected clock and
 sleep so tests don't wait); `AdminScreen` in `screens.ts` only renders it.
-The wording (`pendingNotice`, `pendingLine`, `historyLine`) is in
-`src/ui/generator.ts`.
+The three choices and the wording (`GENERATOR_CHOICES`, `generatorsSummary`)
+are in `src/ui/generator.ts`.
 
 ### Results and replays
 
@@ -167,8 +166,8 @@ puzzles). If a change to the generator is ever intentional, bump
 
 `src/generator/generator-v2.ts` is a second generator that grades puzzles by
 the techniques a person would need, instead of by how many clues they have.
-Daily puzzles use it for the weeks the [generator setting](#generator-setting)
-says so; endless puzzles are still v1 only. v1 above is unchanged, and its
+Daily and endless puzzles use it when the [generator setting](#generator-setting)
+enables it. v1 above is unchanged, and its
 goldens still pass.
 
 - **The grader** (`src/generator/grader.ts`) solves a grid one step at a time:
@@ -197,36 +196,51 @@ goldens still pass.
 
 ### Generator setting
 
-Which generator a week's dailies use is a setting with two values, shown as
-**Classic** (v1) and **Graded** (v2) (`generatorName` in
-`src/generator/versions.ts`, which also holds `generateDayVersion`, the one
-place that picks the generator for a version). The same rules apply with a
-server and in serverless play:
+The puzzle generators are **Classic** (v1) and **Graded** (v2) (`generatorName`
+in `src/generator/versions.ts`, which also holds `generateDayVersion`, the one
+place that picks the generator for a version, and `enabledGenerators`, which
+checks a set). The setting is which of them players can play: Classic, Graded
+or both (`[1]`, `[2]` or `[1, 2]`, always ascending). The same rules apply with
+a server and in serverless play:
 
-- A change never touches the current week. It is **pending** until the start
-  of the next ISO week, can be cancelled, and choosing the version this week
-  uses cancels it. Past weeks keep the generator they were played with, so
-  switching back and forth never changes an old puzzle and nothing is reset.
-- With a server, `GET /api/v1/week` says which generator the week uses
-  (`generator`, Classic when an older server omits it) and the pending change
-  (`pendingGenerator`). `weekPuzzles` generates with `week.generator`, and the
-  puzzle caches (`SudokuRepository`, `SeedRepository`) include it in their
-  key. A saved game whose givens differ from the day's puzzle is discarded as
-  before, so nothing stale is resumed.
-- While a change is pending, the Daily tab shows "From next week (2026-W46),
-  daily puzzles use the Graded generator.", and **About** has a "Daily
-  generator" row for the one this week uses.
+- A change applies straight away. Results, replays and saved games keep the
+  generator they were played with, so turning one off and on again loses
+  nothing, and a game started before a change can still be finished and
+  uploaded (the server accepts any known generator).
+- With a server, `GET /api/v1/week` lists the enabled ones (`generators`;
+  `Week.generators`). An older server that only sends `generator` (or nothing)
+  reads as that one alone (or Classic). The first enabled is the **default**:
+  the server assumes it for a request or result that doesn't name one.
+- The generator the Daily and Endless tabs play is `AppController.generator`:
+  the player's pick while it is enabled, else the default. With one enabled
+  there is nothing to pick and that one plays. With both enabled, both tabs
+  show a **Classic | Graded** switch (`.generator-switch`, styled like Stats'
+  `.generator-tabs`) with a "What's this?" link; `chooseGenerator` stores the
+  pick in `sudoku.generator` (one per device, shared by both tabs and by
+  serverless play, kept across sign-out) and reloads the day.
+- Each generator has its own daily puzzles (`weekPuzzles(week, generator,
+  date)`; the puzzle caches key on it), saved games (Classic keeps its
+  `date/level` keys, others are prefixed `g2/`, as endless ones are:
+  `gameKey`), results (`GameResult.generator`, sent with the result; one queued
+  by an older app has none and counts as the default's), leaderboard
+  (`GET /leaderboard?generator=N`; the `scores` screen keeps its generator, and
+  has the switch, without the link, while both are on), stats (the Stats
+  screen opens on the generator in use) and Endless series (see
+  [Endless puzzles](#endless-puzzles)). The play screen names the generator
+  ("Graded · Easy") while both are on. Admin result lists name it, and the
+  per-result replay and flag calls send `?generator=`.
+- **About** has a "Puzzle generator" row (or "Puzzle generators" with both),
+  naming the enabled ones.
 - A "Classic and Graded puzzles" explainer (`generatorHelp` in
   `src/ui/generator.ts`, shown by the help dialog as the `generators` topic)
-  describes both generators and the five Graded levels. It opens with the
-  pending change ("From next week (2026-W46), puzzles switch from Classic to
-  Graded.") or, with none, the generator in use. With a server players have
-  no say in the generator, so the text only explains it and never offers a
-  choice (otherwise players ask for the old one back); in serverless play it
-  points to the seed card's choice. It opens from a "What's this?" link in
-  the pending notice on the Daily tab and in the seed card's Puzzle
-  generator section, and from the "Classic and Graded" button on **About**,
-  with or without a server.
+  describes both generators and the five Graded levels. Its first line depends
+  on the setting: with both enabled "You can play Classic or Graded: pick with
+  the switch on the Daily and Endless tabs."; with a server and one enabled
+  just "Puzzles here use Graded." (no word of a choice, so players don't ask
+  for the other); in serverless play with one "This seed's puzzles use
+  Classic.", and its closing line points to the seed card. It opens from the
+  "What's this?" links next to the switch and in the seed card's Puzzle
+  generators section, and from the "Classic and Graded" button on **About**.
 - Admins change it on the [Server admin](#admin) page; serverless play has it
   in the seed card (see [Serverless play](#serverless-play-a-shared-seed)).
 
@@ -253,8 +267,11 @@ are different puzzles. Games of a repeated tier are titled "Medium 1",
 ## Offline data
 
 The app keeps its state as JSON documents in `localStorage`, under keys
-prefixed `sudoku.`: settings and identity, the cached week (seed and games per
-day), `me`, games in progress, the server's results for today, the last
+prefixed `sudoku.`: settings and identity, the cached week (seed, games per
+day and enabled generators), `me`, games in progress (`games`, keyed by
+`gameKey`: `date/level` for Classic, `g2/date/level` for Graded), the server's
+results for today (each with its generator), the player's Classic / Graded
+pick (`generator`, kept on sign-out), the last
 streak (`streak`, from `GET /api/v1/me/stats`; cleared on sign-out) and the offline
 result queue (`ResultSync`). The rules (`SudokuRepository`):
 
@@ -362,11 +379,17 @@ and the leaderboard's streak markers, with screenshots (including dark mode):
 `web/e2e/endless.cjs` (same server, any database) plays and submits an endless
 puzzle with a reload part way, and checks the tab, the leaderboards, that a
 second player gets the same puzzle and the admin list.
-`web/e2e/endless-series.cjs <url> <screenshot dir> <database file>` checks the
-Classic and Graded series: it flips the current week to Graded by writing a
-`generator_schedule` row into the database file (with `sqlite3`, removed
-again afterwards), plays both series and checks the unfinished game left in
-the other one, the leaderboards and Stats.
+`web/e2e/endless-series.cjs <url> [screenshot dir]` (same server, with `ann`
+as admin) checks the Classic and Graded series: it enables one generator at a
+time through the admin API, plays both series and checks the unfinished game
+left in the other one, the leaderboards and Stats, and leaves Classic on.
+`web/e2e/generator.cjs <url> [screenshot dir]` (same server) checks the
+[generator setting](#generator-setting): the admin card's Classic / Graded /
+Both, a player's view with one generator (no switch, the explainer naming it)
+and with both (the switch on Daily and Endless, the pick kept, a Graded daily
+solved and on the Graded leaderboard only, Stats on the pick, the admin list
+naming the generator), and the seed card's choices, switch, history and the
+migration of an old schedule. It leaves the server on Classic.
 
 The first signs in, goes offline and reloads, solves a puzzle offline, checks
 the result reaches `GET /api/v1/me/results` once back online, and covers the
@@ -468,7 +491,7 @@ In dev auth mode the app instead asks for a user id and display name and sends
   functions in `src/ui/stats.ts`, unit-tested; `StatsScreen` only lays them out.
   The Daily card has a **Classic / Graded** toggle: the numbers are kept per
   generator (a player who has played both has two records), and the screen
-  opens on the generator the current week uses. Picking the other one fetches
+  opens on the generator the Daily tab plays (`AppController.generator`). Picking the other one fetches
   `GET /api/v1/me/stats?generator=N` again (`AppController.showStatsGenerator`);
   a sync keeps the pick. The streak does not change with it; the Endless card follows the same
   toggle, as endless numbers are kept per series (see below).
@@ -494,11 +517,11 @@ everyone gets the same puzzles and the server can check their replays.
 puzzles (`generateEndlessVersion(version, seed, tier, n)` in
 `src/generator/versions.ts`; v2 is `generateEndlessV2`), each starting at #1
 with its own progress, results and leaderboards. The tab plays the series of
-the generator the *current week* uses (`AppController.endlessGenerator`, from
-`week.generator`: the server's, or the seed's own schedule in seed play), and
-names it ("Graded series") in its heading. When the week flips, the tab
-switches series by itself, and switching back resumes the earlier one exactly
-where it was. Unfinished games of the other series stay resumable: the tab
+the generator in use (`AppController.generator`: the player's pick with the
+[switch](#generator-setting) while both are enabled, else the enabled one),
+and names it ("Graded series") in its heading. When the setting or the pick
+changes, the tab switches series, and switching back resumes the earlier one
+exactly where it was. Unfinished games of the other series stay resumable: the tab
 lists them under **Unfinished in another series**. Results carry a
 `generator` (missing means Classic, 1); the series is also shown in the play
 header ("Graded · Easy #3"), on the leaderboard (which has a Classic / Graded
@@ -560,20 +583,24 @@ passphrase, or a generated one) and gets the same daily games
   server's [Endless puzzles](#endless-puzzles)). Everyone with the same seed
   gets the same puzzle for a difficulty and number; the settings other than
   the seed don't matter to it. Tests check the server's vectors.
-- **Generator**: the choice of [generator](#generator-setting) lives in
-  `seed-generator-<fp>` as a schedule history `[{ "fromWeek": "0000-W00",
-  "version": 1 }, ...]` (`src/serverless/generator-schedule.ts`), starting as
-  Classic for every week. The version for a date is the latest entry not after
-  its ISO week. Changing it in the seed card is pending until the next ISO
-  week and can be cancelled, exactly as on the server; entries for past weeks
-  are never removed. It is a local choice: it is not part of a share link, so
-  a group has to agree on it (and when it starts) for everyone to get the same
-  puzzles.
+- **Generators**: the [enabled generators](#generator-setting) live in
+  `seed-generator-<fp>` as a set (`[1]`, `[2]` or `[1,2]`;
+  `SeedRepository.setGenerators`, decoded by `decodeSeedGenerators`), Classic
+  alone until the player chooses. A change in the seed card applies straight
+  away. A seed that still has the schedule history of earlier versions
+  (`[{ "fromWeek": "0000-W00", "version": 1 }, ...]`) reads as the version of
+  its latest entry alone, so a change that was still pending applies now; the
+  next change stores the new format. It is a local choice: it is not part of a
+  share link, so a group has to agree on it for everyone to get the same
+  puzzles. With both on, the Daily and Endless tabs have the same switch as
+  with a server (the pick is the device's `generator`).
 - **Share results** copies a summary of the day to paste into a message, tagged
   with a short fingerprint of the seed (e.g. `#287caf`) instead of the seed.
 - **Storage**: the active seed (`seed`), and per seed (keyed by its
-  fingerprint) games in progress (`seed-games-<fp>`, current week only) and the
-  history of solve times (`seed-history-<fp>`). Endless puzzles are kept
+  fingerprint) games in progress (`seed-games-<fp>`, current week only, keyed
+  by `gameKey` like the server's) and the history of solve times
+  (`seed-history-<fp>`, each with its generator; entries without one are
+  Classic's). Endless puzzles are kept
   per seed the same way: games in progress (`seed-endless-games-<fp>`, never
   pruned, and dropped once solved) and solve times
   (`seed-endless-history-<fp>`: generator, difficulty, number, elapsed time,
@@ -599,10 +626,12 @@ In the app:
   solve times of each series and difficulty by puzzle number), and the seed's card with
   the share link, **Copy link**, **Share…** (the system share sheet, where the
   browser has one), **Copy seed** and **Leave seed**.
-  The card also has the **Puzzle generator** setting: the generator this week
-  uses, a pending change with **Cancel**, and **Classic from next week** /
-  **Graded from next week** buttons; the same pending notice as with a server
-  shows above the games.
+  The card also has the **Puzzle generators** setting: which are on ("On:
+  Classic and Graded."), a "What's this?" link to the explainer, and
+  **Classic**, **Graded** and **Both** buttons with the one in force marked.
+  **Share results** and History cover the generator in use; History names the
+  generator on each day's card while more than one is in play ("Today ·
+  Graded").
 - **Endless** works as with a server (next puzzle, resume, open any number,
   the first-visit explainer and About's "How Endless works", whose text leaves
   out the leaderboard), with the endless seed above, and nothing is uploaded.

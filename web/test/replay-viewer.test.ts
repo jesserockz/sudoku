@@ -19,7 +19,7 @@ const kinds = (a: ReturnType<typeof analyse>) => a.stretches.map((s) => [s.kind,
 
 function detail(events: ReplayEvent[]): ReplayDetail {
   return {
-    userId: "u", displayName: "U", level: 1, elapsedMs: 1, completedAt: "c", submittedAt: "s", replay: "valid", replayError: "",
+    generator: 1, userId: "u", displayName: "U", level: 1, elapsedMs: 1, completedAt: "c", submittedAt: "s", replay: "valid", replayError: "",
     flag: null, date: "2026-10-27", levels: 5, givens: puzzle, events,
   };
 }
