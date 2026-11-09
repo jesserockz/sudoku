@@ -296,13 +296,12 @@ table.board-table tr.warn td { color: var(--conflict); }
 }
 .card .flag button { flex: none; }
 button.danger { color: var(--conflict); border-color: var(--conflict); }
-.replay-player { --board: min(100%, 420px); }
 .replay-player label.reveal { font-weight: 600; }
-.replay-board { width: var(--board); margin: 0 auto; }
-.replay-board .cell { cursor: default; }
-.replay-board .cell.note-text { font-size: 0.7rem; color: var(--muted); letter-spacing: 1px; }
-.replay-board .cell.changed { background: var(--selected); }
-.replay-board .board.solved { border-color: var(--done); }
+/* The game's board, read-only, sized like the game's from its own width. */
+.replay-board { container-type: inline-size; width: min(100%, 420px); margin: 0 auto; --board: 100cqw; }
+sudoku-board.read-only .cell { cursor: default; }
+.cell.changed { background: var(--selected); }
+sudoku-board.read-only .board.solved { border-color: var(--done); }
 .clocks { display: flex; justify-content: space-between; margin: 8px 0 0; font-variant-numeric: tabular-nums; }
 .replay-player p.now { margin: 4px 0; min-height: 1.4em; }
 .replay-player input.scrub { width: 100%; accent-color: var(--accent); }

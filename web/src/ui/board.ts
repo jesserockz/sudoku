@@ -1,5 +1,6 @@
 import { CELLS, colOf, peers, rowOf } from "../core/geometry.ts";
 import type { Game } from "../game/game.ts";
+import { cellLabel, cellView } from "./cell-view.ts";
 import { type Child, Component, h } from "./dom.ts";
 
 /**
@@ -7,14 +8,22 @@ import { type Child, Component, h } from "./dom.ts";
  * cell, its peers, cells with the same digit and conflicts. Set `game` and
  * `selected` (`-1` for none); clicking a cell fires `cell-select` with the
  * cell's index as `detail`.
+ *
+ * The admin replay viewer shows the same board read-only: set `readOnly`
+ * (no `cell-select`, no pointer cursor), `hideDigits` (see {@link cellView})
+ * and `changed` (the cell the last action changed, `-1` for none).
  */
 export class SudokuBoard extends Component {
   #game: Game | null = null;
   #selected = -1;
+  #readOnly = false;
+  #hideDigits = false;
+  #changed = -1;
 
   constructor() {
     super();
     this.addEventListener("click", (e) => {
+      if (this.#readOnly) return;
       const cell = (e.target as Element).closest<HTMLElement>("[data-index]");
       if (cell) this.dispatchEvent(new CustomEvent("cell-select", { detail: Number(cell.dataset.index), bubbles: true }));
     });
@@ -30,10 +39,25 @@ export class SudokuBoard extends Component {
     if (this.isConnected) this.update();
   }
 
+  set readOnly(readOnly: boolean) {
+    this.#readOnly = readOnly;
+    this.classList.toggle("read-only", readOnly);
+  }
+
+  set hideDigits(hide: boolean) {
+    this.#hideDigits = hide;
+    if (this.isConnected) this.update();
+  }
+
+  set changed(index: number) {
+    this.#changed = index;
+    if (this.isConnected) this.update();
+  }
+
   protected render(): Child {
     const game = this.#game;
     if (!game) return null;
-    const { board, notes } = game;
+    const { board } = game;
     const selected = this.#selected;
     const conflicts = new Set(board.conflicts());
     const selectedPeers = new Set(selected >= 0 ? peers[selected] : []);
@@ -43,6 +67,7 @@ export class SudokuBoard extends Component {
       const r = rowOf(i);
       const c = colOf(i);
       const value = board.get(i);
+      const view = cellView(game, i, this.#hideDigits);
       cells.push(h("div", {
         class: [
           "cell", `r${r}`, `c${c}`,
@@ -51,17 +76,16 @@ export class SudokuBoard extends Component {
           selectedDigit !== 0 && value === selectedDigit && i !== selected && "same",
           i === selected && "selected",
           conflicts.has(i) && "conflict",
+          i === this.#changed && "changed",
         ],
         role: "gridcell",
-        "aria-label": `Row ${r + 1} column ${c + 1}, ${value === 0 ? "empty" : value}`,
+        "aria-label": `Row ${r + 1} column ${c + 1}, ${cellLabel(view)}`,
         "data-index": i,
       },
-      value !== 0
-        ? String(value)
-        : !notes.isEmpty(i) && h("div", { class: "notes" }, [1, 2, 3, 4, 5, 6, 7, 8, 9].map((d) => h("span", null, notes.has(i, d) ? String(d) : ""))),
+      view.kind === "notes" ? h("div", { class: "notes" }, view.marks.map((m) => h("span", null, m))) : view.text,
       ));
     }
-    return h("div", { class: "board", role: "grid", "aria-label": "Sudoku board" }, cells);
+    return h("div", { class: ["board", game.isComplete && "solved"], role: "grid", "aria-label": "Sudoku board" }, cells);
   }
 }
 

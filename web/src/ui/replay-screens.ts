@@ -1,8 +1,8 @@
 import type { AdminEndlessResult, AdminResult, ReplayStatus } from "../api/models.ts";
-import { CELLS, colOf, rowOf } from "../core/geometry.ts";
 import { formatDuration } from "../game/timer.ts";
 import { DIFFICULTIES, endlessTitle, puzzleTitle } from "../generator/generator.ts";
 import { generatorName } from "../generator/versions.ts";
+import type { SudokuBoard } from "./board.ts";
 import { ENDLESS_DIFFICULTIES, type AdminResultsModel, type ResultsMode } from "./admin-results.ts";
 import type { AppController } from "./controller.ts";
 import { type Child, Component, h, topBar } from "./dom.ts";
@@ -16,6 +16,7 @@ interface Controls {
   play: HTMLButtonElement;
   next: HTMLButtonElement;
   speeds: HTMLButtonElement[];
+  board: SudokuBoard;
 }
 
 abstract class AdminResultsScreenBase extends Component {
@@ -156,6 +157,7 @@ export class ReplayScreen extends AdminResultsScreenBase {
       play: button("Play", () => (v.playing ? v.pause() : v.play()), { class: "primary" }),
       next: button("Next ›", () => v.next(), { "aria-label": "Next action" }),
       speeds: SPEEDS.map((s) => button(`${s}x`, () => v.setSpeed(s))),
+      board: Object.assign(document.createElement("sudoku-board") as SudokuBoard, { readOnly: true }),
     };
     return this.#controls;
   }
@@ -216,20 +218,11 @@ export class ReplayScreen extends AdminResultsScreenBase {
   }
 
   #player(v: ReplayViewer): Child {
-    const game = v.game;
-    const changed = v.changedCell;
-    const cells: HTMLElement[] = [];
-    for (let i = 0; i < CELLS; i++) {
-      const view = v.cell(i);
-      cells.push(h("div", {
-        class: ["cell", `r${rowOf(i)}`, `c${colOf(i)}`, view.kind === "given" && "given", view.kind === "notes" && "note-text", i === changed && "changed"],
-        "data-index": i,
-      }, view.text));
-    }
     const current = v.current;
     const gap = v.index > 0 ? v.analysis.gaps[v.index - 1]! : 0;
     const c = this.#controlsFor(v);
     c.reveal.checked = v.revealDigits;
+    Object.assign(c.board, { game: v.game, hideDigits: !v.revealDigits, changed: v.changedCell });
     c.scrub.max = String(v.endMs);
     c.scrub.value = String(v.cursorMs);
     c.prev.disabled = v.index === 0;
@@ -238,7 +231,7 @@ export class ReplayScreen extends AdminResultsScreenBase {
     SPEEDS.forEach((s, i) => c.speeds[i]!.classList.toggle("active", v.speed === s));
     return h("div", { class: "card replay-player" },
       h("label", { class: "check reveal" }, c.reveal, " Reveal digits (shows the solution)"),
-      h("div", { class: "replay-board" }, h("div", { class: ["board", game.isComplete && "solved"] }, cells)),
+      h("div", { class: "replay-board" }, c.board),
       h("div", { class: "clocks" },
         h("span", null, h("span", { class: "muted" }, "Timer "), formatDuration(v.cursorMs), " / ", formatDuration(v.endMs)),
         h("span", null, h("span", { class: "muted" }, "Wall "), current ? formatWall(current.w) : "-"),

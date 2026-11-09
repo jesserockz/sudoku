@@ -121,8 +121,11 @@ admins see an automatic flag until one is confirmed).
 Tapping one opens its replay:
 
 - The board as it was after each action, with the cell the last action changed
-  highlighted. **Digits are hidden by default**: an entered digit shows as `•`
-  and each pencil mark as `·`, and action descriptions say "Placed a digit in
+  highlighted. It is the game's own board, read-only, so digits and notes look
+  the same as in the game.
+  **Digits are hidden by default**: an entered digit shows as `•`, a cell's
+  pencil marks as one `•` each in its first note slots (a mark's own slot would
+  give its digit away), and action descriptions say "Placed a digit in
   R3C5" without the digit, because the admin is also a player and mustn't see
   the solution by accident. The **Reveal digits (shows the solution)** box shows
   them; it is unticked every time a replay opens and is never remembered.

@@ -7,6 +7,7 @@ import {
   LONG_GAP_MS, MIN_STRETCH_MS, PACE_MIN_PLACEMENTS, ReplayViewer, STEADY_VARIATION,
   analyse, applyEvent, cellName, formatGap, formatWall, isMove,
 } from "../src/ui/replay-viewer.ts";
+import { cellLabel, cellView } from "../src/ui/cell-view.ts";
 
 const puzzle = "530070000600195000098000060800060003400803001700020006060000280000419005000080079";
 const solution = "534678912672195348198342567859761423426853791713924856961537284287419635345286179";
@@ -350,11 +351,11 @@ test("a viewer hides digits and notes by default", () => {
   const v = new ReplayViewer(detail(script()));
   assert.equal(v.revealDigits, false);
   v.goTo(5); // notes 4 and 5 in cell 2
-  assert.deepEqual(v.cell(2), { kind: "notes", text: "··" });
-  assert.deepEqual(v.cell(0), { kind: "given", text: "5" });
-  assert.deepEqual(v.cell(3), { kind: "empty", text: "" });
+  assert.deepEqual(cellView(v.game, 2, !v.revealDigits), { kind: "notes", marks: ["•", "•", "", "", "", "", "", "", ""] });
+  assert.deepEqual(cellView(v.game, 0, !v.revealDigits), { kind: "given", text: "5" });
+  assert.deepEqual(cellView(v.game, 3, !v.revealDigits), { kind: "empty", text: "" });
   v.goTo(8); // 4 placed in cell 2
-  assert.deepEqual(v.cell(2), { kind: "entry", text: "•" });
+  assert.deepEqual(cellView(v.game, 2, !v.revealDigits), { kind: "entry", text: "•" });
 
   const lines = all(v);
   assert.deepEqual(lines, [
@@ -375,18 +376,30 @@ test("revealing digits shows them in the cells and the descriptions, and fires c
   assert.equal(changes, 1);
 
   v.goTo(5);
-  assert.deepEqual(v.cell(2), { kind: "notes", text: "45" });
+  assert.deepEqual(cellView(v.game, 2, !v.revealDigits), { kind: "notes", marks: ["", "", "", "4", "5", "", "", "", ""] });
   v.goTo(8);
-  assert.deepEqual(v.cell(2), { kind: "entry", text: "4" });
-  assert.deepEqual(v.cell(0), { kind: "given", text: "5" });
+  assert.deepEqual(cellView(v.game, 2, !v.revealDigits), { kind: "entry", text: "4" });
+  assert.deepEqual(cellView(v.game, 0, !v.revealDigits), { kind: "given", text: "5" });
   assert.equal(v.describe(3), "Added note 4 in R1C3");
   assert.equal(v.describe(5), "Removed note 5 in R1C3");
   assert.equal(v.describe(7), "Placed 4 in R1C3");
   assert.equal(v.describe(19), "Placed 8 in R1C6");
 
   v.setRevealDigits(false);
-  assert.deepEqual(v.cell(2), { kind: "entry", text: "•" });
+  assert.deepEqual(cellView(v.game, 2, !v.revealDigits), { kind: "entry", text: "•" });
   assert.equal(v.describe(7), "Placed a digit in R1C3");
+});
+
+test("cell views match the game unhidden, and screen readers never hear a hidden digit", () => {
+  const v = new ReplayViewer(detail(script()));
+  v.goTo(5); // notes 4 and 5 in cell 2
+  assert.deepEqual(cellView(v.game, 2, false), { kind: "notes", marks: ["", "", "", "4", "5", "", "", "", ""] });
+  assert.equal(cellLabel(cellView(v.game, 2, false)), "empty");
+  assert.equal(cellLabel(cellView(v.game, 3, true)), "empty");
+  assert.equal(cellLabel(cellView(v.game, 0, true)), "5");
+  v.goTo(8); // 4 placed in cell 2
+  assert.equal(cellLabel(cellView(v.game, 2, false)), "4");
+  assert.equal(cellLabel(cellView(v.game, 2, true)), "hidden digit");
 });
 
 test("a new viewer for the same detail starts hidden again", () => {
@@ -394,11 +407,11 @@ test("a new viewer for the same detail starts hidden again", () => {
   const first = new ReplayViewer(d);
   first.setRevealDigits(true);
   first.goTo(8);
-  assert.equal(first.cell(2).text, "4");
+  assert.deepEqual(cellView(first.game, 2, !first.revealDigits), { kind: "entry", text: "4" });
   const second = new ReplayViewer(d);
   assert.equal(second.revealDigits, false);
   second.goTo(8);
-  assert.equal(second.cell(2).text, "•");
+  assert.deepEqual(cellView(second.game, 2, !second.revealDigits), { kind: "entry", text: "•" });
   assert.equal(second.describe(7), "Placed a digit in R1C3");
   assert.equal(first.revealDigits, true);
 });
