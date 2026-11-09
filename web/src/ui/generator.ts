@@ -1,31 +1,27 @@
 // Wording for the puzzle generator setting, kept free of the DOM so it can be unit-tested.
-import type { GeneratorEntry, PendingGenerator } from "../api/models.ts";
-import { generatorName } from "../generator/versions.ts";
+import { GENERATOR_CLASSIC, GENERATOR_GRADED, generatorName } from "../generator/versions.ts";
 
-/** The one-line notice for players while a generator change is pending. */
-export function pendingNotice(pending: PendingGenerator): string {
-  return `From next week (${pending.fromWeek}), daily puzzles use the ${generatorName(pending.version)} generator.`;
+/** The three settings the admin card and the seed card offer: one generator, or both. */
+export const GENERATOR_CHOICES: readonly { label: string; enabled: readonly number[] }[] = [
+  { label: "Classic", enabled: [GENERATOR_CLASSIC] },
+  { label: "Graded", enabled: [GENERATOR_GRADED] },
+  { label: "Both", enabled: [GENERATOR_CLASSIC, GENERATOR_GRADED] },
+];
+
+/** Whether two enabled sets (both ascending, as the server and seed play keep them) are the same. */
+export function sameGenerators(a: readonly number[], b: readonly number[]): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
 }
 
-/** The admin's pending line, e.g. "Graded from 2026-W46". */
-export function pendingLine(pending: PendingGenerator): string {
-  return `${generatorName(pending.version)} from ${pending.fromWeek}`;
-}
-
-/** One line of the schedule history: the generator and the week it started in (`null`: from the very beginning). */
-export function historyLine(entry: GeneratorEntry): string {
-  return `${generatorName(entry.version)} ${entry.fromWeek === null ? "from the beginning" : `from ${entry.fromWeek}`}`;
-}
-
-/** One line for the About screen: which generator this week's dailies use. */
-export function generatorSummary(version: number): string {
-  return `${generatorName(version)} (this week)`;
+/** The enabled generators by name, e.g. "Graded" or "Classic and Graded". */
+export function generatorsSummary(enabled: readonly number[]): string {
+  return enabled.map(generatorName).join(" and ");
 }
 
 /** The "Classic and Graded puzzles" explainer as data: a title, paragraphs, and the five Graded levels. */
 export interface GeneratorHelp {
   title: string;
-  /** Text before the level list: what is changing (or which generator is in use), Classic, then how Graded decides. */
+  /** Text before the level list: which generators are in use, Classic, then how Graded decides. */
   intro: string[];
   /** The Graded levels, easiest first: the level name and what it takes. */
   levels: { name: string; text: string }[];
@@ -33,23 +29,32 @@ export interface GeneratorHelp {
   outro: string[];
 }
 
-/** What the explainer needs to know: this week's generator (`null` before a week is loaded), a pending change, and serverless play. */
+/** What the explainer needs to know: the enabled generators (`null` before a week is loaded), and serverless play. */
 export interface GeneratorHelpContext {
-  current: number | null;
-  pending: PendingGenerator | null;
+  enabled: readonly number[] | null;
   seed: boolean;
 }
 
 /**
- * The explainer for the generator setting. With a server players have no say, so it only explains what the
- * generators are and what is changing; in serverless play the choice is the player's, so it points to it.
+ * The explainer for the generators. With both enabled it points to the switch. With a server and one enabled,
+ * players have no say, so it only says which one is used, with no word of a choice. In serverless play the
+ * choice of generators is the player's, so it points to the seed card.
  */
-export function generatorHelp({ current, pending, seed }: GeneratorHelpContext): GeneratorHelp {
+export function generatorHelp({ enabled, seed }: GeneratorHelpContext): GeneratorHelp {
+  const both = enabled !== null && enabled.length > 1;
   let lead: string | null = null;
-  if (pending && current !== null) {
-    lead = `From next week (${pending.fromWeek}), puzzles switch from ${generatorName(current)} to ${generatorName(pending.version)}. Here's the difference.`;
-  } else if (current !== null) {
-    lead = `${seed ? "This seed's" : "This week's"} puzzles use ${generatorName(current)}.`;
+  if (both) {
+    lead = "You can play Classic or Graded: pick with the switch on the Daily and Endless tabs.";
+  } else if (enabled !== null) {
+    lead = `${seed ? "This seed's puzzles" : "Puzzles here"} use ${generatorName(enabled[0]!)}.`;
+  }
+  let last: string;
+  if (seed) {
+    last = "You choose the generators for this seed in the seed card: Classic, Graded or both. Each generator has its own Endless series, numbered from #1, with its own progress.";
+  } else if (both) {
+    last = "Each generator has its own daily puzzles, Endless series, leaderboards and stats, so your times are only compared with others on the same one.";
+  } else {
+    last = "Endless uses the same generator as the daily puzzles, with its own series numbered from #1.";
   }
   return {
     title: "Classic and Graded puzzles",
@@ -67,9 +72,7 @@ export function generatorHelp({ current, pending, seed }: GeneratorHelpContext):
     ],
     outro: [
       "Every Graded puzzle can be solved by logic alone, without guessing, and puzzles at the same level feel about as hard as each other.",
-      seed
-        ? "You choose the generator for this seed in the seed card, and a change starts the next week. Each generator has its own Endless series, numbered from #1, with its own progress."
-        : "Endless uses the same generator as the daily puzzles. Graded puzzles have their own Endless series, starting at #1, and your Classic progress is kept.",
+      last,
     ],
   };
 }

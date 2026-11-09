@@ -34,6 +34,7 @@ type Flag struct {
 type AdminResult struct {
 	UserID       int64
 	DisplayName  string
+	Generator    int
 	Level        int
 	ElapsedMs    int64
 	CompletedAt  string
@@ -44,7 +45,7 @@ type AdminResult struct {
 }
 
 const adminSelect = `
-	SELECT r.user_id, u.display_name, r.level, r.elapsed_ms, r.completed_at, r.submitted_at,
+	SELECT r.user_id, u.display_name, r.generator, r.level, r.elapsed_ms, r.completed_at, r.submitted_at,
 		COALESCE(r.replay_status, 'none'), r.replay_error,
 		r.flagged_at, r.flag_reason, r.flag_auto, r.flagged_by, f.display_name
 	FROM results r
@@ -60,7 +61,7 @@ func scanAdminResult(sc interface{ Scan(...any) error }) (AdminResult, error) {
 		by     sql.NullInt64
 		byName sql.NullString
 	)
-	if err := sc.Scan(&r.UserID, &r.DisplayName, &r.Level, &r.ElapsedMs, &r.CompletedAt, &r.SubmittedAt,
+	if err := sc.Scan(&r.UserID, &r.DisplayName, &r.Generator, &r.Level, &r.ElapsedMs, &r.CompletedAt, &r.SubmittedAt,
 		&r.ReplayStatus, &r.ReplayError, &at, &reason, &auto, &by, &byName); err != nil {
 		return AdminResult{}, err
 	}
@@ -73,12 +74,12 @@ func scanAdminResult(sc interface{ Scan(...any) error }) (AdminResult, error) {
 	return r, nil
 }
 
-// AdminDayResults returns every result for date with its replay status and
-// flag, ordered by level then time.
+// AdminDayResults returns every result of every generator for date with its
+// replay status and flag, ordered by generator, level, then time.
 func (s *Store) AdminDayResults(ctx context.Context, date string) ([]AdminResult, error) {
 	rows, err := s.db.QueryContext(ctx, adminSelect+`
 		WHERE r.date = ?
-		ORDER BY r.level, r.elapsed_ms, u.display_name, r.user_id`, date)
+		ORDER BY r.generator, r.level, r.elapsed_ms, u.display_name, r.user_id`, date)
 	if err != nil {
 		return nil, fmt.Errorf("admin day results: %w", err)
 	}
@@ -95,9 +96,9 @@ func (s *Store) AdminDayResults(ctx context.Context, date string) ([]AdminResult
 }
 
 // AdminResult returns one result, or ErrNotFound.
-func (s *Store) AdminResult(ctx context.Context, userID int64, date string, level int) (AdminResult, error) {
+func (s *Store) AdminResult(ctx context.Context, userID int64, generator int, date string, level int) (AdminResult, error) {
 	r, err := scanAdminResult(s.db.QueryRowContext(ctx, adminSelect+`
-		WHERE r.user_id = ? AND r.date = ? AND r.level = ?`, userID, date, level))
+		WHERE r.user_id = ? AND r.generator = ? AND r.date = ? AND r.level = ?`, userID, generator, date, level))
 	if errors.Is(err, sql.ErrNoRows) {
 		return AdminResult{}, ErrNotFound
 	}
@@ -109,11 +110,11 @@ func (s *Store) AdminResult(ctx context.Context, userID int64, date string, leve
 
 // ReplayEvents returns the stored events (a JSON array) of a result, or nil
 // when it has no replay.
-func (s *Store) ReplayEvents(ctx context.Context, userID int64, date string, level int) ([]byte, error) {
+func (s *Store) ReplayEvents(ctx context.Context, userID int64, generator int, date string, level int) ([]byte, error) {
 	var events string
 	err := s.db.QueryRowContext(ctx, `
-		SELECT events FROM replays WHERE user_id = ? AND date = ? AND level = ?`,
-		userID, date, level).Scan(&events)
+		SELECT events FROM replays WHERE user_id = ? AND generator = ? AND date = ? AND level = ?`,
+		userID, generator, date, level).Scan(&events)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -126,20 +127,20 @@ func (s *Store) ReplayEvents(ctx context.Context, userID int64, date string, lev
 // FlagResult flags a result as suspicious on behalf of admin by at time at,
 // replacing any earlier flag. It returns ErrNotFound if there is no such
 // result.
-func (s *Store) FlagResult(ctx context.Context, userID int64, date string, level int, by int64, reason string, at time.Time) error {
+func (s *Store) FlagResult(ctx context.Context, userID int64, generator int, date string, level int, by int64, reason string, at time.Time) error {
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE results SET flagged_at = ?, flagged_by = ?, flag_reason = ?, flag_auto = 0
-		WHERE user_id = ? AND date = ? AND level = ?`,
-		at.UTC().Format(timeLayout), by, reason, userID, date, level)
+		WHERE user_id = ? AND generator = ? AND date = ? AND level = ?`,
+		at.UTC().Format(timeLayout), by, reason, userID, generator, date, level)
 	return oneRow(res, err, "flag result")
 }
 
 // UnflagResult removes a result's flag (a no-op if it has none). It returns
 // ErrNotFound if there is no such result.
-func (s *Store) UnflagResult(ctx context.Context, userID int64, date string, level int) error {
+func (s *Store) UnflagResult(ctx context.Context, userID int64, generator int, date string, level int) error {
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE results SET flagged_at = NULL, flagged_by = NULL, flag_reason = '', flag_auto = 0
-		WHERE user_id = ? AND date = ? AND level = ?`, userID, date, level)
+		WHERE user_id = ? AND generator = ? AND date = ? AND level = ?`, userID, generator, date, level)
 	return oneRow(res, err, "unflag result")
 }
 

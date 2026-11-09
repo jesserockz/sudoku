@@ -73,7 +73,7 @@ export class AdminResultsScreen extends AdminResultsScreenBase {
             ? h("p", { class: "muted" }, "No results.")
             : h("table", { class: "board-table results-table" }, h("tbody", null, results.map((r) =>
               h("tr", { class: "clickable", onclick: () => this.app.openReplay(r) },
-                h("td", null, r.displayName, h("div", { class: "small" }, statusBadges(r))),
+                h("td", null, `${generatorName(r.generator)} `, r.displayName, h("div", { class: "small" }, statusBadges(r))),
                 h("td", { class: "time" }, formatDuration(r.elapsedMs)),
               )))),
         );
@@ -176,7 +176,7 @@ export class ReplayScreen extends AdminResultsScreenBase {
     const result = m.find(d) ?? d;
     const heading = "difficulty" in d
       ? `${d.displayName}, ${generatorName(d.generator)} ${endlessTitle(d.difficulty, d.number)}, submitted ${d.submittedAt.slice(0, 10)}`
-      : `${d.displayName}, ${puzzleTitle(d.level, d.levels)} on ${d.date}`;
+      : `${d.displayName}, ${generatorName(d.generator)} ${puzzleTitle(d.level, d.levels)} on ${d.date}`;
     return [
       topBar("Replay", back),
       m.error && h("div", { class: "notice" }, m.error),

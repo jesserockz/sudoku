@@ -59,7 +59,7 @@ test("opening a puzzle stamps a start event once", async () => {
   clock.wall = WALL + 5;
   c.openPuzzle(1);
   assert.deepEqual(replayOf(c), [{ t: 0, w: WALL + 5, a: "start" }]);
-  assert.deepEqual(c.screen, { kind: "play", level: 1 });
+  assert.deepEqual(c.screen, { kind: "play", generator: 1, level: 1 });
   clock.wall = WALL + 99;
   c.openPuzzle(1);
   assert.equal(replayOf(c).length, 1);
@@ -240,7 +240,7 @@ test("a game reloaded from storage gets a restore event before its next action",
   const { c, clock, repo } = e;
   c.openPuzzle(1);
   c.update(1, (g) => g.resume(clock.mono), { a: "resume" });
-  const reloaded = repo.loadGame(c.today, puzzleOf(c))!;
+  const reloaded = repo.loadGame(c.generator, c.today, puzzleOf(c))!;
   assert.deepEqual(reloaded.replay.map((x) => x.a), ["start", "resume"]);
   c.games.set(1, reloaded);
   clock.wall += 5000;
@@ -250,7 +250,7 @@ test("a game reloaded from storage gets a restore event before its next action",
 
 // Admin screens
 
-const key = { level: 1, userId: "bob" };
+const key = { generator: 1, level: 1, userId: "bob" };
 const result = { userId: "bob", displayName: "Bob", level: 1, elapsedMs: 5000, completedAt: "c", submittedAt: "s", replay: "valid", replayError: "", flag: null };
 
 async function adminEnv(): Promise<Env> {

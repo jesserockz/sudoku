@@ -209,7 +209,7 @@ test("refresh uploads queued endless results and merges the two reports", async 
   const daily = solveDaily(repo);
 
   // Nothing wrong: both queues drain.
-  await repo.complete(repo.today(), 1, daily);
+  await repo.complete(1, repo.today(), 1, daily);
   await repo.completeEndless(1, 1, 1, done(repo));
   let report = await repo.refresh();
   assert.equal(report.accepted.length, 2);
@@ -217,7 +217,7 @@ test("refresh uploads queued endless results and merges the two reports", async 
   assert.equal(server.storedEndless.length, 1);
 
   // Both rejected.
-  await repo.complete(repo.today(), 2, solveDaily(repo, 2));
+  await repo.complete(1, repo.today(), 2, solveDaily(repo, 2));
   await repo.completeEndless(1, 1, 2, done(repo, { generator: 1, difficulty: 1, number: 2 }));
   server.rejectAll = true;
   report = await repo.refresh();
@@ -225,7 +225,7 @@ test("refresh uploads queued endless results and merges the two reports", async 
   server.rejectAll = false;
 
   // The daily upload fails, and so does the endless one: the first failure is reported.
-  await repo.complete(repo.today(), 3, solveDaily(repo, 3));
+  await repo.complete(1, repo.today(), 3, solveDaily(repo, 3));
   await repo.completeEndless(1, 1, 3, done(repo, { generator: 1, difficulty: 1, number: 3 }));
   server.resultsStatus = 503;
   report = await repo.refresh();
@@ -242,7 +242,7 @@ test("refresh uploads queued endless results and merges the two reports", async 
 });
 
 function solveDaily(r: SudokuRepository, level = 1): Game {
-  return solveGame(r.puzzles()!.find((p) => p.level === level)!);
+  return solveGame(r.puzzles(r.today(), 1)!.find((p) => p.level === level)!);
 }
 
 test("the home tab defaults to daily and is remembered", async () => {

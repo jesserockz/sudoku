@@ -1,23 +1,21 @@
 // End-to-end check of the endless series (one numbered series per generator version) against a running
-// server in dev auth mode that serves web/dist (see docs/WEB.md, "Checking offline play"), with any database:
+// server in dev auth mode that serves web/dist, with `ann` as admin (see docs/WEB.md, "Checking offline play"):
 //
-//   node web/e2e/endless-series.cjs [http://localhost:8080] [screenshot dir] [database file]
+//   SUDOKU_ADMIN_CLAIM=sub SUDOKU_ADMIN_VALUES=ann ... server/sudoku-server &
+//   node web/e2e/endless-series.cjs [http://localhost:8080] [screenshot dir]
 //
-// The week's generator can only be scheduled from next week, so the script changes it the way an elapsed
-// week would: it writes a generator_schedule row for the current ISO week into the database file with the
-// sqlite3 command line tool, and removes it again at the end (the server reads the schedule on every request).
+// The script switches the enabled generator through the admin API as Ann (it applies straight away), one at a
+// time so there is no Classic / Graded switch, and leaves the server on Classic at the end.
 //
-// A player solves Classic Easy #1 and leaves Classic Easy #2 half done. The week then flips to Graded: the
+// A player solves Classic Easy #1 and leaves Classic Easy #2 half done. The server then moves to Graded: the
 // Endless tab shows the "Graded series" with nothing solved and lists the unfinished Classic game, which can
 // still be resumed and solved. Graded Easy #1 is a different puzzle with its own result, leaderboard and Stats
-// numbers; flipping back to Classic resumes the Classic progress exactly where it was. Screenshots are taken
+// numbers; moving back to Classic resumes the Classic progress exactly where it was. Screenshots are taken
 // at phone width.
 const { chromium } = require("playwright");
-const { execFileSync } = require("node:child_process");
 
 const base = process.argv[2] || "http://localhost:8080";
 const shots = process.argv[3] || null;
-const db = process.argv[4] || null;
 const run = String(Date.now()).slice(-6);
 const player = { sub: "series" + run, name: "Sera" + run };
 
@@ -53,7 +51,13 @@ async function shot(page, name) {
   console.log(`   screenshot ${shots}/${name}.png`);
 }
 
-const sqlite = (sql) => execFileSync("sqlite3", [db, sql], { encoding: "utf8" });
+/** Enables only generator `version` on the server, as Ann (an admin). */
+async function flipTo(version) {
+  const response = await fetch(`${base}/api/v1/admin/generator`, {
+    method: "PUT", headers: { Authorization: "Bearer dev:ann:Ann", "Content-Type": "application/json" }, body: JSON.stringify({ enabled: [version] }),
+  });
+  if (!response.ok) throw new Error(`enabling generator ${version} failed: HTTP ${response.status} (is ann an admin?)`);
+}
 
 const readGrid = async (cells) =>
   (await cells.evaluateAll((els) => els.map((e) => e.getAttribute("aria-label")))).map((l) => (l.endsWith("empty") ? 0 : Number(l.slice(-1))));
@@ -79,15 +83,9 @@ async function fill(page, count = Infinity) {
 const phone = { viewport: { width: 375, height: 812 }, deviceScaleFactor: 2, colorScheme: "light" };
 
 (async () => {
-  if (!db) throw new Error("usage: endless-series.cjs <base url> <screenshot dir or ''> <database file>");
+  await flipTo(1);
   const week = await (await fetch(`${base}/api/v1/week`, { headers: { Authorization: "Bearer dev:ann:Ann" } })).json();
-  check(week.generator === 1, "the week starts on Classic");
-  const thisWeek = week.isoWeek;
-  const flipTo = (version) => {
-    sqlite(`DELETE FROM generator_schedule WHERE effective_week = '${thisWeek}'`);
-    if (version !== 1) sqlite(`INSERT INTO generator_schedule (effective_week, version) VALUES ('${thisWeek}', ${version})`);
-  };
-  flipTo(1);
+  check(JSON.stringify(week.generators) === "[1]", "the server starts on Classic alone");
 
   const browser = await chromium.launch();
   let page;
@@ -101,7 +99,8 @@ const phone = { viewport: { width: 375, height: 812 }, deviceScaleFactor: 2, col
     await page.getByRole("tab", { name: "Endless" }).click();
     await page.getByRole("button", { name: "Got it" }).click();
     await page.locator("#endless-series", { hasText: "Classic series" }).waitFor();
-    check(true, "a Classic week shows the Classic series");
+    check(true, "with Classic on, the tab shows the Classic series");
+    check(await page.locator(".generator-switch").count() === 0, "with one generator there is no switch");
 
     // Classic Easy #1 solved, Classic Easy #2 half done.
     await page.getByRole("button", { name: "Play #1" }).first().click();
@@ -118,8 +117,8 @@ const phone = { viewport: { width: 375, height: 812 }, deviceScaleFactor: 2, col
     await page.getByRole("button", { name: "Resume #2" }).waitFor();
     check((await api("me/endless")).results.length === 1, "one Classic result is on the server");
 
-    // The week moves to Graded.
-    flipTo(2);
+    // The server moves to Graded.
+    await flipTo(2);
     await page.reload();
     await page.locator("#endless-series", { hasText: "Graded series" }).waitFor();
     check(await page.getByText("None solved yet").count() === 5, "the Graded series starts with nothing solved");
@@ -192,7 +191,7 @@ const phone = { viewport: { width: 375, height: 812 }, deviceScaleFactor: 2, col
     await page.getByText("‹ Back").click();
 
     // Back to Classic: that series is where it was left.
-    flipTo(1);
+    await flipTo(1);
     await page.reload();
     await page.locator("#endless-series", { hasText: "Classic series" }).waitFor();
     await page.getByRole("button", { name: "Play #3" }).first().waitFor();
@@ -201,7 +200,7 @@ const phone = { viewport: { width: 375, height: 812 }, deviceScaleFactor: 2, col
     await shot(page, "failure");
     throw e;
   } finally {
-    flipTo(1);
+    await flipTo(1);
     await browser.close();
   }
   console.log("all endless series checks passed");

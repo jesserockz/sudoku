@@ -1,73 +1,44 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"slices"
 
 	"github.com/jesserockz/sudoku/server/internal/httpx"
 	"github.com/jesserockz/sudoku/server/internal/puzzle"
-	"github.com/jesserockz/sudoku/server/internal/store"
-	"github.com/jesserockz/sudoku/server/internal/week"
 )
 
-// pendingGeneratorJSON is a generator change that starts at the beginning of
-// FromWeek.
-type pendingGeneratorJSON struct {
-	Version  int    `json:"version"`
-	FromWeek string `json:"fromWeek"`
-}
-
-// toPendingJSON converts a pending schedule entry; nil stays nil (null).
-func toPendingJSON(e *store.GeneratorEntry) *pendingGeneratorJSON {
-	if e == nil {
-		return nil
-	}
-	return &pendingGeneratorJSON{Version: e.Version, FromWeek: e.EffectiveWeek}
-}
-
-// generatorEntryJSON is one generator in the history. FromWeek is null for
-// the first one, which has applied since before the first week.
-type generatorEntryJSON struct {
-	FromWeek *string `json:"fromWeek"`
-	Version  int     `json:"version"`
-}
-
+// generatorResponse is the set of enabled generators, ascending and never
+// empty: [1], [2] or [1, 2].
 type generatorResponse struct {
-	Active  int                   `json:"active"`
-	Pending *pendingGeneratorJSON `json:"pending"`
-	// Schedule is every generator that has been in effect, up to and
-	// including the active one, oldest first. Pending is not part of it.
-	Schedule []generatorEntryJSON `json:"schedule"`
+	Enabled []int `json:"enabled"`
 }
 
-// generatorState describes the schedule as of thisWeek.
-func generatorState(sc store.GeneratorSchedule, thisWeek string) generatorResponse {
-	out := generatorResponse{
-		Active:   sc.VersionFor(thisWeek),
-		Pending:  toPendingJSON(sc.Pending(thisWeek)),
-		Schedule: []generatorEntryJSON{},
-	}
-	for _, e := range sc {
-		if e.EffectiveWeek > thisWeek {
-			break
-		}
-		entry := generatorEntryJSON{Version: e.Version}
-		if e.EffectiveWeek != store.FirstWeek {
-			entry.FromWeek = &e.EffectiveWeek
-		}
-		out.Schedule = append(out.Schedule, entry)
-	}
-	return out
+// enabledGenerators is the set of generators players may use.
+func (s *Server) enabledGenerators(ctx context.Context) ([]int, error) {
+	return s.deps.Store.EnabledGenerators(ctx)
 }
 
-// respondGenerator answers with the current schedule.
+// defaultGenerator is the generator used when a request names none: the
+// first enabled one.
+func (s *Server) defaultGenerator(ctx context.Context) (int, error) {
+	enabled, err := s.enabledGenerators(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return enabled[0], nil
+}
+
+// respondGenerator answers with the enabled generators.
 func (s *Server) respondGenerator(w http.ResponseWriter, r *http.Request) {
-	sc, err := s.deps.Store.GeneratorSchedule(r.Context())
+	enabled, err := s.enabledGenerators(r.Context())
 	if err != nil {
 		httpx.Internal(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, generatorState(sc, s.today().ISOWeek()))
+	httpx.WriteJSON(w, http.StatusOK, generatorResponse{Enabled: enabled})
 }
 
 func (s *Server) getAdminGenerator(w http.ResponseWriter, r *http.Request) {
@@ -75,47 +46,26 @@ func (s *Server) getAdminGenerator(w http.ResponseWriter, r *http.Request) {
 }
 
 type generatorRequest struct {
-	Version *int `json:"version"`
+	Enabled []int `json:"enabled"`
 }
 
 func validGeneratorVersion(v int) bool {
 	return v == puzzle.VersionClassic || v == puzzle.VersionGraded
 }
 
-// scheduleGenerator makes version the generator from next week on, or cancels
-// the pending change when it is the current week's.
-func (s *Server) scheduleGenerator(r *http.Request, version int) error {
-	info := week.InfoAt(s.deps.Clock.Now(), s.loc)
-	next := info.WeekStart.AddDays(7).ISOWeek()
-	_, err := s.deps.Store.ScheduleGenerator(r.Context(), info.ISOWeek, next, version)
-	return err
-}
-
+// putAdminGenerator enables the generators in the body, with immediate
+// effect. Duplicates are collapsed.
 func (s *Server) putAdminGenerator(w http.ResponseWriter, r *http.Request) {
 	var req generatorRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBody)).Decode(&req); err != nil || req.Version == nil {
-		httpx.Error(w, http.StatusBadRequest, httpx.CodeBadRequest, "version is required")
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBody)).Decode(&req); err != nil || len(req.Enabled) == 0 {
+		httpx.Error(w, http.StatusBadRequest, httpx.CodeBadRequest, "enabled must be a non-empty list of generators")
 		return
 	}
-	if !validGeneratorVersion(*req.Version) {
-		httpx.Error(w, http.StatusBadRequest, httpx.CodeBadRequest, "version must be 1 or 2")
+	if slices.ContainsFunc(req.Enabled, func(v int) bool { return !validGeneratorVersion(v) }) {
+		httpx.Error(w, http.StatusBadRequest, httpx.CodeBadRequest, "generators must be 1 or 2")
 		return
 	}
-	if err := s.scheduleGenerator(r, *req.Version); err != nil {
-		httpx.Internal(w, r, err)
-		return
-	}
-	s.respondGenerator(w, r)
-}
-
-func (s *Server) deleteAdminGeneratorPending(w http.ResponseWriter, r *http.Request) {
-	// Choosing the active version is how a pending change is cancelled.
-	sc, err := s.deps.Store.GeneratorSchedule(r.Context())
-	if err != nil {
-		httpx.Internal(w, r, err)
-		return
-	}
-	if err := s.scheduleGenerator(r, sc.VersionFor(s.today().ISOWeek())); err != nil {
+	if err := s.deps.Store.SetEnabledGenerators(r.Context(), req.Enabled); err != nil {
 		httpx.Internal(w, r, err)
 		return
 	}

@@ -29,26 +29,26 @@ test("the week matches the server's week endpoint", async () => {
   // Monday 00:00 in Auckland is Sunday 11:00 UTC.
   assert.deepEqual(await seedWeek(s(serverSecret), Date.parse("2026-10-25T11:00:00Z")), {
     isoWeek: "2026-W44", seed: "e4d2e1e00e3549cc", weekStart: "2026-10-26", weekEnd: "2026-11-01",
-    today: "2026-10-26", dayOfWeek: 1, timezone: "Pacific/Auckland", levels: 5, generator: 1, pendingGenerator: null,
+    today: "2026-10-26", dayOfWeek: 1, timezone: "Pacific/Auckland", levels: 5, generators: [1],
   });
   const sunday = await seedWeek(s(serverSecret), Date.parse("2026-10-25T10:59:59Z"));
   assert.equal(sunday.isoWeek, "2026-W43");
   assert.equal(sunday.dayOfWeek, 7);
   const london = await seedWeek(s(serverSecret, 3, "Europe/London"), Date.parse("2026-10-25T11:00:00Z"));
   assert.equal(london.today, "2026-10-25");
-  assert.equal(weekPuzzles(london).length, 3);
+  assert.equal(weekPuzzles(london, 1).length, 3);
 });
 
 test("puzzles are the generator's for the derived week seed", async () => {
   const week = await seedWeek(s(serverSecret), Date.parse("2026-10-27T01:00:00Z"));
-  const puzzles = weekPuzzles(week);
+  const puzzles = weekPuzzles(week, 1);
   assert.deepEqual(puzzles.map((p) => p.givens), generateDay(parseWeekSeed("e4d2e1e00e3549cc"), 2, 5).map((p) => p.givens));
   // Golden: pins the whole chain from seed text to puzzle.
   assert.equal(puzzles[0]!.givens, "160027450780100000050000008010094027427000301800702045598241060306008002001605000");
   // Case matters: the seed is used exactly as typed (after trimming).
   const other = await seedWeek(s("Rimu-Totara-Kauri"), Date.parse("2026-10-27T01:00:00Z"));
-  assert.notEqual(weekPuzzles(other)[0]!.givens, puzzles[0]!.givens);
-  assert.throws(() => weekPuzzles(week, "2026-11-02"));
+  assert.notEqual(weekPuzzles(other, 1)[0]!.givens, puzzles[0]!.givens);
+  assert.throws(() => weekPuzzles(week, 1, "2026-11-02"));
 });
 
 test("seeds: normalised, generated and fingerprinted", async () => {

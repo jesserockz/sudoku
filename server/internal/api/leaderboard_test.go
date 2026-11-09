@@ -88,7 +88,7 @@ func TestLeaderboardEmptyDayShape(t *testing.T) {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
 	raw := decode[json.RawMessage](t, resp)
-	want := `{"date":"2026-10-26","puzzles":[{"level":1,"entries":[]},{"level":2,"entries":[]},{"level":3,"entries":[]},{"level":4,"entries":[]},{"level":5,"entries":[]}],"total":{"entries":[]},"players":[]}`
+	want := `{"date":"2026-10-26","generator":1,"puzzles":[{"level":1,"entries":[]},{"level":2,"entries":[]},{"level":3,"entries":[]},{"level":4,"entries":[]},{"level":5,"entries":[]}],"total":{"entries":[]},"players":[]}`
 	if string(raw) != want {
 		t.Errorf("body = %s\nwant %s", raw, want)
 	}

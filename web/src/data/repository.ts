@@ -8,7 +8,8 @@ import { formatTimestamp, inWeek, today } from "../game/calendar.ts";
 import { Game } from "../game/game.ts";
 import { MAX_REPLAY_EVENTS, REPLAY_VERSION } from "../game/replay.ts";
 import { type EndlessPuzzle, type Puzzle } from "../generator/generator.ts";
-import { type AppStorage, type HomeTab, type Settings, endlessGameKey, gameKey } from "./app-storage.ts";
+import { GENERATOR_CLASSIC } from "../generator/versions.ts";
+import { type AppStorage, type HomeTab, type Settings, endlessGameKey, gameKey, gameKeyDate } from "./app-storage.ts";
 import { randomToken } from "./crypto.ts";
 import { type EndlessInProgress, EndlessPuzzleCache, type EndlessSolved, type EndlessSource, endlessInProgressOf } from "./endless.ts";
 import { type FlushReport, ResultSync, dailyKey, endlessKey } from "./result-sync.ts";
@@ -113,13 +114,21 @@ export class SudokuRepository implements EndlessSource {
     return week && inWeek(week, date) ? week : null;
   }
 
-  /** The day's games for `date`, or `null` if the cached week doesn't cover it. */
-  puzzles(date: string = this.today()): Puzzle[] | null {
+  /** The day's games for `date` from generator `generator`, or `null` if the cached week doesn't cover it. */
+  puzzles(date: string, generator: number): Puzzle[] | null {
     const week = this.weekFor(date);
     if (!week) return null;
-    const key = JSON.stringify([week.seed, week.levels, week.generator, date]);
-    if (this.#puzzleCache?.key !== key) this.#puzzleCache = { key, puzzles: weekPuzzles(week, date) };
+    const key = JSON.stringify([week.seed, week.levels, generator, date]);
+    if (this.#puzzleCache?.key !== key) this.#puzzleCache = { key, puzzles: weekPuzzles(week, generator, date) };
     return this.#puzzleCache.puzzles;
+  }
+
+  /**
+   * The generator a result without one belongs to: the week's default (the first enabled), as on the server. Such
+   * results come from older servers, which only had one generator a week, and from older versions of this app.
+   */
+  #defaultGenerator(date: string): number {
+    return this.weekFor(date)?.generators[0] ?? GENERATOR_CLASSIC;
   }
 
   /** The signed-in API client, for calls that don't need caching here (the admin page). */
@@ -271,6 +280,15 @@ export class SudokuRepository implements EndlessSource {
     return this.sync.flush();
   }
 
+  /** The generator the player last picked with the switch, or `null` if they never have. */
+  generatorPick(): number | null {
+    return this.#storage.generator.read();
+  }
+
+  setGeneratorPick(version: number): void {
+    this.#storage.generator.write(version);
+  }
+
   /** The home page tab last shown on this device. */
   homeTab(): HomeTab {
     return this.#storage.homeTab.read() ?? "daily";
@@ -352,28 +370,36 @@ export class SudokuRepository implements EndlessSource {
     return this.sync.pending();
   }
 
-  serverResults(date: string): Map<number, DayResult> {
-    return new Map((this.#storage.serverResults.read()?.[date] ?? []).map((r) => [r.level, r]));
+  /** The queued results of `generator`'s games on `date`, by level. */
+  pendingFor(date: string, generator: number): Map<number, GameResult> {
+    const fallback = this.#defaultGenerator(date);
+    return new Map(this.pending().filter((r) => r.date === date && (r.generator ?? fallback) === generator).map((r) => [r.level, r]));
   }
 
-  leaderboard(date: string): Promise<Leaderboard> {
-    return this.#client().leaderboard(date);
+  /** The server's record of `generator`'s results on `date`, by level. */
+  serverResults(date: string, generator: number): Map<number, DayResult> {
+    const fallback = this.#defaultGenerator(date);
+    return new Map((this.#storage.serverResults.read()?.[date] ?? []).filter((r) => (r.generator ?? fallback) === generator).map((r) => [r.level, r]));
   }
 
-  /** A saved game for `puzzle` on `date`, if it still matches the puzzle. */
-  loadGame(date: string, puzzle: Puzzle): Game | null {
-    const saved = this.#storage.games.read()?.[gameKey(date, puzzle.level)];
+  leaderboard(date: string, generator: number): Promise<Leaderboard> {
+    return this.#client().leaderboard(date, generator);
+  }
+
+  /** A saved game for `puzzle` (from `generator`) on `date`, if it still matches the puzzle. */
+  loadGame(generator: number, date: string, puzzle: Puzzle): Game | null {
+    const saved = this.#storage.games.read()?.[gameKey(generator, date, puzzle.level)];
     return saved && saved.givens === puzzle.givens ? Game.restore(saved) : null;
   }
 
-  saveGame(date: string, level: number, game: Game, nowMs: number): void {
-    this.#storage.games.update((games) => ({ ...games, [gameKey(date, level)]: game.save(nowMs) }));
+  saveGame(generator: number, date: string, level: number, game: Game, nowMs: number): void {
+    this.#storage.games.update((games) => ({ ...games, [gameKey(generator, date, level)]: game.save(nowMs) }));
   }
 
-  /** Queues the result of a just-finished game. */
-  async complete(date: string, level: number, game: Game): Promise<GameResult> {
+  /** Queues the result of a just-finished game from `generator`. */
+  async complete(generator: number, date: string, level: number, game: Game): Promise<GameResult> {
     if (game.completedElapsedMs === null) throw new Error("game isn't complete");
-    const result: GameResult = { date, level, elapsedMs: game.completedElapsedMs, completedAt: formatTimestamp(this.#now()) };
+    const result: GameResult = { generator, date, level, elapsedMs: game.completedElapsedMs, completedAt: formatTimestamp(this.#now()) };
     // A replay the server would refuse is left out: the result still counts, flagged as having none.
     if (game.replay.length <= MAX_REPLAY_EVENTS) result.replay = { version: REPLAY_VERSION, events: game.replay.slice() };
     await this.sync.enqueue(result);
@@ -385,7 +411,7 @@ export class SudokuRepository implements EndlessSource {
     this.#storage.week.write(week);
     if (previous?.isoWeek !== week.isoWeek) {
       // Games from other weeks can't be finished any more; their results (if any) are already queued.
-      this.#storage.games.update((games) => games && Object.fromEntries(Object.entries(games).filter(([k]) => inWeek(week, k.split("/")[0]!))));
+      this.#storage.games.update((games) => games && Object.fromEntries(Object.entries(games).filter(([k]) => inWeek(week, gameKeyDate(k)))));
     }
   }
 

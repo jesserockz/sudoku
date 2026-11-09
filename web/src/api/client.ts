@@ -1,10 +1,10 @@
 import {
   type AdminEndlessResult, type AdminEndlessResults, type AdminResult, type AdminResults, type ApiError, type AppConfig,
-  type EndlessBoard, type EndlessInfo, type EndlessProgress, type EndlessReplayDetail, type EndlessResult, type GameResult, type GeneratorInfo,
+  type EndlessBoard, type EndlessInfo, type EndlessProgress, type EndlessReplayDetail, type EndlessResult, type GameResult, type GeneratorSettings,
   type Leaderboard, type Me, type MyEndlessResults, type MyResults, type MyStats, type ReleaseList, type ReplayDetail, type UpdateStatus, type Week,
   decodeAdminEndlessResult, decodeAdminEndlessResults, decodeAdminResult, decodeAdminResults, decodeApiError, decodeAppConfig,
   decodeEndlessBoard, decodeEndlessInfo, decodeEndlessProgress, decodeEndlessReplayDetail, decodeEndlessResult, decodeGameResult,
-  decodeGeneratorInfo, decodeLeaderboard, decodeMe, decodeMyEndlessResults, decodeMyResults, decodeMyStats, decodeReleaseList, decodeReplayDetail, decodeUpdateStatus,
+  decodeGeneratorSettings, decodeLeaderboard, decodeMe, decodeMyEndlessResults, decodeMyResults, decodeMyStats, decodeReleaseList, decodeReplayDetail, decodeUpdateStatus,
   decodeWeek,
 } from "./models.ts";
 
@@ -84,9 +84,13 @@ export class SudokuApi {
     return decodeMyResults(await this.#get("me/results" + (date ? `?date=${date}` : "")));
   }
 
-  /** The leaderboard for `date` (the server's today when omitted). */
-  async leaderboard(date?: string): Promise<Leaderboard> {
-    return decodeLeaderboard(await this.#get("leaderboard" + (date ? `?date=${date}` : "")));
+  /** The leaderboard for `date` (the server's today when omitted) of `generator`'s puzzles (the server's default when omitted). */
+  async leaderboard(date?: string, generator?: number): Promise<Leaderboard> {
+    const query = new URLSearchParams();
+    if (date) query.set("date", date);
+    if (generator !== undefined) query.set("generator", String(generator));
+    const search = query.toString();
+    return decodeLeaderboard(await this.#get("leaderboard" + (search ? `?${search}` : "")));
   }
 
   /** The caller's streak and personal stats, with the daily numbers for `generator` (the one in use now when omitted). */
@@ -155,19 +159,19 @@ export class SudokuApi {
     return decodeAdminResults(await this.#get(`admin/results?date=${date}`));
   }
 
-  /** Admin only: one result's replay, with the puzzle's givens. */
-  async adminReplay(date: string, level: number, userId: string): Promise<ReplayDetail> {
-    return decodeReplayDetail(await this.#get(`${resultPath(date, level, userId)}/replay`));
+  /** Admin only: one result's replay, with the puzzle's givens. `generator` names the puzzle's generator. */
+  async adminReplay(generator: number, date: string, level: number, userId: string): Promise<ReplayDetail> {
+    return decodeReplayDetail(await this.#get(`${resultPath(date, level, userId)}/replay?generator=${generator}`));
   }
 
   /** Admin only: flags a result as suspicious (shown on the leaderboard), replacing any earlier flag. */
-  async flagResult(date: string, level: number, userId: string, reason: string): Promise<AdminResult> {
-    return decodeAdminResult(await this.#send("PUT", `${resultPath(date, level, userId)}/flag`, { reason }));
+  async flagResult(generator: number, date: string, level: number, userId: string, reason: string): Promise<AdminResult> {
+    return decodeAdminResult(await this.#send("PUT", `${resultPath(date, level, userId)}/flag?generator=${generator}`, { reason }));
   }
 
   /** Admin only: removes a result's flag. */
-  async unflagResult(date: string, level: number, userId: string): Promise<AdminResult> {
-    return decodeAdminResult(await this.#send("DELETE", `${resultPath(date, level, userId)}/flag`));
+  async unflagResult(generator: number, date: string, level: number, userId: string): Promise<AdminResult> {
+    return decodeAdminResult(await this.#send("DELETE", `${resultPath(date, level, userId)}/flag?generator=${generator}`));
   }
 
   /** Admin only: every endless result submitted on `date`, with replay checks and flags. */
@@ -190,19 +194,14 @@ export class SudokuApi {
     return decodeAdminEndlessResult(await this.#send("DELETE", `${endlessResultPath(difficulty, number, userId)}/flag?generator=${generator}`));
   }
 
-  /** Admin only: the puzzle generator in use, what is scheduled and its history. */
-  async adminGenerator(): Promise<GeneratorInfo> {
-    return decodeGeneratorInfo(await this.#get("admin/generator"));
+  /** Admin only: the puzzle generators players can play. */
+  async adminGenerators(): Promise<GeneratorSettings> {
+    return decodeGeneratorSettings(await this.#get("admin/generator"));
   }
 
-  /** Admin only: makes `version` the generator from next week (choosing the one in use cancels a pending change). */
-  async setGenerator(version: number): Promise<GeneratorInfo> {
-    return decodeGeneratorInfo(await this.#send("PUT", "admin/generator", { version }));
-  }
-
-  /** Admin only: cancels the pending generator change, if any. */
-  async cancelGenerator(): Promise<GeneratorInfo> {
-    return decodeGeneratorInfo(await this.#send("DELETE", "admin/generator/pending"));
+  /** Admin only: enables exactly the generators in `enabled` (non-empty), straight away. */
+  async setGenerators(enabled: number[]): Promise<GeneratorSettings> {
+    return decodeGeneratorSettings(await this.#send("PUT", "admin/generator", { enabled }));
   }
 
   async #post(path: string, body?: unknown): Promise<UpdateStatus> {

@@ -31,7 +31,7 @@ test("a seed plays the same week as the server with that secret", async () => {
   assert.equal(week.isoWeek, "2026-W44");
   assert.equal(week.seed, "e4d2e1e00e3549cc");
   assert.equal(r.today(), "2026-10-27");
-  assert.deepEqual((await r.puzzles()).map((p) => p.givens), generateDay(parseWeekSeed(week.seed), 2, 5).map((p) => p.givens));
+  assert.deepEqual((await r.puzzles(r.today(), 1)).map((p) => p.givens), generateDay(parseWeekSeed(week.seed), 2, 5).map((p) => p.givens));
   assert.equal(r.profile()?.fingerprint, "#287caf");
 });
 
@@ -39,7 +39,7 @@ test("the seed survives a restart, and leaving forgets it", async () => {
   await repo().use(s("rimu", 3, "Europe/London"));
   const again = repo();
   assert.deepEqual(again.profile()?.settings, s("rimu", 3, "Europe/London"));
-  assert.equal((await again.puzzles()).length, 3);
+  assert.equal((await again.puzzles(again.today(), 1)).length, 3);
   again.leave();
   assert.equal(repo().profile(), null);
 });
@@ -60,29 +60,29 @@ test("games and history are kept per seed", async () => {
   const r = repo();
   await r.use(s("kauri"));
   const today = r.today();
-  const easy = (await r.puzzles())[0]!;
-  r.saveGame(today, 1, Game.create(easy.givens).resume(0).place(easy.givens.indexOf("0"), 1, 10), 10);
-  r.complete(today, 2, solved((await r.puzzles())[1]!, 95_000));
-  assert.ok(r.loadGame(today, easy));
-  assert.deepEqual([...r.results().keys()], [2]);
+  const easy = (await r.puzzles(r.today(), 1))[0]!;
+  r.saveGame(1, today, 1, Game.create(easy.givens).resume(0).place(easy.givens.indexOf("0"), 1, 10), 10);
+  r.complete(1, today, 2, solved((await r.puzzles(r.today(), 1))[1]!, 95_000));
+  assert.ok(r.loadGame(1, today, easy));
+  assert.deepEqual([...r.results(r.today(), 1).keys()], [2]);
 
   await r.use(s("totara"));
-  assert.notEqual((await r.puzzles())[0]!.givens, easy.givens);
-  assert.equal(r.loadGame(today, (await r.puzzles())[0]!), null);
-  assert.equal(r.results().size, 0);
+  assert.notEqual((await r.puzzles(r.today(), 1))[0]!.givens, easy.givens);
+  assert.equal(r.loadGame(1, today, (await r.puzzles(r.today(), 1))[0]!), null);
+  assert.equal(r.results(r.today(), 1).size, 0);
   assert.deepEqual(r.history(), []);
 
   await r.use(s("kauri"));
-  assert.ok(r.loadGame(today, easy));
-  assert.equal(r.results().get(2)?.elapsedMs, 95_000);
+  assert.ok(r.loadGame(1, today, easy));
+  assert.equal(r.results(r.today(), 1).get(2)?.elapsedMs, 95_000);
 });
 
 test("the first result for a game counts", async () => {
   const r = repo();
   await r.use(s("kauri"));
-  const p = (await r.puzzles())[0]!;
-  const first = r.complete(r.today(), 1, solved(p, 120_000));
-  assert.deepEqual(r.complete(r.today(), 1, solved(p, 30_000)), first);
+  const p = (await r.puzzles(r.today(), 1))[0]!;
+  const first = r.complete(1, r.today(), 1, solved(p, 120_000));
+  assert.deepEqual(r.complete(1, r.today(), 1, solved(p, 30_000)), first);
   assert.deepEqual(r.history().map((h) => h.elapsedMs), [120_000]);
   assert.equal(first.completedAt, "2026-10-27T01:00:00Z");
 });
@@ -92,16 +92,16 @@ test("history is newest first, and old weeks' games are pruned", async () => {
   await r.use(s("kauri", 2));
   const monday = "2026-10-26";
   const tuesday = r.today();
-  r.complete(monday, 1, solved((await r.puzzles(monday))[0]!, 61_000));
-  r.complete(tuesday, 2, solved((await r.puzzles())[1]!, 62_000));
-  r.complete(tuesday, 1, solved((await r.puzzles())[0]!, 63_000));
+  r.complete(1, monday, 1, solved((await r.puzzles(monday, 1))[0]!, 61_000));
+  r.complete(1, tuesday, 2, solved((await r.puzzles(r.today(), 1))[1]!, 62_000));
+  r.complete(1, tuesday, 1, solved((await r.puzzles(r.today(), 1))[0]!, 63_000));
   assert.deepEqual(r.history().map((h) => [h.date, puzzleTitle(h.level, h.levels)]), [
     [tuesday, "Easy"], [tuesday, "Diabolical"], [monday, "Easy"],
   ]);
-  r.saveGame(tuesday, 1, Game.create((await r.puzzles())[0]!.givens), 0);
+  r.saveGame(1, tuesday, 1, Game.create((await r.puzzles(r.today(), 1))[0]!.givens), 0);
   now = Date.parse("2026-11-03T01:00:00Z");
   const next = r.today();
-  r.saveGame(next, 1, Game.create((await r.puzzles())[0]!.givens), 0);
+  r.saveGame(1, next, 1, Game.create((await r.puzzles(r.today(), 1))[0]!.givens), 0);
   const keys = [...store.values.keys()].filter((k) => k.startsWith("seed-games-")).flatMap((k) => Object.keys(JSON.parse(store.get(k)!)));
   assert.deepEqual(keys, [`${next}/1`]);
   assert.equal(r.history().length, 3);
@@ -110,14 +110,14 @@ test("history is newest first, and old weeks' games are pruned", async () => {
 test("the summary lists the day's games", async () => {
   const r = repo();
   await r.use(s("test-secret-0123456789", 3));
-  r.complete(r.today(), 1, solved((await r.puzzles())[0]!, 192_000));
-  assert.equal(await r.summary(), "Sudoku 2026-10-27 #287caf\nEasy 3:12\nHard -\nDiabolical -\nSolved 1/3 in 3:12");
+  r.complete(1, r.today(), 1, solved((await r.puzzles(r.today(), 1))[0]!, 192_000));
+  assert.equal(await r.summary(r.today(), 1), "Sudoku 2026-10-27 #287caf\nEasy 3:12\nHard -\nDiabolical -\nSolved 1/3 in 3:12");
 });
 
 test("server mode's storage is untouched", async () => {
   const r = repo();
   await r.use(s("kauri"));
-  r.complete(r.today(), 1, solved((await r.puzzles())[0]!, 70_000));
+  r.complete(1, r.today(), 1, solved((await r.puzzles(r.today(), 1))[0]!, 70_000));
   const storage = new AppStorage(store);
   assert.equal(storage.week.read(), null);
   assert.equal(storage.games.read(), null);

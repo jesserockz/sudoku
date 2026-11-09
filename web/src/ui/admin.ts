@@ -1,7 +1,7 @@
 // The Admin page's logic, free of the DOM: lists the server's releases, installs or rolls back one
 // after a confirmation, follows the progress and waits for the restarted server to report the new version.
 import { ApiException } from "../api/client.ts";
-import type { GeneratorInfo, Release, ReleaseList, UpdateStatus } from "../api/models.ts";
+import type { GeneratorSettings, Release, ReleaseList, UpdateStatus } from "../api/models.ts";
 
 /** The parts of {@link SudokuApi} the admin page uses. */
 export interface AdminApi {
@@ -9,9 +9,8 @@ export interface AdminApi {
   adminUpdateStatus(): Promise<UpdateStatus>;
   startUpdate(tag: string, allowDowngrade: boolean): Promise<UpdateStatus>;
   rollback(): Promise<UpdateStatus>;
-  adminGenerator(): Promise<GeneratorInfo>;
-  setGenerator(version: number): Promise<GeneratorInfo>;
-  cancelGenerator(): Promise<GeneratorInfo>;
+  adminGenerators(): Promise<GeneratorSettings>;
+  setGenerators(enabled: number[]): Promise<GeneratorSettings>;
 }
 
 /** What the page needs from outside; tests supply their own clock and sleep. */
@@ -21,6 +20,8 @@ export interface AdminHost {
   sleep(ms: number): Promise<void>;
   /** Milliseconds, monotonic enough for the restart timeout. */
   now(): number;
+  /** The enabled generators changed: the app picks up the new week (they apply straight away). */
+  generatorsChanged(): void;
 }
 
 export const POLL_MS = 1000;
@@ -108,8 +109,8 @@ export class AdminModel extends EventTarget {
   /** Why the last request (choosing, starting) failed, or `null`. */
   error: string | null = null;
   progress: Progress = { kind: "none" };
-  /** The puzzle generator schedule, or `null` until loaded. */
-  generator: GeneratorInfo | null = null;
+  /** The generators players can play (ascending), or `null` until loaded. */
+  generators: number[] | null = null;
   /** Loading or changing the generator failed (the message), or `null`. */
   generatorError: string | null = null;
   /** A generator change is in flight; its buttons are disabled. */
@@ -144,7 +145,7 @@ export class AdminModel extends EventTarget {
     this.dispatchEvent(new Event("change"));
   }
 
-  /** Loads the generator schedule and the releases, and picks up an update that is already under way (e.g. the page was reopened). */
+  /** Loads the enabled generators and the releases, and picks up an update that is already under way (e.g. the page was reopened). */
   async load(): Promise<void> {
     await Promise.all([this.#fetchGenerator(), this.#fetchList()]);
     const update = this.list?.update;
@@ -158,31 +159,30 @@ export class AdminModel extends EventTarget {
   }
 
   async #fetchGenerator(): Promise<void> {
-    await this.#generatorRequest(() => this.#api.adminGenerator());
+    await this.#generatorRequest(() => this.#api.adminGenerators());
   }
 
-  /** Makes `version` the generator from next week; choosing the one in use cancels a pending change. */
-  async chooseGenerator(version: number): Promise<void> {
-    await this.#generatorRequest(() => this.#api.setGenerator(version));
+  /** Enables exactly the generators in `enabled`. It applies straight away, for every player. */
+  async chooseGenerators(enabled: number[]): Promise<void> {
+    if (await this.#generatorRequest(() => this.#api.setGenerators(enabled))) this.#host.generatorsChanged();
   }
 
-  /** Cancels the pending generator change. */
-  async cancelGenerator(): Promise<void> {
-    await this.#generatorRequest(() => this.#api.cancelGenerator());
-  }
-
-  async #generatorRequest(request: () => Promise<GeneratorInfo>): Promise<void> {
-    if (this.generatorBusy) return;
+  /** Runs one generator request, unless one is already running; true when it succeeded. */
+  async #generatorRequest(request: () => Promise<GeneratorSettings>): Promise<boolean> {
+    if (this.generatorBusy) return false;
     this.generatorBusy = true;
     this.generatorError = null;
     this.#changed();
+    let ok = false;
     try {
-      this.generator = await request();
+      this.generators = (await request()).enabled;
+      ok = true;
     } catch (e) {
       this.generatorError = describeError(e);
     }
     this.generatorBusy = false;
     this.#changed();
+    return ok;
   }
 
   async #fetchList(): Promise<void> {

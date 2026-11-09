@@ -18,11 +18,18 @@ type weekResponse struct {
 	Timezone  string `json:"timezone"`
 	// Levels is how many puzzles (levels 1..Levels) each day of this week has.
 	Levels int `json:"levels"`
-	// Generator is the version of the puzzle generator this week's dailies
-	// use (1 Classic, 2 Graded).
+	// Generators are the enabled puzzle generator versions (1 Classic, 2
+	// Graded), ascending and never empty.
+	Generators []int `json:"generators"`
+	// Generator is the first enabled generator, for older clients.
+	//
+	// Deprecated: use Generators.
 	Generator int `json:"generator"`
-	// PendingGenerator is a change that starts next week, or null.
-	PendingGenerator *pendingGeneratorJSON `json:"pendingGenerator"`
+	// PendingGenerator is always null: changes apply immediately. Kept for
+	// older clients.
+	//
+	// Deprecated: there are no pending changes.
+	PendingGenerator *struct{} `json:"pendingGenerator"`
 }
 
 func (s *Server) getWeek(w http.ResponseWriter, r *http.Request) {
@@ -32,7 +39,7 @@ func (s *Server) getWeek(w http.ResponseWriter, r *http.Request) {
 		httpx.Internal(w, r, err)
 		return
 	}
-	gens, err := s.deps.Store.GeneratorSchedule(r.Context())
+	gens, err := s.enabledGenerators(r.Context())
 	if err != nil {
 		httpx.Internal(w, r, err)
 		return
@@ -47,7 +54,7 @@ func (s *Server) getWeek(w http.ResponseWriter, r *http.Request) {
 		Timezone:  s.deps.Config.Timezone,
 		Levels:    levels,
 
-		Generator:        gens.VersionFor(info.ISOWeek),
-		PendingGenerator: toPendingJSON(gens.Pending(info.ISOWeek)),
+		Generators: gens,
+		Generator:  gens[0],
 	})
 }

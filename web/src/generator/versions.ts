@@ -13,6 +13,18 @@ export function isGeneratorVersion(version: number): boolean {
   return GENERATOR_VERSIONS.includes(version);
 }
 
+/**
+ * A set of enabled generators, as the server and seed play keep it: the known versions in `versions`, ascending and
+ * without duplicates. Throws a `TypeError` for an unknown version or an empty set.
+ */
+export function enabledGenerators(versions: readonly number[]): number[] {
+  const unknown = versions.find((v) => !isGeneratorVersion(v));
+  if (unknown !== undefined) throw new TypeError(`unsupported generator version: ${unknown}`);
+  const enabled = GENERATOR_VERSIONS.filter((v) => versions.includes(v));
+  if (enabled.length === 0) throw new TypeError("no generator is enabled");
+  return enabled;
+}
+
 /** What players call a generator version. */
 export function generatorName(version: number): string {
   switch (version) {

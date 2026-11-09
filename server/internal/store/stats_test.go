@@ -29,7 +29,7 @@ func TestLevelSchedule(t *testing.T) {
 		t.Fatalf("seeded schedule = %v, %v", got, err)
 	}
 	u, _ := s.UpsertUser(ctx, "alice", "Alice")
-	if _, _, err := s.InsertResult(ctx, Result{UserID: u.ID, Date: "2026-10-26", Level: 1, ElapsedMs: 6000, CompletedAt: "x"}); err != nil {
+	if _, _, err := s.InsertResult(ctx, Result{Generator: 1, UserID: u.ID, Date: "2026-10-26", Level: 1, ElapsedMs: 6000, CompletedAt: "x"}); err != nil {
 		t.Fatal(err)
 	}
 	schedule(t, s, "2026-W44", "2026-W45", 7)
@@ -53,7 +53,7 @@ func TestUserDailyResultsAndCountingDates(t *testing.T) {
 	admin, _ := s.UpsertUser(ctx, "admin", "Admin")
 	put := func(uid int64, date string, level int, ms int64, auto string) {
 		t.Helper()
-		if _, _, err := s.InsertResult(ctx, Result{UserID: uid, Date: date, Level: level, ElapsedMs: ms, CompletedAt: "x", AutoFlag: auto}); err != nil {
+		if _, _, err := s.InsertResult(ctx, Result{Generator: 1, UserID: uid, Date: date, Level: level, ElapsedMs: ms, CompletedAt: "x", AutoFlag: auto}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -63,7 +63,7 @@ func TestUserDailyResultsAndCountingDates(t *testing.T) {
 	put(alice.ID, "2026-10-24", 1, 4000, "")                    // admin flagged below
 	put(alice.ID, "2026-10-27", 1, 5000, "")                    // after the cutoff
 	put(bob.ID, "2026-10-26", 1, 6000, "")
-	if err := s.FlagResult(ctx, alice.ID, "2026-10-24", 1, admin.ID, "bad", time.Now()); err != nil {
+	if err := s.FlagResult(ctx, alice.ID, 1, "2026-10-24", 1, admin.ID, "bad", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -72,11 +72,11 @@ func TestUserDailyResultsAndCountingDates(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []UserDailyResult{
-		{"2026-10-24", 1, 4000, true},
-		{"2026-10-25", 1, 3000, false},
-		{"2026-10-26", 1, 1000, false},
-		{"2026-10-26", 2, 2000, false},
-		{"2026-10-27", 1, 5000, false},
+		{1, "2026-10-24", 1, 4000, true},
+		{1, "2026-10-25", 1, 3000, false},
+		{1, "2026-10-26", 1, 1000, false},
+		{1, "2026-10-26", 2, 2000, false},
+		{1, "2026-10-27", 1, 5000, false},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("UserDailyResults = %+v\nwant %+v", got, want)

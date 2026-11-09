@@ -2,7 +2,6 @@ package api
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,6 +28,7 @@ const (
 )
 
 type resultJSON struct {
+	Generator   int    `json:"generator"`
 	Date        string `json:"date"`
 	Level       int    `json:"level"`
 	ElapsedMs   int64  `json:"elapsedMs"`
@@ -36,11 +36,14 @@ type resultJSON struct {
 }
 
 func toResultJSON(r store.Result) resultJSON {
-	return resultJSON{Date: r.Date, Level: r.Level, ElapsedMs: r.ElapsedMs, CompletedAt: r.CompletedAt}
+	return resultJSON{Generator: r.Generator, Date: r.Date, Level: r.Level, ElapsedMs: r.ElapsedMs, CompletedAt: r.CompletedAt}
 }
 
 // submitRequest uses pointers so missing fields are distinguishable from zero.
 type submitRequest struct {
+	// Generator is the version the game was played with; missing means the
+	// default (first enabled) generator.
+	Generator   *int    `json:"generator"`
 	Date        *string `json:"date"`
 	Level       *int    `json:"level"`
 	ElapsedMs   *int64  `json:"elapsedMs"`
@@ -86,9 +89,20 @@ func (s *Server) postResult(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, httpx.CodeInvalidResult, err.Error())
 		return
 	}
+	// Any known generator is accepted, enabled or not, so a game started
+	// before the admin disabled its generator is not lost. An older client
+	// sends none and played the default.
+	var gen int
+	if req.Generator != nil {
+		gen = *req.Generator
+	} else if gen, err = s.defaultGenerator(r.Context()); err != nil {
+		httpx.Internal(w, r, err)
+		return
+	}
 
 	result := store.Result{
 		UserID:      currentUser(r).ID,
+		Generator:   gen,
 		Date:        date.String(),
 		Level:       *req.Level,
 		ElapsedMs:   *req.ElapsedMs,
@@ -98,11 +112,8 @@ func (s *Server) postResult(w http.ResponseWriter, r *http.Request) {
 		result.ReplayStatus = replayMissing
 		result.AutoFlag = "No replay submitted"
 	} else {
-		p, err := s.puzzleFor(r.Context(), date, *req.Level, levels)
-		if err != nil {
-			httpx.Internal(w, r, err)
-			return
-		}
+		// The generator and level are validated, so generating cannot fail.
+		p, _ := s.puzzleFor(gen, date, *req.Level, levels)
 		// Marshalling plain structs cannot fail. The result is never empty
 		// ("[]" at least), so the replay is stored even with no events.
 		events, _ := json.Marshal(append([]replay.Event{}, rep.Events...))
@@ -152,12 +163,8 @@ func parseReplay(raw json.RawMessage) (rep replay.Replay, ok bool, err error) {
 }
 
 // puzzleFor regenerates the puzzle of game level on date, on a day with
-// levels games, with the generator its week uses.
-func (s *Server) puzzleFor(ctx context.Context, date week.Date, level, levels int) (puzzle.Puzzle, error) {
-	version, err := s.generatorFor(ctx, date)
-	if err != nil {
-		return puzzle.Puzzle{}, err
-	}
+// levels games, with generator version.
+func (s *Server) puzzleFor(version int, date week.Date, level, levels int) (puzzle.Puzzle, error) {
 	// ForWeek always yields 16 hex digits, which ParseWeekSeed accepts.
 	ws, _ := puzzle.ParseWeekSeed(seed.ForWeek([]byte(s.deps.Config.ServerSecret), date.ISOWeek()))
 	return puzzle.GenerateVersion(version, ws, date.Weekday(), level, levels)
@@ -166,6 +173,9 @@ func (s *Server) puzzleFor(ctx context.Context, date week.Date, level, levels in
 // validateResult applies the sanity caps relative to today. The level's
 // upper bound depends on the date's week and is checked by the caller.
 func validateResult(req submitRequest, today week.Date) (week.Date, error) {
+	if req.Generator != nil && !validGeneratorVersion(*req.Generator) {
+		return week.Date{}, errors.New("generator must be 1 or 2")
+	}
 	if *req.Level < minLevel {
 		return week.Date{}, fmt.Errorf("level must be at least %d", minLevel)
 	}

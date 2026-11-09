@@ -8,7 +8,7 @@ import { WEB_VERSION } from "../version.ts";
 import { type AdminModel, actionLabel, flavourOf, formatBytes, progressFraction } from "./admin.ts";
 import { type AppController, ENDLESS_LABEL, type Phase, type ServerInfo } from "./controller.ts";
 import { type Child, Component, h, topBar } from "./dom.ts";
-import { generatorSummary, historyLine, pendingLine, pendingNotice } from "./generator.ts";
+import { GENERATOR_CHOICES, generatorsSummary, sameGenerators } from "./generator.ts";
 import { sparklinePoints, streakMarker, streakSummary } from "./stats.ts";
 import { actionButton, canShare, copyText, share, shareResultsButton } from "./share.ts";
 
@@ -40,6 +40,29 @@ function describeSettings(settings: SeedSettings): string {
 }
 
 const notice = (app: AppController) => app.notice && h("div", { class: "notice" }, app.notice);
+
+/**
+ * The Classic / Graded switch, only while more than one generator is enabled: `current` is marked and `choose` picks
+ * another. `help` adds the "What's this?" link to the explainer.
+ */
+function generatorSwitch(app: AppController, current: number, choose: (version: number) => void, help = false): Child {
+  if (app.generators.length < 2) return null;
+  return h("div", { class: "generator-switch" },
+    h("div", { class: "tabs generator-tabs", role: "group", "aria-label": "Puzzle generator" },
+      app.generators.map((v) => h("button", {
+        class: current === v && "active", "aria-pressed": String(current === v), onclick: () => choose(v),
+      }, generatorName(v)))),
+    help && h("button", { class: "link inline", onclick: () => app.openHelp("generators") }, "What's this?"));
+}
+
+/** The Classic / Graded / Both buttons of the admin and seed cards, with the setting `enabled` marked. */
+function generatorChoices(enabled: readonly number[] | null, disabled: boolean, choose: (enabled: number[]) => void): Child {
+  return h("div", { class: "tabs generator-tabs generator-choices", role: "group", "aria-label": "Enabled generators" },
+    GENERATOR_CHOICES.map((c) => {
+      const on = enabled !== null && sameGenerators(enabled, c.enabled);
+      return h("button", { class: on && "active", "aria-pressed": String(on), disabled: disabled || on, onclick: () => choose([...c.enabled]) }, c.label);
+    }));
+}
 
 /** `<sudoku-loading>` */
 export class LoadingScreen extends Screen {
@@ -139,7 +162,10 @@ export class TodayScreen extends Screen {
         onclick: () => app.showHomeTab(tab),
       }, tab === "daily" ? "Daily" : ENDLESS_LABEL)));
     const [header, body] = this.#daily();
-    return [header, tabs, app.hasEndless && app.homeTab === "endless" ? this.#endless() : body];
+    return [
+      header, tabs, generatorSwitch(app, app.generator, (v) => void app.chooseGenerator(v), true),
+      app.hasEndless && app.homeTab === "endless" ? this.#endless() : body,
+    ];
   }
 
   /** The endless tab: each difficulty's progress and next puzzle, and a way to open any number. */
@@ -153,7 +179,7 @@ export class TodayScreen extends Screen {
         h("button", { class: "primary", disabled: app.syncing, onclick: () => app.sync() }, app.syncing ? "Checking…" : "Try again"),
       );
     }
-    const generator = app.endlessGenerator;
+    const generator = app.generator;
     const elsewhere = app.endlessElsewhere();
     const rows = summaries.map((d) => {
       const name = DIFFICULTIES[d.difficulty - 1]!.name;
@@ -186,7 +212,7 @@ export class TodayScreen extends Screen {
           ? "Numbered puzzles with no end. Everyone with your seed gets the same ones, and times count forever."
           : "Numbered puzzles with no end. Everyone gets the same ones, and times count forever.",
           app.me && ` · ${app.me.displayName}`),
-        h("p", { class: "muted small" }, "Each generator has its own series, numbered from #1. This tab plays the one this week's daily puzzles use."),
+        app.generators.length > 1 && h("p", { class: "muted small" }, "Each generator has its own series, numbered from #1, with its own progress."),
         h("ul", { class: "puzzles" }, rows),
       ),
       elsewhere.length > 0 && h("div", { class: "card", id: "endless-elsewhere" },
@@ -261,10 +287,7 @@ export class TodayScreen extends Screen {
         action,
       );
     });
-    const pending = app.pendingGenerator;
     return [header, [
-      pending && h("div", { class: "notice generator-notice" }, `${pendingNotice(pending)} `,
-        h("button", { class: "link inline", onclick: () => app.openHelp("generators") }, "What's this?")),
       h("div", { class: "card" },
         h("p", { class: "muted" }, describeDate(app.today), app.me && ` · ${app.me.displayName}`),
         streak && h("p", { class: "streak" }, h("span", { class: "flame", "aria-hidden": "true" }, "\u{1F525}"), streak),
@@ -321,22 +344,16 @@ export class TodayScreen extends Screen {
     );
   }
 
-  /** Serverless play's puzzle generator: this week's, a pending change with a way to cancel it, and the choice for next week. */
+  /** Serverless play's puzzle generators: which are on (Classic, Graded or both), changed straight away. */
   #generatorSetting(): Child {
     const app = this.app;
-    const pending = app.pendingGenerator;
     return h("div", { class: "generator-setting" },
-      h("h2", null, "Puzzle generator"),
-      h("p", null, `This week: ${generatorName(app.generator)}. `,
+      h("h2", null, "Puzzle generators"),
+      h("p", null, `On: ${generatorsSummary(app.generators)}. `,
         h("button", { class: "link inline", onclick: () => app.openHelp("generators") }, "What's this?")),
-      pending && h("p", { class: "generator-pending" }, `Pending: ${pendingLine(pending)}. `,
-        h("button", { class: "link", onclick: () => void app.setSeedGenerator(app.generator) }, "Cancel")),
-      !pending && h("div", { class: "actions" },
-        GENERATOR_VERSIONS.filter((v) => v !== app.generator).map((v) => h("button", {
-          "data-version": v, onclick: () => void app.setSeedGenerator(v),
-        }, `${generatorName(v)} from next week`))),
+      generatorChoices(app.generators, false, (enabled) => void app.setSeedGenerators(enabled)),
       h("p", { class: "muted small" },
-        "Changes start with the next ISO week, so this week's puzzles stay as they are. Everyone in your group needs the same choice to get the same puzzles."),
+        "Changes apply straight away. With both on, you pick one with the switch on the Daily and Endless tabs. Everyone in your group needs the same generators on to get the same puzzles."),
     );
   }
 
@@ -348,7 +365,7 @@ export class ScoresScreen extends Screen {
   protected render(): Child {
     const app = this.app;
     if (app.screen.kind !== "scores") return null;
-    const { date, tab } = app.screen;
+    const { date, tab, generator } = app.screen;
     const board = app.leaderboard?.date === date ? app.leaderboard : null;
     const meId = app.me?.id;
     // That day's game count: from its leaderboard once loaded (a past week may differ).
@@ -387,6 +404,7 @@ export class ScoresScreen extends Screen {
       b.completedLevels.length - a.completedLevels.length || a.displayName.localeCompare(b.displayName)) ?? [];
     return [
       topBar("Leaderboard", () => app.openToday()),
+      generatorSwitch(app, generator, (v) => app.showScoresGenerator(v)),
       h("div", { class: "date-nav" },
         h("button", { class: "link", disabled: date <= addDays(app.today, -8), onclick: () => app.shiftScoresDate(-1) }, "‹ Earlier"),
         h("span", null, date === app.today ? "Today" : date),
@@ -551,14 +569,17 @@ export class HistoryScreen extends Screen {
     const app = this.app;
     const history = app.history();
     const endless = app.endlessHistory();
-    const byDate = new Map<string, typeof history>();
-    for (const r of history) byDate.set(r.date, [...(byDate.get(r.date) ?? []), r]);
+    // One card per day and generator; the generator is named once more than one is in play.
+    const byDay = new Map<string, typeof history>();
+    for (const r of history) byDay.set(`${r.date} ${r.generator}`, [...(byDay.get(`${r.date} ${r.generator}`) ?? []), r]);
+    const named = app.generators.length > 1 || new Set(history.map((r) => r.generator)).size > 1;
     return [
       topBar("History", () => app.openToday()),
       history.length === 0 && endless.length === 0
         ? h("div", { class: "card center" }, h("p", { class: "muted" }, "Solved puzzles show up here."))
-        : [...byDate].map(([date, results]) => h("div", { class: "card" },
-          h("h2", null, date === app.today ? "Today" : describeDate(date)),
+        : [...byDay.values()].map((results) => h("div", { class: "card" },
+          h("h2", null, results[0]!.date === app.today ? "Today" : describeDate(results[0]!.date),
+            named && ` · ${generatorName(results[0]!.generator)}`),
           h("table", { class: "board-table" }, h("tbody", null,
             results.map((r) => h("tr", null,
               h("td", null, puzzleTitle(r.level, r.levels)),
@@ -616,7 +637,8 @@ export class AboutScreen extends Screen {
         h("table", { class: "board-table" }, h("tbody", null,
           h("tr", null, h("td", null, "Web version"), h("td", { class: "time" }, WEB_VERSION)),
           h("tr", null, h("td", null, "Server version"), h("td", { class: "time" }, describeServer(app.serverInfo))),
-          app.week && h("tr", null, h("td", null, "Daily generator"), h("td", { class: "time" }, generatorSummary(app.generator))),
+          app.week && h("tr", null, h("td", null, app.generators.length > 1 ? "Puzzle generators" : "Puzzle generator"),
+            h("td", { class: "time" }, generatorsSummary(app.generators))),
         )),
       ),
       h("div", { class: "actions" },
@@ -698,25 +720,18 @@ export class AdminScreen extends Screen {
     ];
   }
 
-  /** The puzzle generator: which one the dailies use, what is pending, the history, and the choice for next week. */
+  /** The puzzle generators players can play: Classic, Graded or both, changed straight away. */
   #generator(m: AdminModel): Child {
-    const g = m.generator;
-    if (!g && !m.generatorError) return null;
+    const enabled = m.generators;
+    if (!enabled && !m.generatorError) return null;
     return h("div", { class: "card generator-admin" },
-      h("h2", null, "Puzzle generator"),
+      h("h2", null, "Puzzle generators"),
       m.generatorError && h("p", { class: "error" }, m.generatorError),
-      g && [
-        h("p", null, `Active: ${generatorName(g.active)}`),
-        g.pending && h("p", { class: "generator-pending" }, `Pending: ${pendingLine(g.pending)} `,
-          h("button", { disabled: m.generatorBusy, onclick: () => void m.cancelGenerator() }, "Cancel")),
-        // A pending change is only cancelled; otherwise offer each other generator.
-        !g.pending && h("div", { class: "actions" },
-          GENERATOR_VERSIONS.filter((v) => v !== g.active).map((v) => h("button", {
-            disabled: m.generatorBusy, "data-version": v, onclick: () => void m.chooseGenerator(v),
-          }, `${generatorName(v)} from next week`))),
+      enabled && [
+        h("p", null, `On: ${generatorsSummary(enabled)}`),
+        generatorChoices(enabled, m.generatorBusy, (next) => void m.chooseGenerators(next)),
         h("p", { class: "muted small" },
-          "Changes apply from the start of the next ISO week. Results and replays stay with the generator their week used, so switching back loses nothing."),
-        h("ul", { class: "generator-history" }, g.schedule.map((e) => h("li", null, historyLine(e)))),
+          "Changes apply straight away. With both on, players pick one with a switch on the Daily and Endless tabs, and each has its own puzzles, leaderboards and stats. Results and replays keep the generator they were played with, so turning one off loses nothing."),
       ],
     );
   }

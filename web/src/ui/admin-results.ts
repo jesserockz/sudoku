@@ -10,9 +10,9 @@ import { ReplayViewer } from "./replay-viewer.ts";
 /** The parts of {@link SudokuApi} the results page uses. */
 export interface ResultsApi {
   adminResults(date: string): Promise<AdminResults>;
-  adminReplay(date: string, level: number, userId: string): Promise<ReplayDetail>;
-  flagResult(date: string, level: number, userId: string, reason: string): Promise<AdminResult>;
-  unflagResult(date: string, level: number, userId: string): Promise<AdminResult>;
+  adminReplay(generator: number, date: string, level: number, userId: string): Promise<ReplayDetail>;
+  flagResult(generator: number, date: string, level: number, userId: string, reason: string): Promise<AdminResult>;
+  unflagResult(generator: number, date: string, level: number, userId: string): Promise<AdminResult>;
   adminEndlessResults(date: string): Promise<AdminEndlessResults>;
   adminEndlessReplay(generator: number, difficulty: number, number: number, userId: string): Promise<EndlessReplayDetail>;
   flagEndlessResult(generator: number, difficulty: number, number: number, userId: string, reason: string): Promise<AdminEndlessResult>;
@@ -24,6 +24,8 @@ export type ResultsMode = "daily" | "endless";
 
 /** Names a daily result. */
 export interface DailyResultKey {
+  /** The generator version of the puzzle: each has its own games of the day. */
+  generator: number;
   level: number;
   userId: string;
 }
@@ -46,11 +48,11 @@ const same = (a: ResultKey, b: ResultKey): boolean => {
   if (isEndlessKey(a) || isEndlessKey(b)) {
     return isEndlessKey(a) && isEndlessKey(b) && a.generator === b.generator && a.difficulty === b.difficulty && a.number === b.number && a.userId === b.userId;
   }
-  return a.level === b.level && a.userId === b.userId;
+  return a.generator === b.generator && a.level === b.level && a.userId === b.userId;
 };
 
 const copyKey = (k: ResultKey): ResultKey =>
-  isEndlessKey(k) ? { generator: k.generator, difficulty: k.difficulty, number: k.number, userId: k.userId } : { level: k.level, userId: k.userId };
+  isEndlessKey(k) ? { generator: k.generator, difficulty: k.difficulty, number: k.number, userId: k.userId } : { generator: k.generator, level: k.level, userId: k.userId };
 
 /** The difficulties an endless list is grouped by. */
 export const ENDLESS_DIFFICULTIES: readonly number[] = [1, 2, 3, 4, 5];
@@ -93,7 +95,7 @@ export class AdminResultsModel extends EventTarget {
     this.dispatchEvent(new Event("change"));
   }
 
-  /** The day's results for `level`, fastest first (as the server orders them). */
+  /** The day's results for `level` of every generator, fastest first (as the server orders them). */
   resultsFor(level: number): AdminResult[] {
     return this.data?.results.filter((r) => r.level === level) ?? [];
   }
@@ -157,7 +159,7 @@ export class AdminResultsModel extends EventTarget {
     try {
       const detail = isEndlessKey(key)
         ? await this.#api.adminEndlessReplay(key.generator, key.difficulty, key.number, key.userId)
-        : await this.#api.adminReplay(this.date, key.level, key.userId);
+        : await this.#api.adminReplay(key.generator, this.date, key.level, key.userId);
       if (this.opened !== opened) return;
       const viewer = new ReplayViewer(detail);
       // The screens listen here only.
@@ -185,13 +187,13 @@ export class AdminResultsModel extends EventTarget {
     const text = reason.trim();
     return this.#change(() => isEndlessKey(key)
       ? this.#api.flagEndlessResult(key.generator, key.difficulty, key.number, key.userId, text)
-      : this.#api.flagResult(this.date, key.level, key.userId, text));
+      : this.#api.flagResult(key.generator, this.date, key.level, key.userId, text));
   }
 
   unflag(key: ResultKey): Promise<void> {
     return this.#change(() => isEndlessKey(key)
       ? this.#api.unflagEndlessResult(key.generator, key.difficulty, key.number, key.userId)
-      : this.#api.unflagResult(this.date, key.level, key.userId));
+      : this.#api.unflagResult(key.generator, this.date, key.level, key.userId));
   }
 
   async #change(send: () => Promise<AdminResult | AdminEndlessResult>): Promise<void> {

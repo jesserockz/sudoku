@@ -329,7 +329,7 @@ func TestMigrateKeepsDailyResultsForEndless(t *testing.T) {
 		got[0].Flag == nil || !got[0].Flag.Auto {
 		t.Errorf("daily results after migration = %+v, %v", got, err)
 	}
-	if ev, err := s.ReplayEvents(ctx, 1, "2026-10-26", 2); err != nil || string(ev) != "[]" {
+	if ev, err := s.ReplayEvents(ctx, 1, 1, "2026-10-26", 2); err != nil || string(ev) != "[]" {
 		t.Errorf("daily replay after migration = %q, %v", ev, err)
 	}
 	// The endless tables exist and start empty.

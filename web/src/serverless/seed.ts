@@ -1,4 +1,4 @@
-import type { PendingGenerator, Week } from "../api/models.ts";
+import type { Week } from "../api/models.ts";
 import { DEFAULT_TIMEZONE, type WeekInfo, weekAt } from "../game/calendar.ts";
 import { formatDuration } from "../game/timer.ts";
 import { DEFAULT_LEVELS, checkLevels } from "../generator/generator.ts";
@@ -61,11 +61,9 @@ export async function seedWeek(settings: SeedSettings, nowMs: number = Date.now(
   return seedWeekFor(settings, info, await weekSeed(settings.seed, info.isoWeek));
 }
 
-/** `generator` and `pendingGenerator` are the player's choice for this seed (see `generator-schedule.ts`); Classic when omitted. */
-export function seedWeekFor(
-  settings: SeedSettings, info: WeekInfo, seed: string, generator: number = GENERATOR_CLASSIC, pendingGenerator: PendingGenerator | null = null,
-): Week {
-  return { ...info, seed, timezone: settings.timezone, levels: settings.levels, generator, pendingGenerator };
+/** `generators` are the ones enabled for this seed (see `SeedRepository.setGenerators`); Classic only when omitted. */
+export function seedWeekFor(settings: SeedSettings, info: WeekInfo, seed: string, generators: number[] = [GENERATOR_CLASSIC]): Week {
+  return { ...info, seed, timezone: settings.timezone, levels: settings.levels, generators };
 }
 
 // Crockford's base32: no I, L, O or U, so a generated seed reads aloud and types cleanly.

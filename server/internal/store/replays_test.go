@@ -53,11 +53,11 @@ func TestMigrateFromBeforeReplays(t *testing.T) {
 	if len(got) != 1 || got[0].ReplayStatus != "none" || got[0].ReplayError != "" || got[0].Flag != nil {
 		t.Errorf("old result = %+v", got)
 	}
-	day, err := s.DayResults(ctx, "2026-10-26")
+	day, err := s.DayResults(ctx, 1, "2026-10-26")
 	if err != nil || len(day) != 1 || day[0].Flagged {
 		t.Errorf("day results = %+v, %v", day, err)
 	}
-	if ev, err := s.ReplayEvents(ctx, 1, "2026-10-26", 1); err != nil || ev != nil {
+	if ev, err := s.ReplayEvents(ctx, 1, 1, "2026-10-26", 1); err != nil || ev != nil {
 		t.Errorf("events = %q, %v", ev, err)
 	}
 }
@@ -76,7 +76,7 @@ func TestInsertResultReplayAndFlags(t *testing.T) {
 		}
 	}
 	base := func(u int64, level int) Result {
-		return Result{UserID: u, Date: date, Level: level, ElapsedMs: 100000, CompletedAt: "c"}
+		return Result{Generator: 1, UserID: u, Date: date, Level: level, ElapsedMs: 100000, CompletedAt: "c"}
 	}
 	valid := base(alice.ID, 1)
 	valid.ReplayStatus, valid.Events = "valid", `[{"t":0}]`
@@ -120,7 +120,7 @@ func TestInsertResultReplayAndFlags(t *testing.T) {
 		t.Errorf("admin results:\n got %+v\nwant %+v", got, want)
 	}
 
-	day, _ := s.DayResults(ctx, date)
+	day, _ := s.DayResults(ctx, 1, date)
 	var flagged []bool
 	for _, d := range day {
 		flagged = append(flagged, d.Flagged)
@@ -129,10 +129,10 @@ func TestInsertResultReplayAndFlags(t *testing.T) {
 		t.Errorf("flagged with only automatic flags = %v", flagged)
 	}
 	// An admin confirming an automatic flag makes it public.
-	if err := s.FlagResult(ctx, bob.ID, date, 1, alice.ID, "confirmed", time.Now()); err != nil {
+	if err := s.FlagResult(ctx, bob.ID, 1, date, 1, alice.ID, "confirmed", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	day, _ = s.DayResults(ctx, date)
+	day, _ = s.DayResults(ctx, 1, date)
 	flagged = nil
 	for _, d := range day {
 		flagged = append(flagged, d.Flagged)
@@ -141,11 +141,11 @@ func TestInsertResultReplayAndFlags(t *testing.T) {
 		t.Errorf("flagged after an admin flag = %v", flagged)
 	}
 
-	ev, err := s.ReplayEvents(ctx, alice.ID, date, 1)
+	ev, err := s.ReplayEvents(ctx, alice.ID, 1, date, 1)
 	if err != nil || string(ev) != `[{"t":0}]` {
 		t.Errorf("events = %q, %v", ev, err)
 	}
-	if ev, err := s.ReplayEvents(ctx, bob.ID, date, 1); err != nil || ev != nil {
+	if ev, err := s.ReplayEvents(ctx, bob.ID, 1, date, 1); err != nil || ev != nil {
 		t.Errorf("missing replay events = %q, %v", ev, err)
 	}
 
@@ -155,10 +155,10 @@ func TestInsertResultReplayAndFlags(t *testing.T) {
 	if r, created, err := s.InsertResult(ctx, dup); err != nil || created || r.ElapsedMs != 100000 {
 		t.Fatalf("duplicate: %+v %v %v", r, created, err)
 	}
-	if ev, _ := s.ReplayEvents(ctx, alice.ID, date, 1); string(ev) != `[{"t":0}]` {
+	if ev, _ := s.ReplayEvents(ctx, alice.ID, 1, date, 1); string(ev) != `[{"t":0}]` {
 		t.Errorf("duplicate replaced events: %q", ev)
 	}
-	if r, _ := s.AdminResult(ctx, alice.ID, date, 1); r.ReplayStatus != "valid" || r.Flag != nil {
+	if r, _ := s.AdminResult(ctx, alice.ID, 1, date, 1); r.ReplayStatus != "valid" || r.Flag != nil {
 		t.Errorf("duplicate changed result: %+v", r)
 	}
 }
@@ -169,16 +169,16 @@ func TestFlagAndUnflag(t *testing.T) {
 	alice, _ := s.UpsertUser(ctx, "a", "Alice")
 	admin, _ := s.UpsertUser(ctx, "ann", "Ann")
 	const date = "2026-10-26"
-	if _, _, err := s.InsertResult(ctx, Result{UserID: alice.ID, Date: date, Level: 1, ElapsedMs: 9000, CompletedAt: "c",
+	if _, _, err := s.InsertResult(ctx, Result{Generator: 1, UserID: alice.ID, Date: date, Level: 1, ElapsedMs: 9000, CompletedAt: "c",
 		ReplayStatus: "missing", AutoFlag: "No replay submitted"}); err != nil {
 		t.Fatal(err)
 	}
 
 	at := time.Date(2026, 10, 26, 9, 15, 0, 123_000_000, time.FixedZone("NZDT", 13*3600))
-	if err := s.FlagResult(ctx, alice.ID, date, 1, admin.ID, "too fast", at); err != nil {
+	if err := s.FlagResult(ctx, alice.ID, 1, date, 1, admin.ID, "too fast", at); err != nil {
 		t.Fatal(err)
 	}
-	r, err := s.AdminResult(ctx, alice.ID, date, 1)
+	r, err := s.AdminResult(ctx, alice.ID, 1, date, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,26 +187,26 @@ func TestFlagAndUnflag(t *testing.T) {
 		t.Errorf("flag = %+v, want %+v", r.Flag, want)
 	}
 
-	if err := s.UnflagResult(ctx, alice.ID, date, 1); err != nil {
+	if err := s.UnflagResult(ctx, alice.ID, 1, date, 1); err != nil {
 		t.Fatal(err)
 	}
-	if r, _ := s.AdminResult(ctx, alice.ID, date, 1); r.Flag != nil {
+	if r, _ := s.AdminResult(ctx, alice.ID, 1, date, 1); r.Flag != nil {
 		t.Errorf("still flagged: %+v", r.Flag)
 	}
 	// Unflagging an unflagged result is fine.
-	if err := s.UnflagResult(ctx, alice.ID, date, 1); err != nil {
+	if err := s.UnflagResult(ctx, alice.ID, 1, date, 1); err != nil {
 		t.Fatal(err)
 	}
 
 	for name, err := range map[string]error{
-		"flag":   s.FlagResult(ctx, alice.ID, date, 2, admin.ID, "x", at),
-		"unflag": s.UnflagResult(ctx, 99, date, 1),
+		"flag":   s.FlagResult(ctx, alice.ID, 1, date, 2, admin.ID, "x", at),
+		"unflag": s.UnflagResult(ctx, 99, 1, date, 1),
 	} {
 		if !errors.Is(err, ErrNotFound) {
 			t.Errorf("%s of a missing result: %v", name, err)
 		}
 	}
-	if _, err := s.AdminResult(ctx, alice.ID, date, 2); !errors.Is(err, ErrNotFound) {
+	if _, err := s.AdminResult(ctx, alice.ID, 1, date, 2); !errors.Is(err, ErrNotFound) {
 		t.Errorf("AdminResult of a missing result: %v", err)
 	}
 }
@@ -218,17 +218,17 @@ func TestAdminQueriesFailOnClosedStore(t *testing.T) {
 	at := time.Now()
 	checks := map[string]error{
 		"AdminDayResults": func() error { _, err := s.AdminDayResults(ctx, "d"); return err }(),
-		"AdminResult":     func() error { _, err := s.AdminResult(ctx, 1, "d", 1); return err }(),
-		"ReplayEvents":    func() error { _, err := s.ReplayEvents(ctx, 1, "d", 1); return err }(),
-		"FlagResult":      s.FlagResult(ctx, 1, "d", 1, 1, "", at),
-		"UnflagResult":    s.UnflagResult(ctx, 1, "d", 1),
+		"AdminResult":     func() error { _, err := s.AdminResult(ctx, 1, 1, "d", 1); return err }(),
+		"ReplayEvents":    func() error { _, err := s.ReplayEvents(ctx, 1, 1, "d", 1); return err }(),
+		"FlagResult":      s.FlagResult(ctx, 1, 1, "d", 1, 1, "", at),
+		"UnflagResult":    s.UnflagResult(ctx, 1, 1, "d", 1),
 	}
 	for name, err := range checks {
 		if err == nil || errors.Is(err, ErrNotFound) {
 			t.Errorf("%s: err = %v", name, err)
 		}
 	}
-	if _, err := s.DayResults(ctx, "d"); err == nil || !strings.Contains(err.Error(), "day results") {
+	if _, err := s.DayResults(ctx, 1, "d"); err == nil || !strings.Contains(err.Error(), "day results") {
 		t.Errorf("DayResults: %v", err)
 	}
 }

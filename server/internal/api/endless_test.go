@@ -752,17 +752,17 @@ func TestEndlessSeriesSubmitAndRead(t *testing.T) {
 	if l := lb("?generator=2"); l.Generator != 2 || len(l.Difficulties[1].Players) != 2 || len(l.Difficulties[0].Players) != 0 {
 		t.Errorf("graded leaderboard = %+v", l)
 	}
-	makeWeekGraded(t, e)
+	enableGenerators(t, e, 2)
 	if l := lb(""); l.Generator != 2 {
-		t.Errorf("default leaderboard on a graded week = generator %d", l.Generator)
+		t.Errorf("default leaderboard with only Graded enabled = generator %d", l.Generator)
 	}
 	if b := board("/api/v1/endless/leaderboard/2/7"); b.Generator != 2 {
-		t.Errorf("default board on a graded week = generator %d", b.Generator)
+		t.Errorf("default board with only Graded enabled = generator %d", b.Generator)
 	}
 	if b := board("/api/v1/endless/leaderboard/2/7?generator=1"); b.Generator != 1 {
-		t.Errorf("classic board on a graded week = generator %d", b.Generator)
+		t.Errorf("classic board with only Graded enabled = generator %d", b.Generator)
 	}
-	// Any series is accepted whatever the week uses, so queued results still land.
+	// Any series is accepted whatever is enabled, so queued results still land.
 	e.postEndless(t, "dev:carol:Carol", endlessBody(1, 1, 60000, nil), http.StatusCreated)
 }
 
@@ -787,9 +787,9 @@ func TestEndlessGeneratorValidation(t *testing.T) {
 	}
 }
 
-func TestEndlessGeneratorNeedsTheSchedule(t *testing.T) {
+func TestEndlessGeneratorNeedsTheSettings(t *testing.T) {
 	e := newReplayEnv(t, 1)
-	e.sabotage(t, "ALTER TABLE generator_schedule RENAME TO gone")
+	e.sabotage(t, "ALTER TABLE generator_settings RENAME TO gone")
 	expectError(t, do(t, e.srv, "GET", "/api/v1/endless/leaderboard", alice, nil), http.StatusInternalServerError, "internal")
 	expectError(t, do(t, e.srv, "GET", "/api/v1/endless/leaderboard/1/1", alice, nil), http.StatusInternalServerError, "internal")
 	// An explicit series does not need it.

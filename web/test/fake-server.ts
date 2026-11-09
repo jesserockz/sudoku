@@ -1,8 +1,7 @@
 // An in-memory v1 server and OIDC provider behind a fetch function, following docs/API.md.
 import type { EndlessResult, GameResult } from "../src/api/models.ts";
 import { createPkce } from "../src/api/oidc.ts";
-import type { GeneratorInfo, PendingGenerator } from "../src/api/models.ts";
-import { addDays, weekAt } from "../src/game/calendar.ts";
+import { weekAt } from "../src/game/calendar.ts";
 import { weekSeed } from "../src/serverless/seed.ts";
 
 export const ISSUER = "https://auth.test/o/sudoku/";
@@ -22,13 +21,12 @@ export class FakeServer {
   /** When set, the endless leaderboard endpoints wait for this promise before answering. */
   endlessBoardGate: Promise<void> | null = null;
   levels = 5;
-  /** The puzzle generator this week uses and the change pending for next week, as `GET /week` reports them. */
-  generator = 1;
-  pendingGenerator: PendingGenerator | null = null;
+  /** The enabled generators, ascending, as `GET /week` and `GET /admin/generator` report them; PUT changes them. */
+  generators: number[] = [1];
   /** False plays an older server: `GET /week` and `GET /me/stats` leave the generator fields out. */
   reportsGenerator = true;
-  /** The generator history `GET /admin/generator` reports; PUT and DELETE change `pendingGenerator` as the real server does. */
-  generatorHistory: GeneratorInfo["schedule"] = [{ fromWeek: null, version: 1 }];
+  /** False plays a server from before generators could be enabled together: `GET /week` has `generator` but no `generators`. */
+  reportsGenerators = true;
   /** When set, the admin generator endpoints answer this status. */
   generatorStatus: number | null = null;
   /** Answer to `GET /me/stats`; `statsStatus` makes it fail instead, and `statsGate` holds the answer back. */
@@ -92,6 +90,7 @@ export class FakeServer {
   #counter = 0;
 
   readonly requests: { method: string; url: URL; headers: Headers; body: string }[] = [];
+  /** Stored daily results; one without a `generator` plays a result from before there were several generators (Classic). */
   readonly stored: GameResult[] = [];
   /** Stored endless results; one without a `generator` plays a result from before there were several series (Classic). */
   readonly storedEndless: (Omit<EndlessResult, "generator"> & { generator?: number })[] = [];
@@ -104,6 +103,11 @@ export class FakeServer {
   /** The API server forgets every access token, as after a signing key rotation. */
   forgetAccessTokens(): void {
     this.#accessTokens.clear();
+  }
+
+  /** The default generator: the first enabled. */
+  get generator(): number {
+    return this.generators[0]!;
   }
 
   posts(): number {
@@ -186,28 +190,36 @@ export class FakeServer {
       case "/api/v1/admin/generator": {
         if (!this.admin) return json({ error: { code: "forbidden", message: "admin access required" } }, 403);
         if (this.generatorStatus !== null) return json({ error: { code: "boom", message: "generator broke" } }, this.generatorStatus);
-        if (r.method === "PUT") this.#chooseGenerator((JSON.parse(r.body) as { version: number }).version);
-        return json(this.#generatorInfo());
+        if (r.method === "PUT") {
+          const enabled = (JSON.parse(r.body) as { enabled: number[] }).enabled;
+          if (!Array.isArray(enabled) || enabled.length === 0 || enabled.some((v) => v !== 1 && v !== 2)) {
+            return json({ error: { code: "bad_request", message: "enabled must list 1 and/or 2" } }, 400);
+          }
+          this.generators = [...new Set(enabled)].sort();
+        }
+        return json({ enabled: this.generators });
       }
-      case "/api/v1/admin/generator/pending":
-        if (!this.admin) return json({ error: { code: "forbidden", message: "admin access required" } }, 403);
-        if (this.generatorStatus !== null) return json({ error: { code: "boom", message: "generator broke" } }, this.generatorStatus);
-        this.pendingGenerator = null;
-        return json(this.#generatorInfo());
       case "/api/v1/week": {
         const info = weekAt(this.now());
-        const generator = this.reportsGenerator ? { generator: this.generator, pendingGenerator: this.pendingGenerator } : {};
+        const generator = !this.reportsGenerator ? {}
+          : this.reportsGenerators ? { generator: this.generator, generators: this.generators, pendingGenerator: null }
+            : { generator: this.generator, pendingGenerator: null };
         return json({ ...info, seed: await weekSeed(SECRET, info.isoWeek), timezone: "Pacific/Auckland", levels: this.levels, ...generator });
       }
       case "/api/v1/me/results": {
         const date = r.url.searchParams.get("date") ?? weekAt(this.now()).today;
-        return json({ date, results: this.stored.filter((s) => s.date === date).map(({ date: _, ...rest }) => rest) });
+        return json({ date, results: this.stored.filter((s) => s.date === date).map(({ date: _, replay: _r, ...rest }) => rest) });
       }
       case "/api/v1/results": {
         if (this.resultsStatus !== null) return json({ error: { code: "boom", message: "" } }, this.resultsStatus);
         if (this.rejectAll) return json({ error: { code: "invalid_result", message: "nope" } }, 400);
-        const result = JSON.parse(r.body) as GameResult;
-        const existing = this.stored.find((s) => s.date === result.date && s.level === result.level);
+        const sent = JSON.parse(r.body) as GameResult;
+        if (sent.generator !== undefined && sent.generator !== 1 && sent.generator !== 2) {
+          return json({ error: { code: "invalid_result", message: "unknown generator" } }, 400);
+        }
+        // Without one, the default generator (as from an older app); an older server keeps no generator at all.
+        const result = this.reportsGenerators ? { ...sent, generator: sent.generator ?? this.generator } : sent;
+        const existing = this.stored.find((s) => (s.generator ?? 1) === (result.generator ?? 1) && s.date === result.date && s.level === result.level);
         if (existing) return json(existing, 200);
         this.stored.push(result);
         return json(result, 201);
@@ -243,8 +255,10 @@ export class FakeServer {
           }),
         });
       }
-      case "/api/v1/leaderboard":
-        return json({ date: r.url.searchParams.get("date"), puzzles: [], total: { entries: [] }, players: this.leaderboardPlayers });
+      case "/api/v1/leaderboard": {
+        const generator = Number(r.url.searchParams.get("generator") ?? this.generator);
+        return json({ date: r.url.searchParams.get("date") ?? weekAt(this.now()).today, generator, puzzles: [], total: { entries: [] }, players: this.leaderboardPlayers });
+      }
       case "/api/v1/me/stats":
         await this.statsGate;
         if (this.statsStatus !== null) return json({ error: { code: "boom", message: "stats broke" } }, this.statsStatus);
@@ -256,16 +270,6 @@ export class FakeServer {
   #statsFor(generator: string | null): unknown {
     if (!this.reportsGenerator) return this.stats;
     return { ...(this.stats as object), generator: generator === null ? this.generator : Number(generator) };
-  }
-
-  #generatorInfo(): GeneratorInfo {
-    return { active: this.generator, pending: this.pendingGenerator, schedule: this.generatorHistory };
-  }
-
-  /** As the real server: the current week keeps its generator, a different one starts next week, the same one cancels. */
-  #chooseGenerator(version: number): void {
-    const next = weekAt(this.now());
-    this.pendingGenerator = version === this.generator ? null : { version, fromWeek: weekAt(Date.parse(addDays(next.weekStart, 7) + "T12:00:00Z")).isoWeek };
   }
 
   #user(authorization: string | null): { id: string; displayName: string } | null {

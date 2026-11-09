@@ -1,6 +1,6 @@
 import {
   type DayResult, type EndlessInfo, type EndlessResult, type GameResult, type Me, type OidcConfig, type Streak, type Week,
-  decodeDayResult, decodeEndlessInfo, decodeEndlessResult, decodeGameResult, decodeMe, decodeOidcConfig, decodeStreak, decodeWeek,
+  decodeDayResult, decodeEndlessInfo, decodeGeneratorVersion, decodeEndlessResult, decodeGameResult, decodeMe, decodeOidcConfig, decodeStreak, decodeWeek,
 } from "../api/models.ts";
 import type { SavedGame } from "../game/game.ts";
 import { decodeReplayEvent } from "../game/replay.ts";
@@ -38,7 +38,16 @@ export interface PendingAuth {
   createdAtEpochMs: number;
 }
 
-export const gameKey = (date: string, level: number): string => `${date}/${level}`;
+/**
+ * Where a daily game is kept: its generator, date and level. Classic (generator 1) keeps the plain `date/level` it
+ * always had, so games from before there were several generators still match; others are prefixed `g<generator>/`,
+ * as endless games are.
+ */
+export const gameKey = (generator: number, date: string, level: number): string =>
+  generator === GENERATOR_CLASSIC ? `${date}/${level}` : `g${generator}/${date}/${level}`;
+
+/** The date of a {@link gameKey}. */
+export const gameKeyDate = (key: string): string => key.split("/").at(-2)!;
 /**
  * Where an endless game is kept: its generator's series, difficulty and number. Classic (generator 1) keeps
  * the plain `difficulty/number` it always had, so games and queued results from before the series existed
@@ -105,7 +114,7 @@ export class AppStorage {
   readonly me: StoredValue<Me>;
   readonly tokens: StoredValue<StoredTokens>;
   readonly pendingAuth: StoredValue<PendingAuth>;
-  /** Games in progress or finished, keyed by {@link gameKey}. Only the cached week's are kept. */
+  /** Games in progress or finished, keyed by {@link gameKey} (so per generator). Only the cached week's are kept. */
   readonly games: StoredValue<Record<string, SavedGame>>;
   /** The server's record of the user's results, by date (only recent dates are kept). */
   readonly serverResults: StoredValue<Record<string, DayResult[]>>;
@@ -125,6 +134,11 @@ export class AppStorage {
   readonly homeTab: StoredValue<HomeTab>;
   /** Set once the endless explainer has popped up on this device, so it only does so once. */
   readonly endlessHelpSeen: StoredValue<boolean>;
+  /**
+   * The generator the player last picked with the Classic / Graded switch (Daily and Endless share it), on this
+   * device, with a server or a seed. Only used while that generator is enabled.
+   */
+  readonly generator: StoredValue<number>;
 
   constructor(store: KeyValueStore) {
     this.settings = new StoredValue(store, "settings", decodeSettings);
@@ -142,6 +156,7 @@ export class AppStorage {
     this.streak = new StoredValue(store, "streak", decodeStreak);
     this.homeTab = new StoredValue(store, "home-tab", decodeHomeTab);
     this.endlessHelpSeen = new StoredValue(store, "endless-help-seen", bool);
+    this.generator = new StoredValue(store, "generator", decodeGeneratorVersion);
   }
 
   /** Forgets everything tied to the signed-in user, keeping the server URL. */

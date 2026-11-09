@@ -95,7 +95,7 @@ func TestPostResultIdempotent(t *testing.T) {
 		t.Fatalf("first status = %d", resp.StatusCode)
 	}
 	first := decode[resultJSON](t, resp)
-	want := resultJSON{Date: "2026-10-26", Level: 1, ElapsedMs: 183000, CompletedAt: "2026-10-26T09:15:00+13:00"}
+	want := resultJSON{Generator: 1, Date: "2026-10-26", Level: 1, ElapsedMs: 183000, CompletedAt: "2026-10-26T09:15:00+13:00"}
 	if first != want {
 		t.Errorf("first = %+v", first)
 	}
@@ -182,7 +182,7 @@ func TestGetMyResults(t *testing.T) {
 	}
 	sunday := get("/api/v1/me/results?date=2026-10-25")
 	want := myResultsResponse{Date: "2026-10-25", Results: []resultJSON{
-		{Date: "2026-10-25", Level: 1, ElapsedMs: 183000, CompletedAt: "2026-10-26T09:15:00+13:00"},
+		{Generator: 1, Date: "2026-10-25", Level: 1, ElapsedMs: 183000, CompletedAt: "2026-10-26T09:15:00+13:00"},
 	}}
 	if !reflect.DeepEqual(sunday, want) {
 		t.Errorf("sunday = %+v", sunday)

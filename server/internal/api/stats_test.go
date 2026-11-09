@@ -103,17 +103,17 @@ func TestBuildStatsTiersFollowEachWeeksLevelCount(t *testing.T) {
 	// W44 has five games a day, W45 three (Easy, Hard, Diabolical).
 	schedule := store.Schedule{{EffectiveWeek: "0000-W00", Levels: 5}, {EffectiveWeek: "2026-W45", Levels: 3}}
 	results := []store.UserDailyResult{
-		{Date: "2026-10-26", Level: 1, ElapsedMs: 1000},
-		{Date: "2026-10-26", Level: 2, ElapsedMs: 2000},
-		{Date: "2026-10-26", Level: 3, ElapsedMs: 3000},
-		{Date: "2026-10-26", Level: 4, ElapsedMs: 4000},
-		{Date: "2026-10-26", Level: 5, ElapsedMs: 5000},
-		{Date: "2026-11-02", Level: 1, ElapsedMs: 3000},
-		{Date: "2026-11-02", Level: 2, ElapsedMs: 5000, AdminFlagged: true},
-		{Date: "2026-11-02", Level: 3, ElapsedMs: 7000},
-		{Date: "2026-11-02", Level: 4, ElapsedMs: 9000}, // beyond the week's three games
+		{Generator: 1, Date: "2026-10-26", Level: 1, ElapsedMs: 1000},
+		{Generator: 1, Date: "2026-10-26", Level: 2, ElapsedMs: 2000},
+		{Generator: 1, Date: "2026-10-26", Level: 3, ElapsedMs: 3000},
+		{Generator: 1, Date: "2026-10-26", Level: 4, ElapsedMs: 4000},
+		{Generator: 1, Date: "2026-10-26", Level: 5, ElapsedMs: 5000},
+		{Generator: 1, Date: "2026-11-02", Level: 1, ElapsedMs: 3000},
+		{Generator: 1, Date: "2026-11-02", Level: 2, ElapsedMs: 5000, AdminFlagged: true},
+		{Generator: 1, Date: "2026-11-02", Level: 3, ElapsedMs: 7000},
+		{Generator: 1, Date: "2026-11-02", Level: 4, ElapsedMs: 9000}, // beyond the week's three games
 	}
-	got := buildStats(days(t, "2026-11-02")[0], results, schedule, v1Only, 1, nil)
+	got := buildStats(days(t, "2026-11-02")[0], results, schedule, 1, nil)
 
 	completed := make([]int, 5)
 	for i, d := range got.Daily {
@@ -147,9 +147,9 @@ func TestBuildStatsRecentKeepsLatestTwenty(t *testing.T) {
 	var results []store.UserDailyResult
 	start := days(t, "2026-09-01")[0]
 	for i := 0; i < 25; i++ {
-		results = append(results, store.UserDailyResult{Date: start.AddDays(i).String(), Level: 1, ElapsedMs: int64(1000 + i)})
+		results = append(results, store.UserDailyResult{Generator: 1, Date: start.AddDays(i).String(), Level: 1, ElapsedMs: int64(1000 + i)})
 	}
-	d := buildStats(start.AddDays(24), results, schedule, v1Only, 1, nil).Daily[0]
+	d := buildStats(start.AddDays(24), results, schedule, 1, nil).Daily[0]
 	if d.Completed != 25 || len(d.Recent) != 20 {
 		t.Fatalf("completed %d, recent %d", d.Completed, len(d.Recent))
 	}
@@ -162,7 +162,7 @@ func TestBuildStatsRecentKeepsLatestTwenty(t *testing.T) {
 }
 
 func TestBuildStatsEmpty(t *testing.T) {
-	got := buildStats(days(t, "2026-11-05")[0], nil, store.Schedule{{EffectiveWeek: "0000-W00", Levels: 5}}, v1Only, 1, nil)
+	got := buildStats(days(t, "2026-11-05")[0], nil, store.Schedule{{EffectiveWeek: "0000-W00", Levels: 5}}, 1, nil)
 	if got.Streak.LastDate != nil || got.Streak.Current != 0 || got.Streak.Best != 0 {
 		t.Errorf("streak = %+v", got.Streak)
 	}
@@ -195,7 +195,7 @@ func TestMyStatsEndToEnd(t *testing.T) {
 	a, b, c := user("dev:alice", "Alice"), user("dev:bob", "Bob"), user("dev:carol", "Carol")
 	put := func(uid int64, date string, level int, ms int64, auto string) {
 		t.Helper()
-		if _, _, err := st.InsertResult(ctx, store.Result{UserID: uid, Date: date, Level: level, ElapsedMs: ms, CompletedAt: "x", AutoFlag: auto}); err != nil {
+		if _, _, err := st.InsertResult(ctx, store.Result{Generator: 1, UserID: uid, Date: date, Level: level, ElapsedMs: ms, CompletedAt: "x", AutoFlag: auto}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -212,7 +212,7 @@ func TestMyStatsEndToEnd(t *testing.T) {
 	// Bob: the 25th is admin-flagged so does not count; only today does.
 	put(b, "2026-10-25", 1, 70000, "")
 	put(b, "2026-10-26", 2, 80000, "")
-	if err := st.FlagResult(ctx, b, "2026-10-25", 1, admin, "bad", time.Now()); err != nil {
+	if err := st.FlagResult(ctx, b, 1, "2026-10-25", 1, admin, "bad", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	// Carol played yesterday only.
@@ -337,6 +337,3 @@ func TestLeaderboardStoreFailures(t *testing.T) {
 		})
 	}
 }
-
-// v1Only is a generator schedule that never leaves v1.
-var v1Only = store.GeneratorSchedule{{EffectiveWeek: "0000-W00", Version: 1}}

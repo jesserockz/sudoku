@@ -24,7 +24,7 @@ function host(hash = ""): Host {
   };
 }
 
-const fakeRepo = (isSignedIn = false) => ({ isSignedIn, today: () => "2026-10-27", homeTab: () => "daily" }) as unknown as SudokuRepository;
+const fakeRepo = (isSignedIn = false) => ({ isSignedIn, today: () => "2026-10-27", homeTab: () => "daily", generatorPick: () => null }) as unknown as SudokuRepository;
 const shareHash = (seed: string): string => "#" + buildShareLink("http://localhost/", s(seed)).split("#")[1];
 const settled = () => new Promise<void>((resolve) => setImmediate(resolve));
 
@@ -86,7 +86,8 @@ test("a stored seed whose puzzles can't load is forgotten and setup is shown", a
   assert.notEqual(seeds.profile(), null);
   const c = new AppController(fakeRepo(), seeds, host());
   c.start();
-  await settled();
+  // The week (a hash) comes first, then the puzzles.
+  while (c.phase.kind === "loading") await settled();
   assertFailed(c, "bad zone");
   assert.equal(seeds.profile(), null);
 });

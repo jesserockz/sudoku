@@ -117,7 +117,7 @@ func TestSyncLevelsReportsEffectiveWeek(t *testing.T) {
 		t.Errorf("before play = %s, want now", eff)
 	}
 	u, _ := st.UpsertUser(context.Background(), "x", "X")
-	st.InsertResult(context.Background(), store.Result{UserID: u.ID, Date: "2026-10-26", Level: 1, ElapsedMs: 6000, CompletedAt: "x"})
+	st.InsertResult(context.Background(), store.Result{Generator: 1, UserID: u.ID, Date: "2026-10-26", Level: 1, ElapsedMs: 6000, CompletedAt: "x"})
 	if eff := sync(4); eff != "2026-W44" {
 		t.Errorf("unchanged = %s", eff)
 	}

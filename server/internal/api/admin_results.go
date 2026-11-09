@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/jesserockz/sudoku/server/internal/httpx"
+	"github.com/jesserockz/sudoku/server/internal/puzzle"
 	"github.com/jesserockz/sudoku/server/internal/store"
 	"github.com/jesserockz/sudoku/server/internal/week"
 )
@@ -20,6 +21,7 @@ const maxFlagReason = 500
 type adminResultJSON struct {
 	UserID      string    `json:"userId"`
 	DisplayName string    `json:"displayName"`
+	Generator   int       `json:"generator"`
 	Level       int       `json:"level"`
 	ElapsedMs   int64     `json:"elapsedMs"`
 	CompletedAt string    `json:"completedAt"`
@@ -45,6 +47,7 @@ func toAdminResultJSON(r store.AdminResult) adminResultJSON {
 	out := adminResultJSON{
 		UserID:      userID(r.UserID),
 		DisplayName: r.DisplayName,
+		Generator:   r.Generator,
 		Level:       r.Level,
 		ElapsedMs:   r.ElapsedMs,
 		CompletedAt: r.CompletedAt,
@@ -96,25 +99,38 @@ func (s *Server) getAdminResults(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
-// resultKey reads {date}, {level} and {userId} from the path. On a bad value
-// it writes a 400 and returns false.
-func resultKey(w http.ResponseWriter, r *http.Request) (date week.Date, level int, uid int64, ok bool) {
+// dailyKey identifies one daily result.
+type dailyKey struct {
+	uid       int64
+	generator int
+	date      week.Date
+	level     int
+}
+
+// resultKey reads {date}, {level} and {userId} from the path and the
+// optional ?generator= (default 1). On a bad value it writes a 400 and
+// returns false.
+func (s *Server) resultKey(w http.ResponseWriter, r *http.Request) (k dailyKey, ok bool) {
 	date, err := week.ParseDate(r.PathValue("date"))
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, httpx.CodeBadRequest, "date must be YYYY-MM-DD")
-		return week.Date{}, 0, 0, false
+		return dailyKey{}, false
 	}
-	level, err = strconv.Atoi(r.PathValue("level"))
+	level, err := strconv.Atoi(r.PathValue("level"))
 	if err != nil || level < minLevel {
 		httpx.Error(w, http.StatusBadRequest, httpx.CodeBadRequest, "level must be a positive integer")
-		return week.Date{}, 0, 0, false
+		return dailyKey{}, false
 	}
-	uid, err = strconv.ParseInt(r.PathValue("userId"), 10, 64)
+	uid, err := strconv.ParseInt(r.PathValue("userId"), 10, 64)
 	if err != nil || uid < 1 {
 		httpx.Error(w, http.StatusBadRequest, httpx.CodeBadRequest, "userId must be a positive integer")
-		return week.Date{}, 0, 0, false
+		return dailyKey{}, false
 	}
-	return date, level, uid, true
+	gen, ok := s.generatorParam(w, r, puzzle.VersionClassic)
+	if !ok {
+		return dailyKey{}, false
+	}
+	return dailyKey{uid: uid, generator: gen, date: date, level: level}, true
 }
 
 // writeStoreError answers a store failure: 404 for a missing result, else 500.
@@ -136,16 +152,16 @@ type adminReplayResponse struct {
 }
 
 func (s *Server) getAdminReplay(w http.ResponseWriter, r *http.Request) {
-	date, level, uid, ok := resultKey(w, r)
+	k, ok := s.resultKey(w, r)
 	if !ok {
 		return
 	}
-	res, err := s.deps.Store.AdminResult(r.Context(), uid, date.String(), level)
+	res, err := s.deps.Store.AdminResult(r.Context(), k.uid, k.generator, k.date.String(), k.level)
 	if err != nil {
 		writeStoreError(w, r, err)
 		return
 	}
-	events, err := s.deps.Store.ReplayEvents(r.Context(), uid, date.String(), level)
+	events, err := s.deps.Store.ReplayEvents(r.Context(), k.uid, k.generator, k.date.String(), k.level)
 	if err != nil {
 		httpx.Internal(w, r, err)
 		return
@@ -153,19 +169,19 @@ func (s *Server) getAdminReplay(w http.ResponseWriter, r *http.Request) {
 	if events == nil {
 		events = []byte("[]")
 	}
-	levels, err := s.levelsFor(r.Context(), date)
+	levels, err := s.levelsFor(r.Context(), k.date)
 	if err != nil {
 		httpx.Internal(w, r, err)
 		return
 	}
-	p, err := s.puzzleFor(r.Context(), date, level, levels)
+	p, err := s.puzzleFor(k.generator, k.date, k.level, levels)
 	if err != nil {
 		httpx.Internal(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, adminReplayResponse{
 		adminResultJSON: toAdminResultJSON(res),
-		Date:            date.String(),
+		Date:            k.date.String(),
 		Levels:          levels,
 		Givens:          p.Givens,
 		Events:          events,
@@ -177,7 +193,7 @@ type flagRequest struct {
 }
 
 func (s *Server) putAdminFlag(w http.ResponseWriter, r *http.Request) {
-	date, level, uid, ok := resultKey(w, r)
+	k, ok := s.resultKey(w, r)
 	if !ok {
 		return
 	}
@@ -192,24 +208,24 @@ func (s *Server) putAdminFlag(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, httpx.CodeBadRequest, "reason must be at most 500 characters")
 		return
 	}
-	err := s.deps.Store.FlagResult(r.Context(), uid, date.String(), level, currentUser(r).ID, reason, s.deps.Clock.Now())
-	s.respondFlagged(w, r, err, uid, date, level)
+	err := s.deps.Store.FlagResult(r.Context(), k.uid, k.generator, k.date.String(), k.level, currentUser(r).ID, reason, s.deps.Clock.Now())
+	s.respondFlagged(w, r, err, k)
 }
 
 func (s *Server) deleteAdminFlag(w http.ResponseWriter, r *http.Request) {
-	date, level, uid, ok := resultKey(w, r)
+	k, ok := s.resultKey(w, r)
 	if !ok {
 		return
 	}
-	err := s.deps.Store.UnflagResult(r.Context(), uid, date.String(), level)
-	s.respondFlagged(w, r, err, uid, date, level)
+	err := s.deps.Store.UnflagResult(r.Context(), k.uid, k.generator, k.date.String(), k.level)
+	s.respondFlagged(w, r, err, k)
 }
 
 // respondFlagged answers a flag change with the updated list item.
-func (s *Server) respondFlagged(w http.ResponseWriter, r *http.Request, err error, uid int64, date week.Date, level int) {
+func (s *Server) respondFlagged(w http.ResponseWriter, r *http.Request, err error, k dailyKey) {
 	var res store.AdminResult
 	if err == nil {
-		res, err = s.deps.Store.AdminResult(r.Context(), uid, date.String(), level)
+		res, err = s.deps.Store.AdminResult(r.Context(), k.uid, k.generator, k.date.String(), k.level)
 	}
 	if err != nil {
 		writeStoreError(w, r, err)

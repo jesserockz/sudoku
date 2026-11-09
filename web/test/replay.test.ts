@@ -152,7 +152,9 @@ const adminResult = {
 };
 
 test("admin results decode, with the optional fields defaulted", () => {
-  assert.deepEqual(decodeAdminResult(adminResult), adminResult);
+  assert.deepEqual(decodeAdminResult(adminResult), { generator: 1, ...adminResult }, "an older server's result is Classic's");
+  assert.equal(decodeAdminResult({ ...adminResult, generator: 2 }).generator, 2);
+  assert.throws(() => decodeAdminResult({ ...adminResult, generator: 3 }), /unsupported generator version: 3/);
   const sparse = decodeAdminResult({ userId: "u", displayName: "U", level: 2, elapsedMs: 1, completedAt: "c", replay: "none" });
   assert.deepEqual([sparse.submittedAt, sparse.replayError, sparse.flag], ["", "", null]);
   const flagged = decodeAdminResult({ ...adminResult, replay: "invalid", replayError: "bad", flag: { flaggedAt: "f", auto: true } });

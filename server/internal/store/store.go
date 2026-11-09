@@ -141,7 +141,10 @@ func (s *Store) UpsertUser(ctx context.Context, subject, displayName string) (Us
 }
 
 type Result struct {
-	UserID      int64
+	UserID int64
+	// Generator is the version of the puzzle generator (1 or 2) the game
+	// was played with.
+	Generator   int
 	Date        string // YYYY-MM-DD
 	Level       int
 	ElapsedMs   int64
@@ -160,8 +163,8 @@ type Result struct {
 	AutoFlag string
 }
 
-// InsertResult stores r unless the user already has a result for that date
-// and level. It returns the stored result and whether it was newly created;
+// InsertResult stores r unless the user already has a result for that
+// generator, date and level. It returns the stored result and whether it was newly created;
 // on a duplicate the existing (first) result is returned unchanged, and its
 // replay and flag are left alone.
 func (s *Store) InsertResult(ctx context.Context, r Result) (Result, bool, error) {
@@ -174,12 +177,12 @@ func (s *Store) InsertResult(ctx context.Context, r Result) (Result, bool, error
 		}
 		// flagged_at is the insert's own "now", so it equals submitted_at.
 		res, err := tx.ExecContext(ctx, `
-			INSERT INTO results (user_id, date, level, elapsed_ms, completed_at,
+			INSERT INTO results (user_id, generator, date, level, elapsed_ms, completed_at,
 				replay_status, replay_error, flagged_at, flag_reason, flag_auto)
-			VALUES (?, ?, ?, ?, ?, ?, ?,
-				CASE WHEN ?8 <> '' THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now') END, ?8, ?8 <> '')
-			ON CONFLICT (user_id, date, level) DO NOTHING`,
-			r.UserID, r.Date, r.Level, r.ElapsedMs, r.CompletedAt,
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?,
+				CASE WHEN ?9 <> '' THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now') END, ?9, ?9 <> '')
+			ON CONFLICT (user_id, generator, date, level) DO NOTHING`,
+			r.UserID, r.Generator, r.Date, r.Level, r.ElapsedMs, r.CompletedAt,
 			status, r.ReplayError, r.AutoFlag)
 		if err != nil {
 			return err
@@ -194,15 +197,15 @@ func (s *Store) InsertResult(ctx context.Context, r Result) (Result, bool, error
 				return nil
 			}
 			_, err = tx.ExecContext(ctx, `
-				INSERT INTO replays (user_id, date, level, events) VALUES (?, ?, ?, ?)`,
-				r.UserID, r.Date, r.Level, r.Events)
+				INSERT INTO replays (user_id, generator, date, level, events) VALUES (?, ?, ?, ?, ?)`,
+				r.UserID, r.Generator, r.Date, r.Level, r.Events)
 			return err
 		}
-		stored = Result{UserID: r.UserID, Date: r.Date, Level: r.Level}
+		stored = Result{UserID: r.UserID, Generator: r.Generator, Date: r.Date, Level: r.Level}
 		return tx.QueryRowContext(ctx, `
 			SELECT elapsed_ms, completed_at FROM results
-			WHERE user_id = ? AND date = ? AND level = ?`,
-			r.UserID, r.Date, r.Level).Scan(&stored.ElapsedMs, &stored.CompletedAt)
+			WHERE user_id = ? AND generator = ? AND date = ? AND level = ?`,
+			r.UserID, r.Generator, r.Date, r.Level).Scan(&stored.ElapsedMs, &stored.CompletedAt)
 	})
 	if err != nil {
 		return Result{}, false, fmt.Errorf("insert result: %w", err)
@@ -210,11 +213,12 @@ func (s *Store) InsertResult(ctx context.Context, r Result) (Result, bool, error
 	return stored, created, nil
 }
 
-// UserResults returns a user's results for date, ordered by level.
+// UserResults returns a user's results of every generator for date, ordered
+// by generator then level.
 func (s *Store) UserResults(ctx context.Context, userID int64, date string) ([]Result, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT level, elapsed_ms, completed_at FROM results
-		WHERE user_id = ? AND date = ? ORDER BY level`, userID, date)
+		SELECT generator, level, elapsed_ms, completed_at FROM results
+		WHERE user_id = ? AND date = ? ORDER BY generator, level`, userID, date)
 	if err != nil {
 		return nil, fmt.Errorf("user results: %w", err)
 	}
@@ -222,7 +226,7 @@ func (s *Store) UserResults(ctx context.Context, userID int64, date string) ([]R
 	out := []Result{}
 	for rows.Next() {
 		r := Result{UserID: userID, Date: date}
-		if err := rows.Scan(&r.Level, &r.ElapsedMs, &r.CompletedAt); err != nil {
+		if err := rows.Scan(&r.Generator, &r.Level, &r.ElapsedMs, &r.CompletedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -241,13 +245,14 @@ type DayResult struct {
 	Flagged bool
 }
 
-// DayResults returns every result for date, ordered by level then time.
-func (s *Store) DayResults(ctx context.Context, date string) ([]DayResult, error) {
+// DayResults returns every result of one generator for date, ordered by
+// level then time.
+func (s *Store) DayResults(ctx context.Context, generator int, date string) ([]DayResult, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT r.user_id, u.display_name, r.level, r.elapsed_ms, r.flagged_at IS NOT NULL AND r.flag_auto = 0
 		FROM results r JOIN users u ON u.id = r.user_id
-		WHERE r.date = ?
-		ORDER BY r.level, r.elapsed_ms, u.display_name, r.user_id`, date)
+		WHERE r.generator = ? AND r.date = ?
+		ORDER BY r.level, r.elapsed_ms, u.display_name, r.user_id`, generator, date)
 	if err != nil {
 		return nil, fmt.Errorf("day results: %w", err)
 	}
