@@ -150,12 +150,6 @@ export function applyEvent(game: Game, e: ReplayEvent): Game {
 /** `R3C5`, 1-based. */
 export const cellName = (i: number): string => `R${rowOf(i) + 1}C${colOf(i) + 1}`;
 
-/** What to draw in a cell. Hidden digits become `•`; hidden notes become one `·` per mark. */
-export interface CellView {
-  kind: "given" | "entry" | "notes" | "empty";
-  text: string;
-}
-
 /**
  * State of the replay viewer. Fires `change` whenever anything does. It
  * keeps no timers: the screen calls {@link tick} with real elapsed time while
@@ -274,16 +268,6 @@ export class ReplayViewer extends EventTarget {
   previous(): void {
     this.playing = false;
     this.goTo(this.index - 1);
-  }
-
-  cell(i: number): CellView {
-    const game = this.game;
-    const digit = game.board.get(i);
-    if (game.board.isGiven(i)) return { kind: "given", text: String(digit) };
-    if (digit !== 0) return { kind: "entry", text: this.revealDigits ? String(digit) : "•" };
-    const notes = game.notes.get(i);
-    if (notes.length === 0) return { kind: "empty", text: "" };
-    return { kind: "notes", text: this.revealDigits ? notes.join("") : "·".repeat(notes.length) };
   }
 
   /** A readable line for event `k`, without the digit unless revealed. */

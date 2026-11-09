@@ -140,6 +140,10 @@ async function shot(page, name) {
   const hidden = await board.evaluateAll((els) => els.map((e) => e.textContent));
   check(!(await page.locator(".reveal input").isChecked()), "digits are hidden when the replay opens");
   check(empties.slice(0, 19).every((i) => hidden[i] === "•"), "entered digits show as dots");
+  const label = await board.nth(empties[0]).getAttribute("aria-label");
+  check(label.endsWith(", hidden digit"), "screen readers don't hear hidden digits either");
+  await board.nth(empties[0]).click();
+  check(await page.locator(".replay-board .cell.selected, .replay-board .cell.peer").count() === 0, "the replay board is read-only");
   check(await page.getByText("Placed a digit in", { exact: false }).count() > 0, "actions don't name the digit");
   check(await page.getByText("steady, machine-like pace", { exact: false }).count() === 1, "the steady pace is pointed out");
   await shot(page, "replay-hidden");
@@ -166,6 +170,19 @@ async function shot(page, name) {
   await page.getByText("Reveal digits (shows the solution)").waitFor();
   check(!(await page.locator(".reveal input").isChecked()), "the next replay opens with the digits hidden again");
   check(await page.getByText("Replay OK").count() >= 1, "Ann's browser replay passed the server's checks");
+
+  // Ann's first note shows in the game's 3x3 note grid: a dot while hidden, in its digit's slot once revealed.
+  for (let k = 0; k < 10 && await page.locator(".replay-board .notes").count() === 0; k++) {
+    await page.getByRole("button", { name: "Next action" }).click();
+  }
+  const marks = page.locator(".replay-board .cell").nth(empties[0]).locator(".notes span");
+  const hiddenMarks = await marks.evaluateAll((els) => els.map((e) => e.textContent));
+  check(hiddenMarks.join(",") === "•,,,,,,,,", "a hidden note shows as a dot in the note grid");
+  await page.locator(".reveal input").check();
+  const shownMarks = await marks.evaluateAll((els) => els.map((e) => e.textContent));
+  check(shownMarks.length === 9 && shownMarks.join("") === String(solution[empties[0]]) && shownMarks[solution[empties[0]] - 1] !== "",
+    "a revealed note sits in its digit's slot, as in the game");
+  await shot(page, "replay-notes");
 
   // Everyone sees the markers on the leaderboard.
   res = await api(nora, `leaderboard?date=${date}`);
