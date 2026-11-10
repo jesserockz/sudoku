@@ -2,6 +2,10 @@ import { ENDLESS_LABEL, type AppController, type HelpTopic } from "./controller.
 import { type Child, h } from "./dom.ts";
 import { generatorHelp } from "./generator.ts";
 
+/** The colour pens, which work the same in every game. */
+const colourHelp = (): HTMLElement =>
+  h("p", null, "Colour pens: in a puzzle, turn on Colours (or press C) and tap cells to paint them with one of two colours, for tracing chains by hand. Tap again to change the colour, or to remove it. The colours stay on this device only and go away when the puzzle is solved or cleared.");
+
 /** The title and paragraphs of each "how it works" explainer. */
 function content(app: AppController, topic: HelpTopic): { title: string; body: Child[] } {
   if (topic === "endless") {
@@ -16,6 +20,7 @@ function content(app: AppController, topic: HelpTopic): { title: string; body: C
         app.seed
           ? h("p", null, "History lists your times for every puzzle you've solved, by difficulty.")
           : h("p", null, "The leaderboard shows how many puzzles each player has solved in each difficulty, and the times on any one puzzle."),
+        colourHelp(),
       ],
     };
   }
@@ -39,6 +44,7 @@ function content(app: AppController, topic: HelpTopic): { title: string; body: C
       app.seed
         ? h("p", null, "Everyone playing the same seed gets the same puzzles. Share results to compare times.")
         : h("p", null, "The leaderboard ranks each puzzle by time, and the total for everyone who solves them all. You can look back over the last 8 days."),
+      colourHelp(),
     ],
   };
 }

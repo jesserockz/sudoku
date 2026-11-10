@@ -11,7 +11,12 @@ import { ScreenWakeLock } from "./wake-lock.ts";
  * `<sudoku-play>`: one puzzle being played. The timer runs only while this
  * screen is open and the page is visible, and so does a screen wake lock (the
  * phone stays awake while playing, not while paused or solved). Keyboard: digits, Backspace/Delete/0
- * to erase, arrows to move, N for notes, Escape to deselect, Ctrl/Cmd+Z to undo.
+ * to erase, arrows to move, N for notes, C for colour pens, Escape to deselect, Ctrl/Cmd+Z to undo.
+ *
+ * Colour mode (see `Game.cycleColour`): tapping a cell cycles its colour
+ * instead of selecting it, and digits and Erase are off, so a tap can never
+ * place a digit or note. Colours are the player's own aid: they're not logged
+ * in the replay.
  */
 export class PlayScreen extends Component {
   app!: AppController;
@@ -19,6 +24,7 @@ export class PlayScreen extends Component {
   ref: PuzzleRef = 0;
   #selected = -1;
   #notesMode = false;
+  #colourMode = false;
   #paused = false;
   readonly #board = document.createElement("sudoku-board") as SudokuBoard;
   readonly #keypad = document.createElement("sudoku-keypad") as SudokuKeypad;
@@ -28,7 +34,7 @@ export class PlayScreen extends Component {
 
   constructor() {
     super();
-    this.#board.addEventListener("cell-select", (e) => this.#select((e as CustomEvent<number>).detail));
+    this.#board.addEventListener("cell-select", (e) => this.#tap((e as CustomEvent<number>).detail));
     this.#keypad.addEventListener("digit", (e) => this.#input((e as CustomEvent<number>).detail));
   }
 
@@ -62,6 +68,12 @@ export class PlayScreen extends Component {
     this.update();
   }
 
+  /** A tap on a cell: paints it in colour mode, else selects it. */
+  #tap(i: number): void {
+    if (!this.#colourMode) this.#select(i);
+    else if (!this.#paused) this.app.update(this.ref, (g) => g.cycleColour(i));
+  }
+
   #pause(): void {
     this.app.update(this.ref, (g) => g.pause(this.app.nowMs()), { a: "pause" });
     if (this.#game?.isComplete === false) this.#paused = true;
@@ -77,7 +89,7 @@ export class PlayScreen extends Component {
   #input(digit: number): void {
     const g = this.#game;
     const i = this.#selected;
-    if (!g || i < 0 || this.#paused || g.board.isGiven(i)) return;
+    if (!g || i < 0 || this.#paused || this.#colourMode || g.board.isGiven(i)) return;
     if (this.#notesMode) this.app.update(this.ref, (game) => game.toggleNote(i, digit), { a: g.notes.has(i, digit) ? "noteRemove" : "noteAdd", c: i, d: digit });
     else if (g.board.get(i) === digit) this.app.update(this.ref, (game) => game.erase(i), { a: "erase", c: i });
     else this.app.update(this.ref, (game) => game.place(i, digit, this.app.nowMs()), { a: "place", c: i, d: digit });
@@ -85,7 +97,7 @@ export class PlayScreen extends Component {
 
   #erase(): void {
     const i = this.#selected;
-    if (i >= 0 && !this.#paused) this.app.update(this.ref, (g) => g.erase(i), { a: "erase", c: i });
+    if (i >= 0 && !this.#paused && !this.#colourMode) this.app.update(this.ref, (g) => g.erase(i), { a: "erase", c: i });
   }
 
   #undo(): void {
@@ -95,6 +107,11 @@ export class PlayScreen extends Component {
   #toggleNotes(): void {
     this.#notesMode = !this.#notesMode;
     this.app.log(this.ref, { a: "notes", on: this.#notesMode });
+    this.update();
+  }
+
+  #toggleColour(): void {
+    this.#colourMode = !this.#colourMode;
     this.update();
   }
 
@@ -123,6 +140,7 @@ export class PlayScreen extends Component {
     else if (e.key === "ArrowLeft") this.#move(0, -1);
     else if (e.key === "ArrowRight") this.#move(0, 1);
     else if (e.key === "n" || e.key === "N") this.#toggleNotes();
+    else if (e.key === "c" || e.key === "C") this.#toggleColour();
     else if (e.key === "Escape") this.#select(-1);
     else return;
     e.preventDefault();
@@ -157,21 +175,32 @@ export class PlayScreen extends Component {
         ),
       );
     } else {
-      Object.assign(this.#keypad, { counts: game.digitCounts(), disabled: paused, notesMode: this.#notesMode });
+      Object.assign(this.#keypad, { counts: game.digitCounts(), disabled: paused || this.#colourMode, notesMode: this.#notesMode });
       this.#keypad.update();
       footer = h("div", { class: "pad" },
         this.#keypad,
         h("div", { class: "controls" },
           h("button", { disabled: !game.canUndo || paused, onclick: () => this.#undo() }, "Undo"),
-          h("button", { disabled: paused, onclick: () => this.#erase() }, "Erase"),
-          h("button", {
-            disabled: !game.canClearAll || paused, "aria-label": "Clear board",
-            onclick: () => app.update(this.ref, (g) => g.clearAll(), { a: "clear" }),
-          }, "Clear"),
+          h("button", { disabled: paused || this.#colourMode, onclick: () => this.#erase() }, "Erase"),
+          // In colour mode Clear clears the colours instead of the board, so
+          // the column keeps five buttons and fits beside the keypad.
+          this.#colourMode
+            ? h("button", {
+              disabled: !game.hasColours || paused, "aria-label": "Clear colours",
+              onclick: () => app.update(this.ref, (g) => g.clearColours()),
+            }, "Clear")
+            : h("button", {
+              disabled: !game.canClearAll || paused, "aria-label": "Clear board",
+              onclick: () => app.update(this.ref, (g) => g.clearAll(), { a: "clear" }),
+            }, "Clear"),
           h("button", {
             class: this.#notesMode && "active", "aria-pressed": String(this.#notesMode),
             onclick: () => this.#toggleNotes(),
-          }, this.#notesMode ? "Notes on" : "Notes off"),
+          }, "Notes"),
+          h("button", {
+            class: this.#colourMode && "active", "aria-pressed": String(this.#colourMode),
+            onclick: () => this.#toggleColour(),
+          }, "Colours"),
         ),
       );
     }

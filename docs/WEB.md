@@ -447,7 +447,24 @@ In dev auth mode the app instead asks for a user id and display name and sends
   Solved.
 - **Play**: tap or arrow-key to select; digits by keypad or keyboard; notes
   mode (`N`), erase (`Backspace`), undo (`Ctrl/Cmd+Z`), clear the board.
-  Conflicts are highlighted. The timer runs only while the puzzle is on screen
+  Conflicts are highlighted. **Colour pens** (`C`, the Colours button next to
+  Notes; both buttons show their on state with the highlight, not the label) are for the "simple colouring" technique: with Colours on, tapping a
+  cell cycles it through none, colour A (orange), colour B (purple) and back
+  to none, without selecting it. Any cell that isn't a given can be coloured,
+  empty or holding a player's digit; givens can't. While Colours is on the
+  keypad, digit keys and Erase are off (so a tap can't place a digit or a
+  note) and Clear removes every colour instead of clearing the board (so the
+  actions column keeps five buttons and always fits beside the keypad with no
+  scrolling, down to a 320 px wide phone); Undo still works but
+  doesn't undo colours. The tints are layered over selection, same-digit and
+  error highlights, with a single ring for A and a double ring for B so they
+  don't rely on hue, and a coloured cell reads as "colour A" or "colour B" to
+  a screen reader. Colours are only the player's aid: they're saved with the
+  game in progress in `localStorage` (so they survive a reload on this
+  device, in Daily, Endless and seed play) but are not in the replay, the
+  timer or the result, nothing is sent to the server, and they're dropped when
+  the game is solved or the board is cleared (`Game.colours`, `SavedGame.colours`,
+  absent in older saves). The timer runs only while the puzzle is on screen
   and the tab is visible; switching away pauses it behind a "Paused" cover.
   While a puzzle is being played (not paused or solved) the app holds a
   screen wake lock, where supported, so the phone does not go to sleep.

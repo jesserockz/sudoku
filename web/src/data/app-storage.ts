@@ -75,9 +75,11 @@ const decodeHomeTab = (json: unknown): HomeTab => {
 export function decodeSavedGame(json: unknown): SavedGame {
   const o = obj(json);
   const replay = optional(o.replay, (r) => list(r, decodeReplayEvent));
+  const colours = optional(o.colours, str);
   return {
     givens: str(o.givens), entries: str(o.entries), notes: list(o.notes, num), elapsedMs: num(o.elapsedMs), completed: bool(o.completed),
     ...(replay ? { replay } : {}),
+    ...(colours ? { colours } : {}),
   };
 }
 
