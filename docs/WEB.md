@@ -447,13 +447,15 @@ In dev auth mode the app instead asks for a user id and display name and sends
   Solved.
 - **Play**: tap or arrow-key to select; digits by keypad or keyboard; notes
   mode (`N`), erase (`Backspace`), undo (`Ctrl/Cmd+Z`), clear the board.
-  Conflicts are highlighted. **Colour pens** (`C`, the Colour button next to
-  Notes) are for the "simple colouring" technique: with Colour on, tapping a
+  Conflicts are highlighted. **Colour pens** (`C`, the Colours button next to
+  Notes; both buttons show their on state with the highlight, not the label) are for the "simple colouring" technique: with Colours on, tapping a
   cell cycles it through none, colour A (orange), colour B (purple) and back
   to none, without selecting it. Any cell that isn't a given can be coloured,
-  empty or holding a player's digit; givens can't. While Colour is on the
+  empty or holding a player's digit; givens can't. While Colours is on the
   keypad, digit keys and Erase are off (so a tap can't place a digit or a
-  note) and **Clear colours** removes every colour; Undo still works but
+  note) and Clear removes every colour instead of clearing the board (so the
+  actions column keeps five buttons and always fits beside the keypad with no
+  scrolling, down to a 320 px wide phone); Undo still works but
   doesn't undo colours. The tints are layered over selection, same-digit and
   error highlights, with a single ring for A and a double ring for B so they
   don't rely on hue, and a coloured cell reads as "colour A" or "colour B" to

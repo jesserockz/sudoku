@@ -205,8 +205,16 @@ sudoku-play > header.bar { flex: none; margin-bottom: 0; }
   touch-action: manipulation;
 }
 .keypad button .left { display: block; font-size: 0.75rem; font-weight: 400; color: var(--muted); }
-.controls { display: grid; grid-auto-rows: 1fr; gap: 8px; }
-.controls button { padding: 4px; min-height: 0; font-size: 0.95rem; touch-action: manipulation; }
+/* The actions share the keypad's height and never grow past it: the column
+   is size-contained (the keypad alone sets the row height), its rows can
+   shrink below their text (minmax(0, 1fr)), and the label scales with --key
+   (wrapping onto two lines on narrow screens), so the pad can't push the
+   screen into a scroll. */
+.controls { display: grid; grid-auto-rows: minmax(0, 1fr); gap: 8px; min-height: 0; contain: size; }
+.controls button {
+  padding: 0 4px; min-height: 0; overflow: hidden;
+  font-size: min(0.95rem, var(--key) * 0.3, 4.2vw); line-height: 1; touch-action: manipulation;
+}
 
 /* Short landscape screens (a phone on its side): the board takes the full
    height under the top bar, with the pad beside it at the same height. */

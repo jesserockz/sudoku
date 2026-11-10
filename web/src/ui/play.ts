@@ -182,22 +182,25 @@ export class PlayScreen extends Component {
         h("div", { class: "controls" },
           h("button", { disabled: !game.canUndo || paused, onclick: () => this.#undo() }, "Undo"),
           h("button", { disabled: paused || this.#colourMode, onclick: () => this.#erase() }, "Erase"),
-          h("button", {
-            disabled: !game.canClearAll || paused, "aria-label": "Clear board",
-            onclick: () => app.update(this.ref, (g) => g.clearAll(), { a: "clear" }),
-          }, "Clear"),
+          // In colour mode Clear clears the colours instead of the board, so
+          // the column keeps five buttons and fits beside the keypad.
+          this.#colourMode
+            ? h("button", {
+              disabled: !game.hasColours || paused, "aria-label": "Clear colours",
+              onclick: () => app.update(this.ref, (g) => g.clearColours()),
+            }, "Clear")
+            : h("button", {
+              disabled: !game.canClearAll || paused, "aria-label": "Clear board",
+              onclick: () => app.update(this.ref, (g) => g.clearAll(), { a: "clear" }),
+            }, "Clear"),
           h("button", {
             class: this.#notesMode && "active", "aria-pressed": String(this.#notesMode),
             onclick: () => this.#toggleNotes(),
-          }, this.#notesMode ? "Notes on" : "Notes off"),
+          }, "Notes"),
           h("button", {
             class: this.#colourMode && "active", "aria-pressed": String(this.#colourMode),
             onclick: () => this.#toggleColour(),
-          }, this.#colourMode ? "Colour on" : "Colour off"),
-          this.#colourMode && h("button", {
-            disabled: !game.hasColours || paused,
-            onclick: () => app.update(this.ref, (g) => g.clearColours()),
-          }, "Clear colours"),
+          }, "Colours"),
         ),
       );
     }

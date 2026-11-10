@@ -4,7 +4,7 @@ import { generatorHelp } from "./generator.ts";
 
 /** The colour pens, which work the same in every game. */
 const colourHelp = (): HTMLElement =>
-  h("p", null, "Colour pens: in a puzzle, turn on Colour (or press C) and tap cells to paint them with one of two colours, for tracing chains by hand. Tap again to change the colour, or to remove it. The colours stay on this device only and go away when the puzzle is solved or cleared.");
+  h("p", null, "Colour pens: in a puzzle, turn on Colours (or press C) and tap cells to paint them with one of two colours, for tracing chains by hand. Tap again to change the colour, or to remove it. The colours stay on this device only and go away when the puzzle is solved or cleared.");
 
 /** The title and paragraphs of each "how it works" explainer. */
 function content(app: AppController, topic: HelpTopic): { title: string; body: Child[] } {

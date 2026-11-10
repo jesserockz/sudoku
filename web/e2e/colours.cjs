@@ -57,7 +57,7 @@ const colourOf = async (page, i) => {
   const l = await label(page, i);
   return l.endsWith(", colour A") ? "A" : l.endsWith(", colour B") ? "B" : "none";
 };
-const colourButton = (page, on) => page.getByRole("button", { name: on ? "Colour on" : "Colour off", exact: true });
+const colourButton = (page, on) => page.locator(`.controls button[aria-pressed="${on}"]`, { hasText: /^Colours$/ });
 const style = (page, i, prop) => page.locator("[role=gridcell]").nth(i).evaluate((e, p) => getComputedStyle(e)[p], prop);
 
 async function newPage(browser) {
@@ -107,6 +107,13 @@ async function newPage(browser) {
   await page.keyboard.press("C");
   await colourButton(page, true).waitFor();
   check(true, "the C key toggles colour mode");
+  // The labels stay put; the on state is the highlight (and aria-pressed).
+  const notes = page.locator(".controls button", { hasText: /^Notes$/ });
+  check(await notes.getAttribute("aria-pressed") === "false" && !(await notes.getAttribute("class") ?? "").includes("active"), "Notes reads just Notes and starts unhighlighted");
+  await page.keyboard.press("n");
+  check(await notes.innerText() === "Notes" && await notes.getAttribute("aria-pressed") === "true" && (await notes.getAttribute("class")).includes("active"), "Notes on keeps its label and is highlighted");
+  await page.keyboard.press("n");
+  check(await colourButton(page, true).innerText() === "Colours" && (await colourButton(page, true).getAttribute("class")).includes("active"), "Colours keeps its label and is highlighted when on");
   check(await page.getByRole("button", { name: "Clear colours" }).isDisabled(), "Clear colours is shown but disabled while nothing is coloured");
 
   // Tapping cycles the colour and neither selects nor places anything.
@@ -297,6 +304,26 @@ async function newPage(browser) {
   await page.getByRole("button", { name: /Resume|Play #1|Continue/ }).first().click();
   await readGrid(page);
   check(await colourOf(page, eEmpty) === "none", "a saved game without colours loads fine");
+
+  // The actions column fits beside the keypad with no scrolling, colour mode
+  // off and on, from a small phone up to a landscape one.
+  for (const [width, height] of [[320, 568], [360, 640], [390, 844], [667, 375]]) {
+    await page.setViewportSize({ width, height });
+    for (const on of [false, true]) {
+      if (on) await colourButton(page, false).click();
+      const fit = await page.evaluate(() => {
+        const doc = document.documentElement;
+        const controls = document.querySelector(".controls").getBoundingClientRect();
+        const keypad = document.querySelector(".keypad").getBoundingClientRect();
+        const buttons = [...document.querySelectorAll(".controls button")];
+        return doc.scrollHeight <= innerHeight && doc.scrollWidth <= innerWidth &&
+          controls.bottom <= keypad.bottom + 1 && controls.bottom <= innerHeight &&
+          buttons.every((b) => b.scrollWidth <= b.clientWidth && b.scrollHeight <= b.clientHeight);
+      });
+      check(fit, `at ${width}x${height} with colour mode ${on ? "on" : "off"} the controls fit with no scrolling or clipped labels`);
+      if (on) await colourButton(page, true).click();
+    }
+  }
 
   await browser.close();
   console.log("all colour pen checks passed");
