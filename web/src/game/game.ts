@@ -1,5 +1,6 @@
 import { Board, EMPTY } from "../core/board.ts";
 import { CELLS, peers } from "../core/geometry.ts";
+import { Colours } from "./colours.ts";
 import { Notes } from "./notes.ts";
 import type { ReplayEvent } from "./replay.ts";
 import { ElapsedTimer } from "./timer.ts";
@@ -13,6 +14,11 @@ export interface SavedGame {
   completed: boolean;
   /** The game's replay so far; absent in games saved before replays were recorded. */
   replay?: ReplayEvent[];
+  /**
+   * The colour pens' cells (see {@link Colours}); absent when none are painted
+   * and in games saved before colours existed.
+   */
+  colours?: string;
 }
 
 interface Snapshot {
@@ -36,6 +42,8 @@ interface Snapshot {
 export class Game {
   readonly board: Board;
   readonly notes: Notes;
+  /** Colour pen marks: a player's aid, kept with the game in progress but not undoable, replayed or submitted. */
+  readonly colours: Colours;
   readonly timer: ElapsedTimer;
   /** Solve time once complete, else `null`. */
   readonly completedElapsedMs: number | null;
@@ -46,11 +54,12 @@ export class Game {
   readonly #restored: boolean;
 
   private constructor(
-    board: Board, notes: Notes, timer: ElapsedTimer, completedElapsedMs: number | null, history: readonly Snapshot[],
+    board: Board, notes: Notes, colours: Colours, timer: ElapsedTimer, completedElapsedMs: number | null, history: readonly Snapshot[],
     replay: readonly ReplayEvent[], restored: boolean,
   ) {
     this.board = board;
     this.notes = notes;
+    this.colours = colours;
     this.timer = timer;
     this.completedElapsedMs = completedElapsedMs;
     this.#history = history;
@@ -62,7 +71,7 @@ export class Game {
   static create(givens: string): Game {
     const board = Board.parse(givens);
     if (board.givenCount === 0) throw new RangeError("puzzle has no givens");
-    return new Game(board, Notes.EMPTY, ElapsedTimer.NOT_STARTED, null, [], [], false);
+    return new Game(board, Notes.EMPTY, Colours.EMPTY, ElapsedTimer.NOT_STARTED, null, [], [], false);
   }
 
   /** Restores a saved game, paused. */
@@ -71,7 +80,7 @@ export class Game {
     const notes = Notes.fromMasks(saved.notes);
     const completed = saved.completed && board.isSolved;
     return new Game(
-      board, completed ? Notes.EMPTY : notes, ElapsedTimer.paused(saved.elapsedMs), completed ? saved.elapsedMs : null, [],
+      board, completed ? Notes.EMPTY : notes, completed ? Colours.EMPTY : Colours.parse(saved.colours), ElapsedTimer.paused(saved.elapsedMs), completed ? saved.elapsedMs : null, [],
       saved.replay ?? [], true,
     );
   }
@@ -113,7 +122,23 @@ export class Game {
   /** Clears every player-entered digit and note as a single undoable step. */
   clearAll(): Game {
     if (!this.canClearAll) return this;
-    return this.#record(this.board.givensOnly(), Notes.EMPTY, null);
+    return this.#record(this.board.givensOnly(), Notes.EMPTY, null).#withColours(Colours.EMPTY);
+  }
+
+  /** Whether any cell has a colour. */
+  get hasColours(): boolean {
+    return !this.colours.isBlank;
+  }
+
+  /** Cycles a cell's colour: none, colour A, colour B, none. Givens and a finished game can't be coloured. Not an undoable step. */
+  cycleColour(i: number): Game {
+    if (this.isComplete || this.board.isGiven(i)) return this;
+    return this.#withColours(this.colours.cycled(i));
+  }
+
+  /** Removes every colour. */
+  clearColours(): Game {
+    return this.hasColours ? this.#withColours(Colours.EMPTY) : this;
   }
 
   /** Toggles a pencil mark. Only empty cells take notes. */
@@ -126,7 +151,7 @@ export class Game {
   undo(): Game {
     if (!this.canUndo) return this;
     const last = this.#history[this.#history.length - 1]!;
-    return new Game(last.board, last.notes, this.timer, null, this.#history.slice(0, -1), this.replay, this.#restored);
+    return new Game(last.board, last.notes, this.colours, this.timer, null, this.#history.slice(0, -1), this.replay, this.#restored);
   }
 
   pause(nowMs: number): Game {
@@ -141,7 +166,7 @@ export class Game {
   /** Appends `event` to the replay, after a `restore` event (at the same times) if this game was just restored. */
   record(event: ReplayEvent): Game {
     const restore: ReplayEvent[] = this.#restored ? [{ t: event.t, w: event.w, a: "restore" }] : [];
-    return new Game(this.board, this.notes, this.timer, this.completedElapsedMs, this.#history, [...this.replay, ...restore, event], false);
+    return new Game(this.board, this.notes, this.colours, this.timer, this.completedElapsedMs, this.#history, [...this.replay, ...restore, event], false);
   }
 
   /** How many of each digit are on the board, indexed by digit (index 0 counts empty cells). */
@@ -160,6 +185,7 @@ export class Game {
       elapsedMs: Math.round(this.elapsedMs(nowMs)),
       completed: this.isComplete,
       replay: this.replay.slice(),
+      ...(this.hasColours ? { colours: this.colours.toString() } : {}),
     };
   }
 
@@ -167,12 +193,16 @@ export class Game {
   #record(board: Board, notes: Notes, nowMs: number | null): Game {
     if (nowMs !== null && board.isSolved) {
       const elapsed = Math.round(this.timer.elapsedMs(nowMs));
-      return new Game(board, Notes.EMPTY, ElapsedTimer.paused(elapsed), elapsed, [], this.replay, this.#restored);
+      return new Game(board, Notes.EMPTY, Colours.EMPTY, ElapsedTimer.paused(elapsed), elapsed, [], this.replay, this.#restored);
     }
-    return new Game(board, notes, this.timer, null, [...this.#history, { board: this.board, notes: this.notes }], this.replay, this.#restored);
+    return new Game(board, notes, this.colours, this.timer, null, [...this.#history, { board: this.board, notes: this.notes }], this.replay, this.#restored);
+  }
+
+  #withColours(colours: Colours): Game {
+    return new Game(this.board, this.notes, colours, this.timer, this.completedElapsedMs, this.#history, this.replay, this.#restored);
   }
 
   #withTimer(timer: ElapsedTimer): Game {
-    return new Game(this.board, this.notes, timer, this.completedElapsedMs, this.#history, this.replay, this.#restored);
+    return new Game(this.board, this.notes, this.colours, timer, this.completedElapsedMs, this.#history, this.replay, this.#restored);
   }
 }

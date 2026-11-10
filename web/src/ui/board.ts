@@ -1,4 +1,5 @@
 import { CELLS, colOf, peers, rowOf } from "../core/geometry.ts";
+import { COLOUR_NAMES } from "../game/colours.ts";
 import type { Game } from "../game/game.ts";
 import { cellLabel, cellView } from "./cell-view.ts";
 import { type Child, Component, h } from "./dom.ts";
@@ -68,6 +69,7 @@ export class SudokuBoard extends Component {
       const c = colOf(i);
       const value = board.get(i);
       const view = cellView(game, i, this.#hideDigits);
+      const colour = game.colours.get(i);
       cells.push(h("div", {
         class: [
           "cell", `r${r}`, `c${c}`,
@@ -77,9 +79,10 @@ export class SudokuBoard extends Component {
           i === selected && "selected",
           conflicts.has(i) && "conflict",
           i === this.#changed && "changed",
+          colour !== 0 && `colour-${colour}`,
         ],
         role: "gridcell",
-        "aria-label": `Row ${r + 1} column ${c + 1}, ${cellLabel(view)}`,
+        "aria-label": `Row ${r + 1} column ${c + 1}, ${cellLabel(view)}${colour !== 0 ? `, ${COLOUR_NAMES[colour]}` : ""}`,
         "data-index": i,
       },
       view.kind === "notes" ? h("div", { class: "notes" }, view.marks.map((m) => h("span", null, m))) : view.text,
