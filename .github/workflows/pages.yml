@@ -39,9 +39,20 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
-          gh release download $TAG --pattern sudoku-web.zip --output "$RUNNER_TEMP/sudoku-web.zip"
-          unzip -q "$RUNNER_TEMP/sudoku-web.zip" -d "$RUNNER_TEMP/site"
-          test -f "$RUNNER_TEMP/site/index.html"
+          # TAG is unquoted on purpose: empty means the latest release.
+          # shellcheck disable=SC2086
+          if ! gh release download $TAG --pattern sudoku-web.zip --output "$RUNNER_TEMP/sudoku-web.zip"; then
+            echo "::error::Release ${TAG:-latest} has no sudoku-web.zip asset (was the draft published before its builds were attached?)"
+            exit 1
+          fi
+          if ! unzip -q "$RUNNER_TEMP/sudoku-web.zip" -d "$RUNNER_TEMP/site"; then
+            echo "::error::sudoku-web.zip is not a valid zip file"
+            exit 1
+          fi
+          if [ ! -f "$RUNNER_TEMP/site/index.html" ]; then
+            echo "::error::sudoku-web.zip has no index.html at its root"
+            exit 1
+          fi
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v5.0.0
         with:
