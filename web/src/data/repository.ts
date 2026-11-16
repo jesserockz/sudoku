@@ -1,9 +1,9 @@
-import { type Fetch, SudokuApi, type TokenProvider, devToken } from "../api/client.ts";
+import { type Fetch, SudokuApi, type TokenProvider, SIGN_IN_UNAVAILABLE, devToken } from "../api/client.ts";
 import {
   type AppConfig, type DayResult, type EndlessBoard, type EndlessProgress, type EndlessResult, type GameResult, type Leaderboard, type Me,
   type MyStats, type OidcConfig, type Streak, type Week, weekPuzzles,
 } from "../api/models.ts";
-import { OidcClient, TokenSession, type TokenResponse, createPkce } from "../api/oidc.ts";
+import { OidcClient, OidcException, TokenSession, type TokenResponse, createPkce } from "../api/oidc.ts";
 import { formatTimestamp, inWeek, today } from "../game/calendar.ts";
 import { Game } from "../game/game.ts";
 import { MAX_REPLAY_EVENTS, REPLAY_VERSION } from "../game/replay.ts";
@@ -201,8 +201,10 @@ export class SudokuRepository implements EndlessSource {
     let response: TokenResponse;
     try {
       response = await this.#oidcClient(pending.oidc).exchangeCode(code, pending.verifier);
-    } catch {
-      throw new SignInError("Sign-in failed: couldn't get tokens from the identity provider.");
+    } catch (e) {
+      // The provider refusing the code is a failed sign-in; anything else (unreachable, busy, 5xx) is an outage.
+      if (e instanceof OidcException && e.status < 500 && e.status !== 429) throw new SignInError("Sign-in failed. Please try again.");
+      throw new SignInError(SIGN_IN_UNAVAILABLE);
     }
 
     const previousUser = this.#storage.me.read();

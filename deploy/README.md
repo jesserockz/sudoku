@@ -224,6 +224,11 @@ If you edited the unit, change `ReadWritePaths=/opt/sudoku/bin` to
   Proxmox enable `features: nesting=1` for the container, or comment out
   `ProtectSystem`, `ProtectHome`, `PrivateTmp`, `PrivateDevices` and
   `ProtectKernel*` in the unit.
+- `503 auth_unavailable`: the server couldn't reach the identity provider to
+  fetch its signing keys. Players already signed in keep working once the
+  server has fetched the keys once (they are saved in the database); a fresh
+  install or a new signing key needs the provider. The server logs the reason
+  (`journalctl -u sudoku-server`).
 - `401 unauthorized` for every request: compare the token's `iss` and `aud`
   with `oidc.issuer` and `oidc.audience`; the server logs the reason at info
   level (`journalctl -u sudoku-server`).

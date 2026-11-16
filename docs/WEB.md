@@ -413,8 +413,11 @@ Code + PKCE (S256), using the issuer, client id and scopes from
    API answers 401 to a token the app thought was valid, e.g. after a clock
    difference or a signing key change. A refresh that fails for any reason
    other than the provider rejecting the refresh token (offline, 429, 5xx)
-   keeps the session: the app notes that it can't reach the sign-in server
-   and retries every 30 s. Only `invalid_grant` ends the session; the app then
+   keeps the session: the app says "Sign-in isn't available right now. Please
+   try again later, and contact the admin if it still isn't working.", adds
+   that puzzles still work, and retries every 30 s. The API answering
+   `503 auth_unavailable` is handled the same way. The same message, without
+   the extra line, is shown when signing in can't reach the provider. Only `invalid_grant` ends the session; the app then
    keeps playing offline with results queued, and shows just "Sign in again".
    Nothing syncs (or refreshes) while the page is hidden, so the OS can't cut
    a refresh off half way; the app syncs when it is shown again.

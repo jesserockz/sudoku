@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"reflect"
 	"testing"
@@ -51,6 +52,21 @@ type failingVerifier struct{}
 
 func (failingVerifier) Verify(context.Context, string) (auth.Identity, error) {
 	return auth.Identity{}, errors.New("issuer unreachable")
+}
+
+type unavailableVerifier struct{}
+
+func (unavailableVerifier) Verify(context.Context, string) (auth.Identity, error) {
+	return auth.Identity{}, fmt.Errorf("%w: issuer down", auth.ErrUnavailable)
+}
+
+func TestVerifierUnavailableIs503(t *testing.T) {
+	srv := newTestServer(t, Deps{Verifier: unavailableVerifier{}})
+	resp := do(t, srv, "GET", "/api/v1/me", "whatever", nil)
+	if got := resp.Header.Get("Retry-After"); got != "30" {
+		t.Errorf("Retry-After = %q", got)
+	}
+	expectError(t, resp, http.StatusServiceUnavailable, "auth_unavailable")
 }
 
 func TestVerifierOutageIs500Not401(t *testing.T) {

@@ -543,3 +543,10 @@ test("the fake provider revokes refresh tokens on rotation and after their lifet
   await assert.rejects(r.refresh(), (e: ApiException) => e.isUnauthorized);
   assert.ok(r.needsSignIn);
 });
+
+test("only a 503 auth_unavailable means sign-in can't be checked for now", () => {
+  assert.equal(new ApiException(503, { code: "auth_unavailable", message: "" }).isAuthUnavailable, true);
+  assert.equal(new ApiException(503, { code: "internal", message: "" }).isAuthUnavailable, false);
+  assert.equal(new ApiException(503, null).isAuthUnavailable, false);
+  assert.equal(new ApiException(500, { code: "auth_unavailable", message: "" }).isAuthUnavailable, false);
+});

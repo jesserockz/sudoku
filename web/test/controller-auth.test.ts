@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { SIGN_IN_UNAVAILABLE } from "../src/api/client.ts";
 import { AppStorage } from "../src/data/app-storage.ts";
 import { Mutex } from "../src/data/mutex.ts";
-import { SudokuRepository } from "../src/data/repository.ts";
+import { SignInError, SudokuRepository } from "../src/data/repository.ts";
 import { MemoryStore } from "../src/data/store.ts";
 import { SeedRepository } from "../src/serverless/seed-repository.ts";
 import { AppController, type Host } from "../src/ui/controller.ts";
@@ -203,16 +204,87 @@ test("no sync starts while the page is hidden, and the next one after it is show
   assert.deepEqual(banners(c), { signIn: false, notice: null });
 });
 
-test("a leaderboard fetch with an ended session or an unreachable sign-in server reads as a connection problem", async () => {
+test("a leaderboard fetch with an ended session or sign-in unavailable says so", async () => {
   const { c, server, clock } = await env();
   clock.now += 10 * MINUTE;
   server.tokenStatus = 503;
   c.openScores();
   await idle(c);
-  assert.match(c.leaderboardError ?? "", /offline/i);
+  assert.equal(c.leaderboardError, SIGN_IN_UNAVAILABLE);
   server.tokenStatus = null;
   server.refreshRevoked = true;
   c.openScores();
   await idle(c);
   assert.equal(c.leaderboardError, "Your sign-in has expired.");
+});
+
+const STILL_PLAYS = `${SIGN_IN_UNAVAILABLE} Puzzles still work, and results upload once it's back.`;
+
+test("the server unable to check sign-in keeps the session and retries", async () => {
+  const { c, server } = await env();
+  server.authUnavailable = true;
+  await syncNow(c);
+  assert.deepEqual(banners(c), { signIn: false, notice: STILL_PLAYS });
+  server.authUnavailable = false;
+  c.tick();
+  await idle(c);
+  assert.deepEqual(banners(c), { signIn: false, notice: null });
+  assert.equal(server.refreshGrants, 0);
+});
+
+test("the provider failing a refresh keeps the session with the plain message", async () => {
+  const { c, server, clock } = await env();
+  clock.now += 2 * HOUR;
+  server.tokenStatus = 503;
+  await syncNow(c);
+  assert.deepEqual(banners(c), { signIn: false, notice: STILL_PLAYS });
+  // Stats and both leaderboards say the same.
+  c.openStats();
+  await idle(c);
+  assert.equal(c.statsError, SIGN_IN_UNAVAILABLE);
+  c.openEndlessScores(1, null, server.generator);
+  await idle(c);
+  assert.equal(c.leaderboardError, SIGN_IN_UNAVAILABLE);
+  server.tokenStatus = null;
+  c.tick();
+  await idle(c);
+  assert.deepEqual(banners(c), { signIn: false, notice: null });
+});
+
+test("signing in while the provider is unreachable shows the plain message", async () => {
+  const clock = { now: START };
+  const server = new FakeServer(() => clock.now, "oidc");
+  const repo = new SudokuRepository(new AppStorage(new MemoryStore()), REDIRECT, "", () => clock.now, server.fetch);
+  const host: Host = {
+    location: { hash: "", pathname: "/", search: "", origin: "https://sudoku.test", assign: () => assert.fail("redirected") } as unknown as Location,
+    history: { replaceState: () => {} } as unknown as History,
+    baseUri: () => "https://sudoku.test/",
+    isVisible: () => true,
+    nowMs: () => clock.now,
+    wallMs: () => clock.now,
+    reloadPage: () => {},
+  };
+  const c = new AppController(repo, new SeedRepository(new MemoryStore(), () => clock.now), host);
+  c.start();
+  await idle(c);
+  assert.equal(c.phase.kind, "sign-in");
+  server.online = false;
+  c.signIn();
+  // The PKCE hash runs on Node's crypto threadpool, so it can take more
+  // than one turn of the event loop.
+  for (let i = 0; i < 1000 && c.phase.kind === "sign-in"; i++) await settled();
+  assert.deepEqual(c.phase, { kind: "failed", message: SIGN_IN_UNAVAILABLE });
+});
+
+test("a code exchange that fails says why in plain words", async () => {
+  const clock = { now: START };
+  const server = new FakeServer(() => clock.now, "oidc");
+  const repo = new SudokuRepository(new AppStorage(new MemoryStore()), REDIRECT, "", () => clock.now, server.fetch);
+  const config = await repo.fetchConfig("https://sudoku.test");
+  const attempt = async () => repo.completeOidcSignIn(server.authorize(await repo.beginOidcSignIn("https://sudoku.test", config.oidc!)));
+  server.tokenStatus = 503;
+  await assert.rejects(attempt(), (e: unknown) => e instanceof SignInError && e.message === SIGN_IN_UNAVAILABLE);
+  server.tokenStatus = 400;
+  await assert.rejects(attempt(), (e: unknown) => e instanceof SignInError && e.message === "Sign-in failed. Please try again.");
+  assert.equal(repo.isSignedIn, false);
 });

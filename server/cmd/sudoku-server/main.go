@@ -71,14 +71,6 @@ func run(parent context.Context, args []string, getenv func(string) string, onLi
 	if err != nil {
 		return err
 	}
-	var verifier auth.Verifier
-	if cfg.Auth.Mode == config.AuthModeDev {
-		slog.Warn("!!! DEV AUTH MODE ENABLED: bearer tokens are NOT verified. Never use this in production. !!!")
-		verifier = auth.Dev{}
-	} else {
-		verifier = &auth.OIDC{Issuer: cfg.OIDC.Issuer, Audience: cfg.OIDC.Audience}
-	}
-
 	ctx, cancel := context.WithCancelCause(parent)
 	defer cancel(nil)
 	restart := func() { cancel(errRestartRequested) }
@@ -88,6 +80,15 @@ func run(parent context.Context, args []string, getenv func(string) string, onLi
 		return err
 	}
 	defer st.Close()
+
+	var verifier auth.Verifier
+	if cfg.Auth.Mode == config.AuthModeDev {
+		slog.Warn("!!! DEV AUTH MODE ENABLED: bearer tokens are NOT verified. Never use this in production. !!!")
+		verifier = auth.Dev{}
+	} else {
+		// The keys are saved in the database, so a restart doesn't need the sign-in provider.
+		verifier = &auth.OIDC{Issuer: cfg.OIDC.Issuer, Audience: cfg.OIDC.Audience, Cache: st}
+	}
 
 	var webHandler http.Handler
 	if cfg.WebDir != "" {

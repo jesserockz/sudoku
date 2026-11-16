@@ -18,6 +18,7 @@ const (
 	CodeNotFound         = "not_found"
 	CodeMethodNotAllowed = "method_not_allowed"
 	CodeInternal         = "internal"
+	CodeAuthUnavailable  = "auth_unavailable"
 
 	CodeForbidden             = "forbidden"
 	CodeUpdateInProgress      = "update_in_progress"

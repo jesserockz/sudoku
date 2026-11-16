@@ -82,6 +82,8 @@ export class FakeServer {
   tokenStatus: number | null = null;
   /** The next token endpoint calls are processed but their responses are lost (fetch rejects after the IdP rotated). */
   loseTokenResponses = 0;
+  /** The API server can't check tokens (its provider is down and the key is new): every authenticated call answers 503 auth_unavailable. */
+  authUnavailable = false;
   /** How far ahead of the IdP the API server's clock runs, when judging access token expiry. */
   skewMs = 0;
   readonly #codes = new Map<string, string>(); // code -> PKCE challenge
@@ -150,6 +152,7 @@ export class FakeServer {
         return response;
       }
     }
+    if (this.authUnavailable) return json({ error: { code: "auth_unavailable", message: "Sign-in isn't available right now." } }, 503);
     const user = this.#user(r.headers.get("Authorization"));
     if (!user) return json({ error: { code: "unauthorized", message: "bad token" } }, 401);
     if (r.url.pathname.startsWith("/api/v1/admin/endless/results")) {

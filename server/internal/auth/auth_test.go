@@ -21,6 +21,15 @@ type testIssuer struct {
 	srv       *httptest.Server
 	key       *rsa.PrivateKey
 	discovery atomic.Int32
+	jwks      atomic.Int32
+	// down makes both endpoints answer 503.
+	down atomic.Bool
+	// extra is another signing key the JWKS lists as "k2" when set.
+	extra atomic.Pointer[rsa.PrivateKey]
+	// jwksHandler, when set, replaces the JWKS endpoint.
+	jwksHandler atomic.Pointer[http.HandlerFunc]
+	// jwksURI, when set, replaces the jwks_uri in discovery.
+	jwksURI atomic.Pointer[string]
 }
 
 func newTestIssuer(t *testing.T) *testIssuer {
@@ -35,15 +44,31 @@ func newTestIssuer(t *testing.T) *testIssuer {
 	t.Cleanup(ti.srv.Close)
 	mux.HandleFunc("/application/o/sudoku/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
 		ti.discovery.Add(1)
-		json.NewEncoder(w).Encode(map[string]string{
-			"issuer":   ti.Issuer(),
-			"jwks_uri": ti.srv.URL + "/application/o/sudoku/jwks/",
-		})
+		if ti.down.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		uri := ti.srv.URL + "/application/o/sudoku/jwks/"
+		if u := ti.jwksURI.Load(); u != nil {
+			uri = *u
+		}
+		json.NewEncoder(w).Encode(map[string]string{"issuer": ti.Issuer(), "jwks_uri": uri})
 	})
 	mux.HandleFunc("/application/o/sudoku/jwks/", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{
-			{Key: &key.PublicKey, KeyID: "k1", Algorithm: "RS256", Use: "sig"},
-		}})
+		ti.jwks.Add(1)
+		if ti.down.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		if h := ti.jwksHandler.Load(); h != nil {
+			(*h)(w, r)
+			return
+		}
+		keys := []jose.JSONWebKey{{Key: &key.PublicKey, KeyID: "k1", Algorithm: "RS256", Use: "sig"}}
+		if k := ti.extra.Load(); k != nil {
+			keys = append(keys, jose.JSONWebKey{Key: &k.PublicKey, KeyID: "k2", Algorithm: "RS256", Use: "sig"})
+		}
+		json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: keys})
 	})
 	return ti
 }
@@ -159,13 +184,14 @@ func TestOIDCRejects(t *testing.T) {
 	}
 }
 
-func TestOIDCIssuerDownIsNotInvalidToken(t *testing.T) {
+func TestOIDCIssuerDownIsUnavailable(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
 	srv.Close()
 	v := &OIDC{Issuer: srv.URL + "/", Audience: []string{"x"}}
-	_, err := v.Verify(context.Background(), "x.y.z")
-	if err == nil || errors.Is(err, ErrInvalidToken) {
-		t.Errorf("err = %v, want a non-token error", err)
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	_, err := v.Verify(context.Background(), sign(t, key, "k1", map[string]any{"sub": "a"}))
+	if !errors.Is(err, ErrUnavailable) || errors.Is(err, ErrInvalidToken) {
+		t.Errorf("err = %v, want ErrUnavailable", err)
 	}
 }
 

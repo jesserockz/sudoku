@@ -46,6 +46,10 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			unauthorized(w, "invalid or expired token")
 			return
 		}
+		if errors.Is(err, auth.ErrUnavailable) {
+			authUnavailable(w, err)
+			return
+		}
 		if err != nil {
 			httpx.Internal(w, r, err)
 			return
@@ -76,6 +80,19 @@ func (s *Server) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	})
+}
+
+// authUnavailableMessage is shown to players as is, so it doesn't mention
+// how sign-in works.
+const authUnavailableMessage = "Sign-in isn't available right now. Please try again later, and contact the admin if it still isn't working."
+
+// authUnavailable answers 503 when a token can't be checked for now (the
+// sign-in provider is unreachable and the token's key is new to the server).
+// Clients keep their tokens and retry.
+func authUnavailable(w http.ResponseWriter, err error) {
+	slog.Warn("token could not be checked", "err", err)
+	w.Header().Set("Retry-After", "30")
+	httpx.Error(w, http.StatusServiceUnavailable, httpx.CodeAuthUnavailable, authUnavailableMessage)
 }
 
 func unauthorized(w http.ResponseWriter, msg string) {
