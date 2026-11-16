@@ -12,13 +12,12 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/coreos/go-oidc/v3/oidc"
 )
 
 // ErrInvalidToken means the token was rejected; callers should answer 401.
-// Any other error from Verify is a server-side fault (e.g. the issuer is
-// unreachable) and should not make clients drop their tokens.
+// ErrUnavailable means it couldn't be checked for now (503). Any other error
+// from Verify is a server-side fault. Neither should make clients drop their
+// tokens.
 var ErrInvalidToken = errors.New("invalid token")
 
 // Identity is the caller as established by a verified token.
@@ -103,26 +102,46 @@ func (Dev) Verify(_ context.Context, token string) (Identity, error) {
 }
 
 // OIDC verifies JWT access tokens: signature against the issuer's JWKS,
-// iss, aud (any of Audience) and exp. The JWKS location is discovered from
-// the issuer on first use, so the server starts even if the issuer is down.
+// iss, aud (any of Audience) and exp. The keys are fetched from the issuer on
+// first use (so the server starts even if the issuer is down) and saved in
+// Cache, so after a restart tokens verify without the issuer. Only a token
+// signed with a key the server has never seen needs the issuer; while it is
+// down such a token gets ErrUnavailable.
 type OIDC struct {
 	Issuer   string
 	Audience []string
-	// Now overrides the clock for exp checks (tests).
+	// Now overrides the clock for exp checks and key ages (tests).
 	Now func() time.Time
 	// HTTPClient is used for discovery and JWKS fetches.
 	HTTPClient *http.Client
+	// Cache, when set, keeps the keys across restarts.
+	Cache KeyCache
+	// MaxAge is how old the keys get before a background refresh (default 1 hour).
+	MaxAge time.Duration
+	// MinInterval is the least time between fetches, so unknown key ids
+	// can't hammer the issuer (default 1 minute).
+	MinInterval time.Duration
 
-	mu       sync.Mutex
-	verifier *oidc.IDTokenVerifier
+	mu         sync.Mutex
+	loaded     bool
+	keys       *keySet
+	lastFetch  time.Time
+	lastErr    error
+	refreshing bool
+	fetchMu    sync.Mutex
+	background sync.WaitGroup
 }
 
 func (o *OIDC) Verify(ctx context.Context, token string) (Identity, error) {
-	v, err := o.getVerifier(ctx)
+	kid, err := keyID(token)
+	if err != nil {
+		return Identity{}, fmt.Errorf("%w: %v", ErrInvalidToken, err)
+	}
+	keys, err := o.keysFor(ctx, kid)
 	if err != nil {
 		return Identity{}, err
 	}
-	tok, err := v.Verify(ctx, token)
+	tok, err := keys.verifier.Verify(ctx, token)
 	if err != nil {
 		return Identity{}, fmt.Errorf("%w: %v", ErrInvalidToken, err)
 	}
@@ -142,31 +161,6 @@ func (o *OIDC) Verify(ctx context.Context, token string) (Identity, error) {
 		DisplayName: displayName(name, preferred, tok.Subject),
 		Claims:      all,
 	}, nil
-}
-
-func (o *OIDC) getVerifier(ctx context.Context) (*oidc.IDTokenVerifier, error) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	if o.verifier != nil {
-		return o.verifier, nil
-	}
-	client := o.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
-	}
-	jwksURL, err := discoverJWKS(ctx, client, o.Issuer)
-	if err != nil {
-		return nil, err
-	}
-	// The key set outlives this request, so give it a background context
-	// carrying only the HTTP client.
-	keyCtx := oidc.ClientContext(context.Background(), client)
-	o.verifier = oidc.NewVerifier(o.Issuer, oidc.NewRemoteKeySet(keyCtx, jwksURL), &oidc.Config{
-		SkipClientIDCheck:    true, // we check aud against a list ourselves
-		SupportedSigningAlgs: []string{"RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "EdDSA"},
-		Now:                  o.Now,
-	})
-	return o.verifier, nil
 }
 
 func discoverJWKS(ctx context.Context, client *http.Client, issuer string) (string, error) {

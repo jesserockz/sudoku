@@ -8,6 +8,9 @@ import {
   decodeWeek,
 } from "./models.ts";
 
+/** What players see when signing in can't happen right now. It doesn't say why, on purpose. */
+export const SIGN_IN_UNAVAILABLE = "Sign-in isn't available right now. Please try again later, and contact the admin if it still isn't working.";
+
 /** A non-2xx API response. `error` is the parsed error envelope, when there was one. */
 export class ApiException extends Error {
   readonly status: number;
@@ -21,6 +24,11 @@ export class ApiException extends Error {
 
   get isUnauthorized(): boolean {
     return this.status === 401;
+  }
+
+  /** The server couldn't check the sign-in for now (503 `auth_unavailable`): keep the session and retry later. */
+  get isAuthUnavailable(): boolean {
+    return this.status === 503 && this.error?.code === "auth_unavailable";
   }
 }
 

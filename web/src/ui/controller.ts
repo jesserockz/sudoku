@@ -1,4 +1,4 @@
-import { ApiException } from "../api/client.ts";
+import { ApiException, SIGN_IN_UNAVAILABLE } from "../api/client.ts";
 import type { AppConfig, EndlessBoard, EndlessProgress, EndlessResult, Leaderboard, Me, MyStats, Streak, Week } from "../api/models.ts";
 import { type HomeTab, endlessGameKey, parseEndlessGameKey } from "../data/app-storage.ts";
 import type { EndlessInProgress, EndlessSource } from "../data/endless.ts";
@@ -300,13 +300,13 @@ export class AppController extends EventTarget {
           ? "Some results haven't uploaded yet. They'll retry automatically."
           : report.rejected.length > 0 ? `The server rejected ${report.rejected.length} result(s).` : null;
       } catch (e) {
-        if (e instanceof ApiException) {
+        if ((e instanceof ApiException && e.isAuthUnavailable) || e instanceof OidcException) {
+          // Sign-in can't be checked or refreshed for now (the provider is down): the session is kept, so retry like offline.
+          this.#offline = true;
+          this.notice = `${SIGN_IN_UNAVAILABLE} Puzzles still work, and results upload once it's back.`;
+        } else if (e instanceof ApiException) {
           // An ended session has its own "Sign in again" banner; that is the one message.
           this.notice = e.isUnauthorized ? (this.#repo.needsSignIn ? null : "The server didn't accept your sign-in.") : describe(e);
-        } else if (e instanceof OidcException) {
-          // The sign-in server failed (5xx, 429...): the session is kept, so retry like offline.
-          this.#offline = true;
-          this.notice = "Can't reach the sign-in server. Puzzles still work; results upload once it's back.";
         } else {
           this.#offline = true;
           this.notice = "Offline. Puzzles still work; results upload when you're back online.";
@@ -577,7 +577,7 @@ export class AppController extends EventTarget {
     this.#repo.beginOidcSignIn(this.origin, oidc).then(
       (url) => this.#host.location.assign(url),
       () => {
-        const message = "Couldn't reach the identity provider. Check your connection and try again.";
+        const message = SIGN_IN_UNAVAILABLE;
         if (this.phase.kind === "ready") this.#set({ notice: message });
         else this.#set({ phase: { kind: "failed", message } });
       },
@@ -747,7 +747,7 @@ export class AppController extends EventTarget {
       },
       (e) => {
         if (request !== this.#leaderboardRequest) return;
-        this.leaderboardError = e instanceof ApiException ? describe(e) : "You're offline. The leaderboard needs a connection to the server.";
+        this.leaderboardError = e instanceof ApiException || e instanceof OidcException ? describe(e) : "You're offline. The leaderboard needs a connection to the server.";
       },
     ).finally(() => this.#changed());
   }
@@ -823,7 +823,7 @@ export class AppController extends EventTarget {
       },
       (e) => {
         if (request !== this.#statsRequest) return;
-        this.statsError = e instanceof ApiException ? describe(e) : "You're offline. Your stats need a connection to the server.";
+        this.statsError = e instanceof ApiException || e instanceof OidcException ? describe(e) : "You're offline. Your stats need a connection to the server.";
       },
     ).finally(() => this.#changed());
   }
@@ -851,7 +851,7 @@ export class AppController extends EventTarget {
       },
       (e) => {
         if (request !== this.#leaderboardRequest) return;
-        this.leaderboardError = e instanceof ApiException ? describe(e) : "You're offline. The leaderboard needs a connection to the server.";
+        this.leaderboardError = e instanceof ApiException || e instanceof OidcException ? describe(e) : "You're offline. The leaderboard needs a connection to the server.";
       },
     ).finally(() => this.#changed());
   }
@@ -948,6 +948,7 @@ const sameEndless = (a: EndlessRef, b: EndlessRef) => a.generator === b.generato
 
 function describe(e: unknown): string {
   if (e instanceof SignInError) return e.message || "Sign-in failed.";
+  if (e instanceof OidcException) return SIGN_IN_UNAVAILABLE;
   if (e instanceof ApiException) return e.error?.message.trim() || (e.isUnauthorized ? "Your sign-in has expired." : `Server error (HTTP ${e.status})`);
   return "Can't reach the server. Check your connection and try again.";
 }

@@ -35,11 +35,14 @@ Non-2xx responses carry:
 | 409    | `downgrade_not_confirmed` | Not an upgrade, `allowDowngrade` unset (admin) |
 | 500    | `internal`                | Server fault                                   |
 | 502    | `upstream_error`          | GitHub failed (admin endpoints)                |
+| 503    | `auth_unavailable`        | Token can't be checked for now (see below)     |
 
 ## Authentication
 
 - Every endpoint except `GET /api/v1/config` and `GET /healthz` requires `Authorization: Bearer <access token>`.
 - In production the token is an OIDC access token (JWT) issued by the OIDC provider (e.g. Authentik). The server verifies signature (via the issuer's JWKS), `iss`, `aud`, and `exp`.
+- The server fetches the JWKS on first use and saves it in its database, so it keeps verifying tokens while the provider is down, across restarts too. It refreshes the keys in the background once they are an hour old (a failed refresh keeps the old ones), and fetches them straight away for a token whose `kid` it doesn't know (at most once a minute).
+- When a token can't be checked because the provider is unreachable and the server has no key for it (a fresh install, or a new signing key), the server answers `503 auth_unavailable` with `Retry-After: 30` and a message fit to show players. Clients keep their tokens and retry; it is never a reason to sign out.
 - The user is keyed by the token's `sub`. Display name is taken from `name`, falling back to `preferred_username`, then `sub`. A user record is created on first authenticated request and the display name refreshed on later ones.
 
 ### Dev auth mode

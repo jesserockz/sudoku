@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -148,6 +149,19 @@ func TestRunErrors(t *testing.T) {
 			return env(k)
 		}
 		r := start(t, ctx, nil, oidcEnv)
+		// The provider can't be reached and no keys are saved: a token can't be
+		// checked, which is 503 auth_unavailable, not 401 or 500.
+		req, _ := http.NewRequest("GET", "http://"+r.addr+"/api/v1/me", nil)
+		req.Header.Set("Authorization", "Bearer eyJhbGciOiJSUzI1NiIsImtpZCI6ImsifQ.e30.c2ln")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusServiceUnavailable || !strings.Contains(string(body), "auth_unavailable") {
+			t.Errorf("status %d, body %s", resp.StatusCode, body)
+		}
 		cancel()
 		wait(t, r.done)
 	})
