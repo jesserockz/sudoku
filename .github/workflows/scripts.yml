@@ -25,3 +25,5 @@ jobs:
         uses: actions/checkout@v7.0.1
       - name: Run script tests
         run: .github/scripts/test-preview.sh
+      - name: Run release script tests
+        run: .github/scripts/test-release.sh

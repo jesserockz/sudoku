@@ -877,8 +877,9 @@ the same way: upload the contents of `web/dist`, or unzip a release's
 **Releases**: on every push to `main`, the **Release** workflow updates a draft
 release with [Release Drafter](https://github.com/release-drafter/release-drafter)
 (notes from merged pull requests, grouped and versioned by their labels, see
-`.github/release-drafter.yml`) and attaches fresh builds to it: the server
-binaries and `sudoku-web.zip`. Publishing the draft deploys the files in that
+`.github/release-drafter.yml`), deletes the assets the draft had, and attaches
+fresh builds to it: the server binaries and `sudoku-web.zip`. If a build fails
+the draft is left with no assets rather than stale ones. Publishing the draft deploys the files in that
 `sudoku-web.zip` to Pages as they are, without rebuilding, so the site is
 exactly what was attached to the draft. Running **Web (GitHub Pages)** by hand
 redeploys the latest release, or the tag given.

@@ -6,10 +6,13 @@ name: Release
 # bump to main. Pushes made with the workflow's token don't trigger workflows,
 # so that commit doesn't start another run.
 # Release Drafter then updates the draft release, targeting the bump commit,
-# and this workflow rebuilds the server and the web client from that commit and
-# attaches them to the draft, replacing what was there. Publishing the release
-# deploys its attached `sudoku-web.zip` to GitHub Pages without rebuilding
-# (pages.yml), so the site is exactly the bundle that was attached to the draft.
+# and every asset on the draft is deleted straight away, so a draft never
+# carries a new description with the previous builds. This workflow then
+# rebuilds the server and the web client from that commit and attaches them to
+# the draft. If a build fails or the run is cancelled the draft is left with no
+# assets rather than stale ones. Publishing the release deploys its attached
+# `sudoku-web.zip` to GitHub Pages without rebuilding (pages.yml), so the site
+# is exactly the bundle that was attached to the draft.
 
 on:
   push:
@@ -31,6 +34,7 @@ jobs:
       contents: write
       pull-requests: read
     outputs:
+      id: ${{ steps.drafter.outputs.id }}
       tag_name: ${{ steps.drafter.outputs.tag_name }}
       sha: ${{ steps.bump.outputs.sha }}
     steps:
@@ -77,6 +81,17 @@ jobs:
         uses: release-drafter/release-drafter@v7.10.0
         with:
           commitish: ${{ steps.bump.outputs.sha }}
+      - name: Clear the draft's assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ID: ${{ steps.drafter.outputs.id }}
+        run: |
+          if [ -z "$ID" ]; then
+            echo "::error::Release Drafter did not return the draft's id"
+            exit 1
+          fi
+          .github/scripts/clear-draft-assets.sh "$GH_REPO" "$ID"
 
   server:
     name: Server binaries
@@ -155,19 +170,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          ID: ${{ needs.draft.outputs.id }}
           TAG: ${{ needs.draft.outputs.tag_name }}
         run: |
           # The server's self-update verifies its download against this file.
           (cd dist && sha256sum * > SHA256SUMS)
           ls -l dist
-          if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" != "true" ]; then
-            echo "::error::$TAG is not a draft release; not touching its assets"
-            exit 1
-          fi
           # The version (and so the tag) can change between runs, and the draft
           # should only carry this commit's builds, so start from no assets.
-          gh release view "$TAG" --json assets --jq '.assets[].name' |
-            while read -r name; do gh release delete-asset "$TAG" "$name" --yes; done
+          # They were already cleared when the draft was updated; this covers
+          # a rerun of just this job.
+          .github/scripts/clear-draft-assets.sh "$GH_REPO" "$ID"
           gh release upload "$TAG" dist/*
       - name: Link the downloads in the release notes
         env:
