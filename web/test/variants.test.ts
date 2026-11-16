@@ -11,7 +11,7 @@ import { ABORTED, cageDigits, countSolutionsIn, hasUniqueSolutionIn, randomSolut
 import { Xoshiro256StarStar } from "../src/generator/random.ts";
 import { randomSolution } from "../src/generator/solver.ts";
 import {
-  FALLBACK_JIGSAWS, GRADED_GIVENS, KILLER_CAGES, VariantPuzzle, buildClassicVariant, buildGradedVariant, carveCages, generateEndlessVariant, jigsawLayout, relabel,
+  CAGE_EMPTY_MIN, FALLBACK_JIGSAWS, GRADED_GIVENS, KILLER_CAGES, VariantPuzzle, buildClassicVariant, buildGradedVariant, cagesPlayable, carveCages, generateEndlessVariant, jigsawLayout, relabel,
   removeCellsIn, reshapeRegions, variantPuzzleSeed,
 } from "../src/generator/variants.ts";
 import { generateEndlessVersion } from "../src/generator/versions.ts";
@@ -27,8 +27,8 @@ interface Fixture {
   killerTechniques: string[];
   puzzles: (LayoutCase & { generator: number; seed: string; tier: number; number: number; puzzleSeed: string; givens: string; solution: string; gradeLevel?: number })[];
   jigsaws: { seed: string; maxAttempts: number; regions: string; solution: string; attempts: number; fallback: boolean }[];
-  cages: { tier: number; solution: string; seed: string; cages: Cage[] }[];
-  classic: (LayoutCase & { seed: string; tier: number; givens: string; solution: string; attempts: number })[];
+  cages: { minSize: number; maxSize: number; solution: string; seed: string; cages: Cage[] }[];
+  classic: (LayoutCase & { seed: string; tier: number; maxAttempts: number; givens: string; solution: string; attempts: number })[];
   fallback: (LayoutCase & { seed: string; tier: number; maxAttempts: number; givens: string; solution: string; gradeLevel: number; attempts: number })[];
   solver: (LayoutCase & { givens: string; nodeLimit: number; count: number })[];
   grader: (LayoutCase & { givens: string; solved: boolean; level: number; steps: number; counts: number[] })[];
@@ -111,20 +111,34 @@ test("fixture jigsaw layouts, including every fallback", () => {
 
 test("fixture killer cages", () => {
   for (const c of fixture.cages) {
-    const cages = carveCages(digits(c.solution), new Xoshiro256StarStar(parseWeekSeed(c.seed)), KILLER_CAGES[c.tier - 1]!);
+    const cages = carveCages(digits(c.solution), new Xoshiro256StarStar(parseWeekSeed(c.seed)), c);
     assert.deepEqual(cages, c.cages);
     assert.ok(Layout.killer(cages).isValid(digits(c.solution)));
-    assert.ok(cages.every((cage) => cage.cells.length <= KILLER_CAGES[c.tier - 1]!.maxSize));
   }
+  // Every tier's cages have at least two cells; a singleton joins a cage whatever its size, and stays only without a neighbour to take it.
+  for (const c of fixture.cages) {
+    const sizes = c.cages.map((cage) => cage.cells.length);
+    assert.equal(Math.min(...sizes) >= 2, c.minSize > 1, `${c.minSize} to ${c.maxSize}`);
+  }
+  assert.ok(fixture.cages.some((c) => c.cages.some((cage) => cage.cells.length > c.maxSize)));
 });
 
 test("fixture Classic builds that retried", () => {
   for (const c of fixture.classic) {
-    const b = buildClassicVariant(parseWeekSeed(c.seed), c.variant, c.tier);
+    const b = buildClassicVariant(parseWeekSeed(c.seed), c.variant, c.tier, c.maxAttempts);
     assert.deepEqual([b.givens, b.solution, b.grade, b.attempts], [c.givens, c.solution, null, c.attempts], c.seed);
     assert.deepEqual(b.layout.cages, layoutOf(c).cages);
     assert.ok(c.attempts > 1);
   }
+});
+
+test("fixture builds whose every Killer attempt is unplayable still return one", () => {
+  for (const c of [...fixture.classic, ...fixture.fallback]) {
+    if (c.variant !== VARIANT_KILLER || c.maxAttempts !== 3) continue;
+    assert.equal(c.attempts, 3);
+    assert.ok(!cagesPlayable(layoutOf(c), digits(c.givens)), c.seed);
+  }
+  assert.ok(fixture.classic.some((c) => c.maxAttempts === 3) && fixture.fallback.some((c) => c.maxAttempts === 3));
 });
 
 test("fixture forced fallbacks of Graded variants", () => {
@@ -257,4 +271,51 @@ test("every grader step under a variant places a true digit and never removes a 
       }
     }
   }
+});
+
+test("every Killer cage keeps two empty cells, in both generators and every tier", () => {
+  for (const generator of [1, 2]) {
+    for (let tier = 1; tier <= 5; tier++) {
+      for (const number of [1, 2, 3, 4]) {
+        const p = generateEndlessVariant(generator, VARIANT_KILLER, 99n, tier, number);
+        const givens = digits(p.givens);
+        assert.ok(cagesPlayable(p.layout, givens), `generator ${generator} tier ${tier} #${number}`);
+        for (const cage of p.layout.cages) {
+          assert.ok(cage.cells.length >= 2);
+          assert.ok(cage.cells.filter((c) => givens[c] === 0).length >= CAGE_EMPTY_MIN);
+        }
+        assert.ok(hasUniqueSolutionIn(p.layout, givens, Number.MAX_SAFE_INTEGER));
+      }
+    }
+  }
+});
+
+test("cagesPlayable counts the empty cells of every cage", () => {
+  const sol = randomSolution(empty(), new Xoshiro256StarStar(8n))!;
+  const layout = Layout.killer(carveCages(sol, new Xoshiro256StarStar(9n), KILLER_CAGES[0]!));
+  assert.ok(cagesPlayable(layout, empty()));
+  assert.ok(!cagesPlayable(layout, sol));
+  const grid = empty();
+  layout.cages.forEach((cage) => cage.cells.slice(2).forEach((c) => (grid[c] = sol[c]!)));
+  assert.ok(cagesPlayable(layout, grid));
+  grid[layout.cages[0]!.cells[1]!] = sol[layout.cages[0]!.cells[1]!]!;
+  assert.ok(!cagesPlayable(layout, grid));
+  assert.ok(cagesPlayable(Layout.STANDARD, sol));
+});
+
+test("removeCellsIn tries the first two cells of each cage first, whatever the target", () => {
+  const sol = randomSolution(empty(), new Xoshiro256StarStar(21n))!;
+  const layout = Layout.killer(carveCages(sol, new Xoshiro256StarStar(22n), KILLER_CAGES[2]!));
+  // A target of every cell would remove nothing from a standard layout; a Killer one still empties two cells per cage.
+  const grid = removeCellsIn(layout, sol, CELLS, new Xoshiro256StarStar(23n));
+  assert.ok(cagesPlayable(layout, grid));
+  assert.equal(grid.filter((d) => d === 0).length, layout.cages.length * CAGE_EMPTY_MIN);
+  assert.equal(removeCellsIn(Layout.DIAGONAL, randomSolutionIn(Layout.DIAGONAL, empty(), new Xoshiro256StarStar(1n))!, CELLS, new Xoshiro256StarStar(23n)).filter((d) => d === 0).length, 0);
+  // The same draws with the budget at zero: no removal is provable, so the cages stay unplayable.
+  const stuck = removeCellsIn(layout, sol, CELLS, new Xoshiro256StarStar(23n), 0);
+  assert.deepEqual(stuck, sol);
+  assert.ok(!cagesPlayable(layout, stuck));
+  // Beyond the forced cells, removal stops at the target.
+  const some = removeCellsIn(layout, sol, 40, new Xoshiro256StarStar(23n));
+  assert.ok(some.filter((d) => d !== 0).length <= 40 && cagesPlayable(layout, some));
 });

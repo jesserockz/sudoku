@@ -21,7 +21,8 @@ import { GENERATOR_CLASSIC, GENERATOR_GRADED, generateEndlessVersion } from "./v
  * Generation follows the standard generators with the variant's rules:
  * - Classic: clue-count tiers. Diagonal and Jigsaw remove cells (keeping a
  *   unique solution under the variant's units) to 40/36/32/28/24 givens;
- *   Killer to {@link KILLER_GIVENS}, with cages from {@link KILLER_CAGES}.
+ *   Killer to {@link KILLER_GIVENS}, with cages from {@link KILLER_CAGES}
+ *   and at least two empty cells in every cage (see {@link removeCellsIn}).
  *   Up to {@link MAX_ATTEMPTS} attempts, the one with the fewest givens wins.
  * - Graded: the grader (`grader.ts`) under the variant's layout, the tiers'
  *   bands of `generator-v2.ts` (removal targets {@link GRADED_GIVENS}), up
@@ -54,7 +55,7 @@ export const GRADED_GIVENS: readonly (readonly number[])[] = [
   BANDS.map((b) => b.targetGivens),
   [38, 26, 25, 23, 24],
   [38, 25, 24, 24, 23],
-  [44, 24, 6, 3, 3],
+  [40, 26, 10, 6, 3],
 ];
 
 /** The cage sizes of a killer tier: each cage aims for a size drawn from `minSize..maxSize`. */
@@ -65,15 +66,15 @@ export interface CagePolicy {
 
 /** Cage sizes per tier (Easy to Diabolical), both generators: bigger cages are harder. */
 export const KILLER_CAGES: readonly CagePolicy[] = [
-  { minSize: 1, maxSize: 3 },
-  { minSize: 2, maxSize: 3 },
-  { minSize: 2, maxSize: 4 },
-  { minSize: 2, maxSize: 5 },
+  { minSize: 3, maxSize: 4 },
+  { minSize: 3, maxSize: 4 },
   { minSize: 3, maxSize: 5 },
+  { minSize: 3, maxSize: 5 },
+  { minSize: 4, maxSize: 5 },
 ];
 
-/** Classic Killer: the givens each tier (Easy to Diabolical) removes down to. */
-export const KILLER_GIVENS: readonly number[] = [24, 16, 10, 6, 5];
+/** Classic Killer: the givens each tier (Easy to Diabolical) removes down to (the two empty cells every cage keeps can take it lower). */
+export const KILLER_GIVENS: readonly number[] = [30, 22, 14, 9, 6];
 
 /**
  * Jigsaw layouts used, by puzzle seed (`seed mod 4`), only when
@@ -215,6 +216,9 @@ export function relabel(solution: readonly number[], random: Xoshiro256StarStar)
  * yet, until it reaches its size or cannot grow. Then each cage smaller than
  * `minSize`, in the order made, joins the first (in the order made) adjacent
  * cage it fits into: at most `maxSize` cells together and no repeated digit.
+ * Finally each cage still of one cell joins the first adjacent cage without
+ * its digit, whatever that cage's size; one with no such neighbour stays and
+ * the board is rejected (see {@link cagesPlayable}).
  */
 export function carveCages(solution: readonly number[], random: Xoshiro256StarStar, policy: CagePolicy): Cage[] {
   const { minSize, maxSize } = policy;
@@ -247,30 +251,62 @@ export function carveCages(solution: readonly number[], random: Xoshiro256StarSt
       cageOf[c] = k;
     }
   }
-  for (let k = 0; k < cages.length; k++) {
-    const cage = cages[k]!;
-    if (cage.length === 0 || cage.length >= minSize) continue;
-    for (let j = 0; j < cages.length; j++) {
-      const other = cages[j]!;
-      if (j === k || other.length === 0 || other.length + cage.length > maxSize || (digits(j) & digits(k)) !== 0) continue;
-      if (!cage.some((c) => touches(c, j))) continue;
-      for (const c of cage) cageOf[c] = j;
-      other.push(...cage);
-      cage.length = 0;
-      break;
+  // Merges each cage of fewer than `below` cells into the first adjacent cage it fits into (at most `limit` cells together).
+  const mergeSmall = (below: number, limit: number): void => {
+    for (let k = 0; k < cages.length; k++) {
+      const cage = cages[k]!;
+      if (cage.length === 0 || cage.length >= below) continue;
+      for (let j = 0; j < cages.length; j++) {
+        const other = cages[j]!;
+        if (j === k || other.length === 0 || other.length + cage.length > limit || (digits(j) & digits(k)) !== 0) continue;
+        if (!cage.some((c) => touches(c, j))) continue;
+        for (const c of cage) cageOf[c] = j;
+        other.push(...cage);
+        cage.length = 0;
+        break;
+      }
     }
-  }
+  };
+  mergeSmall(minSize, maxSize);
+  mergeSmall(2, CELLS);
   return cages.filter((c) => c.length > 0).map((cells) => ({ cells, sum: cells.reduce((s, c) => s + solution[c]!, 0) }));
 }
 
-/** {@link removeCells} under a layout: cells in an order drawn from `random`, each removed if the puzzle stays provably unique, down to `target` givens. */
+/** Cells every cage of a Killer layout must keep empty for the player. */
+export const CAGE_EMPTY_MIN = 2;
+
+/** Whether every cage of a Killer layout has at least {@link CAGE_EMPTY_MIN} cells empty in `grid` (always true for other layouts). */
+export function cagesPlayable(layout: Layout, grid: readonly number[]): boolean {
+  return layout.cages.every((cage) => cage.cells.reduce((n, c) => n + (grid[c] === 0 ? 1 : 0), 0) >= CAGE_EMPTY_MIN);
+}
+
+/**
+ * {@link removeCells} under a layout: cells in an order drawn from `random`,
+ * each removed if the puzzle stays provably unique, down to `target` givens.
+ * Under a Killer layout the first {@link CAGE_EMPTY_MIN} cells of every cage
+ * in that order are tried first and whatever the target (so the grid can end
+ * below it): a cage keeps them empty unless removing one would lose
+ * uniqueness, which {@link cagesPlayable} then reports.
+ */
 export function removeCellsIn(layout: Layout, solution: readonly number[], target: number, random: Xoshiro256StarStar, nodeLimit = REMOVAL_NODES): number[] {
   const grid = solution.slice();
   const order = Array.from({ length: CELLS }, (_, i) => i);
   random.shuffle(order);
+  const forced = new Set<number>();
+  if (layout.variant === VARIANT_KILLER) {
+    const seen = new Array<number>(layout.cages.length).fill(0);
+    for (const i of order) {
+      const k = layout.cageOf[i]!;
+      if (seen[k]! < CAGE_EMPTY_MIN) {
+        seen[k]!++;
+        forced.add(i);
+      }
+    }
+    order.sort((a, b) => Number(forced.has(b)) - Number(forced.has(a)));
+  }
   let count = CELLS;
   for (const i of order) {
-    if (count <= target) break;
+    if (count <= target && !forced.has(i)) break;
     const digit = grid[i]!;
     grid[i] = 0;
     if (hasUniqueSolutionIn(layout, grid, nodeLimit)) count--;
@@ -278,6 +314,9 @@ export function removeCellsIn(layout: Layout, solution: readonly number[], targe
   }
   return grid;
 }
+
+/** Added to the distance key of an attempt that is not playable, so it ranks after every playable one. */
+const UNPLAYABLE_KEY = 100000;
 
 /** One attempt's full grid and layout. */
 interface Attempt {
@@ -313,23 +352,27 @@ export interface VariantBuild {
 
 /**
  * Classic variant puzzle from a puzzle seed and tier (1..5): up to
- * {@link MAX_ATTEMPTS} attempts, each a full grid (and layout) with cells
- * removed down to the tier's target; the first to reach it, or else the one
- * with the fewest givens (the earliest on ties), wins.
+ * `maxAttempts` (at least 1, default {@link MAX_ATTEMPTS}) attempts, each a
+ * full grid (and layout) with cells removed down to the tier's target; the
+ * first playable one (every Killer cage keeps {@link CAGE_EMPTY_MIN} empty
+ * cells) to reach it, or else the playable one with the fewest givens (the
+ * earliest on ties), wins. Attempts that are not playable are only taken when
+ * none is.
  */
-export function buildClassicVariant(seed: bigint, variant: number, tier: number): VariantBuild {
+export function buildClassicVariant(seed: bigint, variant: number, tier: number, maxAttempts = MAX_ATTEMPTS): VariantBuild {
   const random = new Xoshiro256StarStar(seed);
   const next = boards(variant, seed, tier, random);
   const target = variant === VARIANT_KILLER ? KILLER_GIVENS[tier - 1]! : DIFFICULTIES[tier - 1]!.targetGivens;
-  let best: { board: Attempt; givens: number[]; count: number } | null = null;
+  let best: { board: Attempt; givens: number[]; count: number; playable: boolean } | null = null;
   let attempts = 0;
-  while (attempts < MAX_ATTEMPTS) {
+  while (attempts < maxAttempts) {
     attempts++;
     const board = next();
     const givens = removeCellsIn(board.layout, board.solution, target, random);
     const count = givens.filter((v) => v !== 0).length;
-    if (!best || count < best.count) best = { board, givens, count };
-    if (count <= target) break;
+    const playable = cagesPlayable(board.layout, givens);
+    if (!best || (playable && !best.playable) || (playable === best.playable && count < best.count)) best = { board, givens, count, playable };
+    if (playable && count <= target) break;
   }
   return { givens: best!.givens.join(""), solution: best!.board.solution.join(""), layout: best!.board.layout, grade: null, attempts };
 }
@@ -340,6 +383,8 @@ export function buildClassicVariant(seed: bigint, variant: number, tier: number)
  * layout) with cells removed to {@link GRADED_GIVENS} and graded under the
  * layout; the first in the band wins, else the non-stuck attempt nearest the
  * band (the easier on equal distance, then the earliest), else the earliest.
+ * Attempts that are not playable (see {@link cagesPlayable}) rank after every
+ * playable one.
  */
 export function buildGradedVariant(seed: bigint, variant: number, tier: number, maxAttempts = MAX_ATTEMPTS_VARIANT_GRADED[variant]!): VariantBuild {
   const band = BANDS[tier - 1]!;
@@ -353,11 +398,12 @@ export function buildGradedVariant(seed: bigint, variant: number, tier: number, 
     const board = next();
     const givens = removeCellsIn(board.layout, board.solution, GRADED_GIVENS[variant]![tier - 1]!, random);
     const g = grade(givens, board.layout);
-    if (g.level >= band.minLevel && g.level <= band.maxLevel) {
+    const playable = cagesPlayable(board.layout, givens);
+    if (playable && g.level >= band.minLevel && g.level <= band.maxLevel) {
       best = { board, givens, grade: g };
       break;
     }
-    const key = g.level === STUCK_LEVEL ? 1000 : (g.level < band.minLevel ? band.minLevel - g.level : g.level - band.maxLevel) * 10 + g.level;
+    const key = (playable ? 0 : UNPLAYABLE_KEY) + (g.level === STUCK_LEVEL ? 1000 : (g.level < band.minLevel ? band.minLevel - g.level : g.level - band.maxLevel) * 10 + g.level);
     if (best === null || key < bestKey) {
       best = { board, givens, grade: g };
       bestKey = key;

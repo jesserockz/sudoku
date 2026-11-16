@@ -183,6 +183,15 @@ async function place(page, cell, digit) {
   check(dashed === "dashed", "cage outlines are dashed");
   cells = page.locator("[role=gridcell]");
   check((await readGrid(cells)).join("") === killer.givens, "the app's Killer Easy #1 is the generator's");
+  // Paused, the overlay covers the sums too: the topmost element over each sum is the overlay.
+  await page.getByRole("button", { name: "Pause" }).click();
+  await page.locator(".paused").waitFor();
+  const covered = await page.locator(".cage-sum").evaluateAll((els) => els.every((e) => {
+    const r = e.getBoundingClientRect();
+    return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.closest(".paused") != null;
+  }));
+  check(covered, "pausing hides the cage sums");
+  await page.getByRole("button", { name: "Resume" }).click();
   // Notes in the first cell of a cage, and a colour pen, for the screenshots.
   const first = killer.layout.cages.find((c) => killer.givens[c.cells[0]] === "0").cells[0];
   await cells.nth(first).click();

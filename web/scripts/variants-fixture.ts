@@ -18,7 +18,7 @@ import { countSolutionsIn, randomSolutionIn } from "../src/generator/layout-solv
 import { Xoshiro256StarStar } from "../src/generator/random.ts";
 import { randomSolution } from "../src/generator/solver.ts";
 import {
-  GRADED_GIVENS, KILLER_CAGES, buildClassicVariant, buildGradedVariant, carveCages, generateEndlessVariant, jigsawLayout, relabel, removeCellsIn, variantPuzzleSeed,
+  GRADED_GIVENS, KILLER_CAGES, buildClassicVariant, buildGradedVariant, cagesPlayable, carveCages, generateEndlessVariant, jigsawLayout, relabel, removeCellsIn, variantPuzzleSeed,
 } from "../src/generator/variants.ts";
 import { formatWeekSeed, parseWeekSeed } from "../src/generator/week-seed.ts";
 
@@ -63,15 +63,30 @@ for (let s = 100n; ; s++) {
 /** Cages carved over a fixed grid with each tier's policy. */
 const cageRandom = new Xoshiro256StarStar(777n);
 const cageSolution = randomSolution(new Array<number>(CELLS).fill(0), cageRandom)!;
-const cages = KILLER_CAGES.map((policy, i) => ({ tier: i + 1, solution: str(cageSolution), seed: formatWeekSeed(BigInt(i + 1)), cages: carveCages(cageSolution, new Xoshiro256StarStar(BigInt(i + 1)), policy) }));
+const cages = [
+  ...KILLER_CAGES.map((policy, i) => ({ seed: BigInt(i + 1), policy })),
+  // Singletons joining a cage of any size (3 to 3 cells), and one that no cage can take (kept: unplayable).
+  { seed: 1n, policy: { minSize: 3, maxSize: 3 } },
+  { seed: 4n, policy: { minSize: 1, maxSize: 1 } },
+].map(({ seed, policy }) => ({ ...policy, solution: str(cageSolution), seed: formatWeekSeed(seed), cages: carveCages(cageSolution, new Xoshiro256StarStar(seed), policy) }));
 
-/** Classic builds that needed more than one attempt (the first missed its target). */
-const classic = ([[VARIANT_KILLER, 5], [VARIANT_KILLER, 4]] as const).map(([variant, tier]) => {
+/** Classic builds that needed more than one attempt (the first missed its target, or Killer cages were left with fewer than two empty cells). */
+const classic = ([[VARIANT_KILLER, 5], [VARIANT_KILLER, 4], [VARIANT_KILLER, 1]] as const).map(([variant, tier]) => {
   for (let n = 1; ; n++) {
     const seed = variantPuzzleSeed(1, variant, 4242n, tier, n);
     const b = buildClassicVariant(seed, variant, tier);
     if (b.attempts < 2) continue;
-    return { seed: formatWeekSeed(seed), variant, tier, givens: b.givens, solution: b.solution, ...layoutJson(b.layout), attempts: b.attempts };
+    return { seed: formatWeekSeed(seed), variant, tier, maxAttempts: 8, givens: b.givens, solution: b.solution, ...layoutJson(b.layout), attempts: b.attempts };
+  }
+});
+
+/** Classic Killer builds whose every attempt is unplayable (three allowed): the one with the fewest givens is kept. */
+const classicUnplayable = ([1, 2] as const).map((tier) => {
+  for (let n = 1; ; n++) {
+    const seed = variantPuzzleSeed(1, VARIANT_KILLER, 4242n, tier, n);
+    const b = buildClassicVariant(seed, VARIANT_KILLER, tier, 3);
+    if (cagesPlayable(b.layout, [...b.givens].map(Number))) continue;
+    return { seed: formatWeekSeed(seed), variant: VARIANT_KILLER as number, tier, maxAttempts: 3, givens: b.givens, solution: b.solution, ...layoutJson(b.layout), attempts: b.attempts };
   }
 });
 
@@ -81,6 +96,19 @@ const fallback = ([[VARIANT_DIAGONAL, 4, 1], [VARIANT_DIAGONAL, 2, 3], [VARIANT_
   const b = buildGradedVariant(seed, variant, tier, maxAttempts);
   return { seed: formatWeekSeed(seed), variant, tier, maxAttempts, givens: b.givens, solution: b.solution, ...layoutJson(b.layout), gradeLevel: b.grade!.level, attempts: b.attempts };
 });
+
+(classic as object[]).push(...classicUnplayable);
+
+/** Graded Killer builds whose every attempt is unplayable (three allowed). */
+const fallbackUnplayable = ([1, 2] as const).map((tier) => {
+  for (let n = 1; ; n++) {
+    const seed = variantPuzzleSeed(2, VARIANT_KILLER, 4242n, tier, n);
+    const b = buildGradedVariant(seed, VARIANT_KILLER, tier, 3);
+    if (cagesPlayable(b.layout, [...b.givens].map(Number))) continue;
+    return { seed: formatWeekSeed(seed), variant: VARIANT_KILLER as number, tier, maxAttempts: 3, givens: b.givens, solution: b.solution, ...layoutJson(b.layout), gradeLevel: b.grade!.level, attempts: b.attempts };
+  }
+});
+(fallback as object[]).push(...fallbackUnplayable);
 
 /** Solution counts with node budgets, including aborted searches. */
 const solverCases = (() => {

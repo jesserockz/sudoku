@@ -277,7 +277,8 @@ a `VariantPuzzle` (an `EndlessPuzzle` with `generator`, `variant` and
   The shared fixture `testdata/variants.json` (regenerate with
   `node scripts/variants-fixture.ts`) pins the Go port. Generation takes a
   few milliseconds typically; the slowest measured (Graded Killer, the
-  hardest tiers) took 0.74 s.
+  hardest tiers) took 0.74 s before the Killer rule of two empty cells per
+  cage, about 1.8 s since (see `docs/API.md`).
 
 ### Generator setting
 

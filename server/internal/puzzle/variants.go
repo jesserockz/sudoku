@@ -41,7 +41,7 @@ var GradedGivens = [Variants][Tiers]int{
 	{38, 30, 0, 0, 0},
 	{38, 26, 25, 23, 24},
 	{38, 25, 24, 24, 23},
-	{44, 24, 6, 3, 3},
+	{40, 26, 10, 6, 3},
 }
 
 // CagePolicy is the cage sizes of a killer tier: each cage aims for a size
@@ -50,10 +50,10 @@ type CagePolicy struct{ MinSize, MaxSize int }
 
 // KillerCages is the cage sizes per tier (Easy to Diabolical), both
 // generators.
-var KillerCages = [Tiers]CagePolicy{{1, 3}, {2, 3}, {2, 4}, {2, 5}, {3, 5}}
+var KillerCages = [Tiers]CagePolicy{{3, 4}, {3, 4}, {3, 5}, {3, 5}, {4, 5}}
 
 // KillerGivens is the givens each Classic Killer tier removes down to.
-var KillerGivens = [Tiers]int{24, 16, 10, 6, 5}
+var KillerGivens = [Tiers]int{30, 22, 14, 9, 6}
 
 // fallbackJigsaws are the jigsaw layouts used, by puzzle seed (seed mod 4),
 // only when MaxJigsawAttempts generated layouts all fail: a region index per
@@ -246,31 +246,37 @@ func carveCages(solution [cells]int, random *xoshiro, policy CagePolicy) []Cage 
 			cageOf[c] = k
 		}
 	}
-	for k := range cages {
-		cage := cages[k]
-		if len(cage) == 0 || len(cage) >= policy.MinSize {
-			continue
-		}
-		for j := range cages {
-			other := cages[j]
-			if j == k || len(other) == 0 || len(other)+len(cage) > policy.MaxSize || digits(j)&digits(k) != 0 {
+	// mergeSmall joins each cage of fewer than below cells to the first
+	// adjacent cage it fits into (at most limit cells together).
+	mergeSmall := func(below, limit int) {
+		for k := range cages {
+			cage := cages[k]
+			if len(cage) == 0 || len(cage) >= below {
 				continue
 			}
-			touching := false
-			for _, c := range cage {
-				touching = touching || touches(c, j)
+			for j := range cages {
+				other := cages[j]
+				if j == k || len(other) == 0 || len(other)+len(cage) > limit || digits(j)&digits(k) != 0 {
+					continue
+				}
+				touching := false
+				for _, c := range cage {
+					touching = touching || touches(c, j)
+				}
+				if !touching {
+					continue
+				}
+				for _, c := range cage {
+					cageOf[c] = j
+				}
+				cages[j] = append(other, cage...)
+				cages[k] = nil
+				break
 			}
-			if !touching {
-				continue
-			}
-			for _, c := range cage {
-				cageOf[c] = j
-			}
-			cages[j] = append(other, cage...)
-			cages[k] = nil
-			break
 		}
 	}
+	mergeSmall(policy.MinSize, policy.MaxSize)
+	mergeSmall(2, cells)
 	var out []Cage
 	for _, cs := range cages {
 		if len(cs) == 0 {
@@ -285,9 +291,31 @@ func carveCages(solution [cells]int, random *xoshiro, policy CagePolicy) []Cage 
 	return out
 }
 
+// CageEmptyMin is the cells every Killer cage must keep empty for the player.
+const CageEmptyMin = 2
+
+// cagesPlayable reports whether every cage of a Killer layout has at least
+// CageEmptyMin cells empty in grid (always true for other layouts).
+func cagesPlayable(l *Layout, grid [cells]int) bool {
+	for _, cage := range l.Cages {
+		empty := 0
+		for _, c := range cage.Cells {
+			if grid[c] == 0 {
+				empty++
+			}
+		}
+		if empty < CageEmptyMin {
+			return false
+		}
+	}
+	return true
+}
+
 // removeCellsIn is removeCells under a layout: cells in an order drawn from
 // random, each removed if the puzzle stays provably unique (within nodeLimit
-// search steps), down to target givens.
+// search steps), down to target givens. Under a Killer layout the first
+// CageEmptyMin cells of every cage in that order are tried first and
+// whatever the target (so the grid can end below it): see cagesPlayable.
 func removeCellsIn(l *Layout, solution [cells]int, target int, random *xoshiro, nodeLimit int) [cells]int {
 	grid := solution
 	order := make([]int, cells)
@@ -295,9 +323,24 @@ func removeCellsIn(l *Layout, solution [cells]int, target int, random *xoshiro, 
 		order[i] = i
 	}
 	random.shuffle(order)
+	var forced [cells]bool
+	if l.Variant == VariantKiller {
+		seen := make([]int, len(l.Cages))
+		var first, rest []int
+		for _, i := range order {
+			if k := l.CageOf(i); seen[k] < CageEmptyMin {
+				seen[k]++
+				forced[i] = true
+				first = append(first, i)
+			} else {
+				rest = append(rest, i)
+			}
+		}
+		order = append(first, rest...)
+	}
 	count := cells
 	for _, i := range order {
-		if count <= target {
+		if count <= target && !forced[i] {
 			break
 		}
 		digit := grid[i]
@@ -310,6 +353,10 @@ func removeCellsIn(l *Layout, solution [cells]int, target int, random *xoshiro, 
 	}
 	return grid
 }
+
+// unplayableKey is added to the distance key of an attempt that is not
+// playable, so it ranks after every playable one.
+const unplayableKey = 100000
 
 // attempt is one attempt's full grid and layout.
 type attempt struct {
@@ -357,10 +404,12 @@ func givenCount(g [cells]int) int {
 }
 
 // buildClassicVariant is a Classic variant puzzle from a puzzle seed and tier
-// (1..Tiers): up to maxAttempts attempts, each a full grid (and layout) with
-// cells removed down to the tier's target; the first to reach it, or else the
-// one with the fewest givens (the earliest on ties), wins.
-func buildClassicVariant(seed uint64, variant, tier int) VariantBuild {
+// (1..Tiers): up to maxAttempts (at least 1) attempts, each a full grid (and
+// layout) with cells removed down to the tier's target; the first playable one (every
+// Killer cage keeps CageEmptyMin empty cells) to reach it, or else the
+// playable one with the fewest givens (the earliest on ties), wins. Attempts
+// that are not playable are only taken when none is.
+func buildClassicVariant(seed uint64, variant, tier, maxAttempts int) VariantBuild {
 	random := newXoshiro(seed)
 	next := attempts(variant, seed, tier, random)
 	target := difficulties[tier-1].targetGivens
@@ -370,15 +419,17 @@ func buildClassicVariant(seed uint64, variant, tier int) VariantBuild {
 	var best attempt
 	var bestGivens [cells]int
 	bestCount, n := -1, 0
+	bestPlayable := false
 	for n < maxAttempts {
 		n++
 		a := next()
 		givens := removeCellsIn(a.layout, a.solution, target, random, removalNodes)
 		count := givenCount(givens)
-		if bestCount < 0 || count < bestCount {
-			best, bestGivens, bestCount = a, givens, count
+		playable := cagesPlayable(a.layout, givens)
+		if bestCount < 0 || (playable && !bestPlayable) || (playable == bestPlayable && count < bestCount) {
+			best, bestGivens, bestCount, bestPlayable = a, givens, count, playable
 		}
-		if count <= target {
+		if playable && count <= target {
 			break
 		}
 	}
@@ -390,6 +441,7 @@ func buildClassicVariant(seed uint64, variant, tier int) VariantBuild {
 // least 1) attempts with cells removed to GradedGivens, graded under the
 // layout. The first in the band wins, else the non-stuck attempt nearest the
 // band (the easier on equal distance, then the earliest), else the earliest.
+// Attempts that are not playable rank after every playable one.
 func buildGradedVariant(seed uint64, variant, tier, maxAttempts int) VariantBuild {
 	band := Bands[tier-1]
 	random := newXoshiro(seed)
@@ -404,13 +456,17 @@ func buildGradedVariant(seed uint64, variant, tier, maxAttempts int) VariantBuil
 		givens := removeCellsIn(a.layout, a.solution, GradedGivens[variant][tier-1], random, removalNodes)
 		// The grid is a valid puzzle with 81 values in 0..9.
 		g, _ := GradeLayout(givens[:], a.layout)
-		if g.Level >= band.MinLevel && g.Level <= band.MaxLevel {
+		playable := cagesPlayable(a.layout, givens)
+		if playable && g.Level >= band.MinLevel && g.Level <= band.MaxLevel {
 			best, bestGivens, bestGrade = a, givens, g
 			break
 		}
 		key := 1000
 		if g.Level != StuckLevel {
 			key = band.distance(g.Level)*10 + g.Level
+		}
+		if !playable {
+			key += unplayableKey
 		}
 		if n == 1 || key < bestKey {
 			best, bestGivens, bestGrade, bestKey = a, givens, g, key
@@ -452,7 +508,7 @@ func GenerateEndlessVariant(generator, variant int, endlessSeed uint64, difficul
 	}
 	var b VariantBuild
 	if generator == VersionClassic {
-		b = buildClassicVariant(seed, variant, difficulty)
+		b = buildClassicVariant(seed, variant, difficulty, maxAttempts)
 	} else {
 		b = buildGradedVariant(seed, variant, difficulty, MaxAttemptsVariantGraded[variant])
 	}

@@ -36,19 +36,21 @@ type variantFixture struct {
 		Fallback    bool   `json:"fallback"`
 	} `json:"jigsaws"`
 	Cages []struct {
-		Tier     int    `json:"tier"`
+		MinSize  int    `json:"minSize"`
+		MaxSize  int    `json:"maxSize"`
 		Solution string `json:"solution"`
 		Seed     string `json:"seed"`
 		Cages    []Cage `json:"cages"`
 	} `json:"cages"`
 	Classic []struct {
-		Seed     string `json:"seed"`
-		Variant  int    `json:"variant"`
-		Tier     int    `json:"tier"`
-		Givens   string `json:"givens"`
-		Solution string `json:"solution"`
-		Cages    []Cage `json:"cages"`
-		Attempts int    `json:"attempts"`
+		Seed        string `json:"seed"`
+		Variant     int    `json:"variant"`
+		Tier        int    `json:"tier"`
+		MaxAttempts int    `json:"maxAttempts"`
+		Givens      string `json:"givens"`
+		Solution    string `json:"solution"`
+		Cages       []Cage `json:"cages"`
+		Attempts    int    `json:"attempts"`
 	} `json:"classic"`
 	Fallback []struct {
 		Seed        string `json:"seed"`
@@ -231,28 +233,36 @@ func TestVariantFixtureJigsaws(t *testing.T) {
 }
 
 func TestVariantFixtureCages(t *testing.T) {
+	over := false
 	for _, c := range loadVariantFixture(t).Cages {
-		got := carveCages(grid81(c.Solution), newXoshiro(mustSeed(t, c.Seed)), KillerCages[c.Tier-1])
+		got := carveCages(grid81(c.Solution), newXoshiro(mustSeed(t, c.Seed)), CagePolicy{c.MinSize, c.MaxSize})
 		gj, _ := json.Marshal(got)
 		wj, _ := json.Marshal(c.Cages)
 		if string(gj) != string(wj) {
-			t.Errorf("tier %d: cages %s, want %s", c.Tier, gj, wj)
+			t.Errorf("cages %d to %d: %s, want %s", c.MinSize, c.MaxSize, gj, wj)
 		}
 		l, err := NewKillerLayout(got)
 		if err != nil || !l.Valid(digits(c.Solution)) {
-			t.Errorf("tier %d: cages are not a valid killer layout: %v", c.Tier, err)
+			t.Errorf("cages %d to %d are not a valid killer layout: %v", c.MinSize, c.MaxSize, err)
 		}
+		// Every tier's cages have two cells or more; a singleton joins a cage whatever its size, and stays only without a neighbour to take it.
+		smallest := cells
 		for _, cage := range got {
-			if len(cage.Cells) > KillerCages[c.Tier-1].MaxSize {
-				t.Errorf("tier %d: cage of %d cells", c.Tier, len(cage.Cells))
-			}
+			smallest = min(smallest, len(cage.Cells))
+			over = over || len(cage.Cells) > c.MaxSize
 		}
+		if (smallest >= 2) != (c.MinSize > 1) {
+			t.Errorf("cages %d to %d: smallest cage %d", c.MinSize, c.MaxSize, smallest)
+		}
+	}
+	if !over {
+		t.Error("no singleton joined a cage past its maximum size")
 	}
 }
 
 func TestVariantFixtureClassic(t *testing.T) {
 	for _, c := range loadVariantFixture(t).Classic {
-		b := buildClassicVariant(mustSeed(t, c.Seed), c.Variant, c.Tier)
+		b := buildClassicVariant(mustSeed(t, c.Seed), c.Variant, c.Tier, c.MaxAttempts)
 		if b.Givens != c.Givens || b.Solution != c.Solution || b.Grade != nil || b.Attempts != c.Attempts || len(b.Layout.Cages) != len(c.Cages) {
 			t.Errorf("classic %s: got %s attempts %d", c.Seed, b.Givens, b.Attempts)
 		}
@@ -268,6 +278,105 @@ func TestVariantFixtureFallback(t *testing.T) {
 		if want := fixtureLayout(t, c.Variant, c.Regions, c.Cages); b.Layout.Regions != want.Regions || len(b.Layout.Cages) != len(want.Cages) {
 			t.Errorf("fallback %s: layout differs", c.Seed)
 		}
+	}
+}
+
+// TestVariantFixtureUnplayable checks the builds whose every attempt leaves a Killer cage short of empty cells: they still return one.
+func TestVariantFixtureUnplayable(t *testing.T) {
+	f := loadVariantFixture(t)
+	n := 0
+	for _, c := range f.Classic {
+		if c.Variant == VariantKiller && c.MaxAttempts == 3 {
+			n++
+			if c.Attempts != 3 || cagesPlayable(fixtureLayout(t, c.Variant, "", c.Cages), grid81(c.Givens)) {
+				t.Errorf("classic %s: attempts %d, or playable", c.Seed, c.Attempts)
+			}
+		}
+	}
+	for _, c := range f.Fallback {
+		if c.Variant == VariantKiller && c.MaxAttempts == 3 {
+			n++
+			if c.Attempts != 3 || cagesPlayable(fixtureLayout(t, c.Variant, "", c.Cages), grid81(c.Givens)) {
+				t.Errorf("fallback %s: attempts %d, or playable", c.Seed, c.Attempts)
+			}
+		}
+	}
+	if n != 4 {
+		t.Errorf("%d unplayable fixture builds, want 4", n)
+	}
+}
+
+func TestKillerCagesKeepTwoEmptyCells(t *testing.T) {
+	for _, generator := range []int{VersionClassic, VersionGraded} {
+		for tier := 1; tier <= Tiers; tier++ {
+			for number := int64(1); number <= 4; number++ {
+				p, err := GenerateEndlessVariant(generator, VariantKiller, 99, tier, number)
+				if err != nil {
+					t.Fatal(err)
+				}
+				givens := grid81(p.Givens)
+				if !cagesPlayable(p.Layout, givens) {
+					t.Errorf("generator %d tier %d #%d: a cage has fewer than %d empty cells", generator, tier, number, CageEmptyMin)
+				}
+				for _, cage := range p.Layout.Cages {
+					if len(cage.Cells) < 2 {
+						t.Errorf("generator %d tier %d #%d: cage of %d cell", generator, tier, number, len(cage.Cells))
+					}
+				}
+				if !hasUniqueSolutionIn(p.Layout, givens[:], math.MaxInt) {
+					t.Errorf("generator %d tier %d #%d: not unique", generator, tier, number)
+				}
+			}
+		}
+	}
+}
+
+func TestCagesPlayable(t *testing.T) {
+	random := newXoshiro(8)
+	sol := randomSolution(make([]int, cells), random)
+	layout, _ := NewKillerLayout(carveCages(sol, newXoshiro(9), KillerCages[0]))
+	if !cagesPlayable(layout, [cells]int{}) || cagesPlayable(layout, sol) || !cagesPlayable(standardLayout, sol) {
+		t.Error("empty grid, full grid or standard layout wrong")
+	}
+	grid := [cells]int{}
+	for _, cage := range layout.Cages {
+		for _, c := range cage.Cells[2:] {
+			grid[c] = sol[c]
+		}
+	}
+	if !cagesPlayable(layout, grid) {
+		t.Error("two empty cells per cage is playable")
+	}
+	c := layout.Cages[0].Cells[1]
+	grid[c] = sol[c]
+	if cagesPlayable(layout, grid) {
+		t.Error("one empty cell in a cage is not playable")
+	}
+}
+
+func TestRemoveCellsInForcesTwoEmptyCellsPerKillerCage(t *testing.T) {
+	sol := randomSolution(make([]int, cells), newXoshiro(21))
+	layout, _ := NewKillerLayout(carveCages(sol, newXoshiro(22), KillerCages[2]))
+	grid := removeCellsIn(layout, sol, cells, newXoshiro(23), removalNodes)
+	empty := 0
+	for _, v := range grid {
+		if v == 0 {
+			empty++
+		}
+	}
+	if !cagesPlayable(layout, grid) || empty != len(layout.Cages)*CageEmptyMin {
+		t.Errorf("%d empty cells for %d cages", empty, len(layout.Cages))
+	}
+	dsol := *firstSolutionIn(diagonalLayout, make([]int, cells), newXoshiro(1), math.MaxInt)
+	if g := removeCellsIn(diagonalLayout, dsol, cells, newXoshiro(23), removalNodes); g != dsol {
+		t.Error("a diagonal layout removed cells past its target")
+	}
+	if stuck := removeCellsIn(layout, sol, cells, newXoshiro(23), 0); stuck != sol || cagesPlayable(layout, stuck) {
+		t.Error("with no search budget no removal is provable")
+	}
+	some := removeCellsIn(layout, sol, 40, newXoshiro(23), removalNodes)
+	if givenCount(some) > 40 || !cagesPlayable(layout, some) {
+		t.Errorf("%d givens", givenCount(some))
 	}
 }
 

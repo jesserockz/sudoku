@@ -106,7 +106,7 @@ Variants are endless series with extra rules: **Diagonal**, **Jigsaw** and **Kil
 | `0`       | Standard | Rows, columns and 3x3 boxes: the existing endless series, unchanged                                  |
 | `1`       | Diagonal | Standard, plus both long diagonals each hold 1 to 9                                                  |
 | `2`       | Jigsaw   | Rows, columns and 9 irregular connected regions of 9 cells (no boxes)                                |
-| `3`       | Killer   | Standard, plus cages of 1 to 5 cells covering the grid, each with a sum, no repeated digit in a cage |
+| `3`       | Killer   | Standard, plus cages of 2 or more cells covering the grid, each with a sum, no repeated digit in one |
 
 An endless puzzle is named `(generator, variant, difficulty, number)`. Variant `0` is exactly the [endless series](#endless-seed) (`generateEndlessVariant(g, 0, ...)` / `GenerateEndlessVariant(g, 0, ...)` return `generateEndlessVersion`'s puzzle with the standard layout), so a missing `variant` means `0` and nothing existing changes.
 
@@ -131,7 +131,9 @@ A layout is the variant's units and cages. Units are numbered `0..8` rows, `9..1
 
 **Jigsaw regions** come from the puzzle seed. Attempt `a` (from `0`) seeds xoshiro256** with `mix(mix(seed ^ JIGSAW_DOMAIN) + a)` (`JIGSAW_DOMAIN = 0x6a6967736177`, "jigsaw"), starts from the boxes and tries 600 moves: draw a cell `a` and a direction; if the neighbour there is in another region B, draw a cell `c` of B (ascending) that touches `a`'s region A other than through `a`, and trade them (`a` joins B, `c` joins A), undone if A or B is no longer connected. The layout is kept if the solver finds a complete grid for it, with candidates in random order, within 2000 nodes (not every partition has one). After 16 failed attempts (rare) the layout is one of four fixed fallback layouts, `seed mod 4`, with its stored solution (`FALLBACK_JIGSAWS`).
 
-**Killer cages** are carved over the attempt's (standard) solution: cells visited in a random order, each unassigned cell starts a cage aiming for a size drawn from the tier's range and grows one random adjacent unassigned cell at a time (from those, ascending, whose digit is not in the cage yet) until it has its size or cannot grow. Then each cage smaller than the range's minimum joins the first adjacent cage it fits (at most the maximum size, no repeated digit). The sum is the cage's digits' total.
+**Killer cages** are carved over the attempt's (standard) solution: cells visited in a random order, each unassigned cell starts a cage aiming for a size drawn from the tier's range and grows one random adjacent unassigned cell at a time (from those, ascending, whose digit is not in the cage yet) until it has its size or cannot grow. Then each cage smaller than the range's minimum joins the first adjacent cage it fits (at most the maximum size, no repeated digit). Last, each cage still of one cell joins the first adjacent cage that lacks its digit whatever that cage's size (so a cage can exceed the maximum); one with no such neighbour stays and makes the attempt unplayable (below). The sum is the cage's digits' total.
+
+**Every Killer cage keeps at least 2 empty cells** (cells that are not givens), in both generators and every tier. Removal tries the first two cells of each cage in the shuffled order first, whatever the tier's givens (so a Killer puzzle can end below them), then the rest in order while above them. An attempt is *playable* only if every cage ended with 2 or more empty cells (a forced removal that would lose uniqueness keeps its cell); an unplayable attempt is never chosen over a playable one, and only when none of the attempts is playable does the usual fallback pick one. Measured over 5,000 puzzles (500 per tier and generator) no build ever fell back to an unplayable attempt: 6 to 9% of attempts are unplayable, so with 8 (Classic) or 30 (Graded) attempts it is vanishingly rare.
 
 ### Difficulty
 
@@ -139,25 +141,25 @@ A layout is the variant's units and cages. Units are numbered `0..8` rows, `9..1
 
 | Tier       | Diagonal, Jigsaw givens | Killer givens | Killer cage sizes |
 | ---------- | ----------------------- | ------------- | ----------------- |
-| Easy       | 40                      | 24            | 1 to 3            |
-| Medium     | 36                      | 16            | 2 to 3            |
-| Hard       | 32                      | 10            | 2 to 4            |
-| Expert     | 28                      | 6             | 2 to 5            |
-| Diabolical | 24                      | 5             | 3 to 5            |
+| Easy       | 40                      | 30            | 3 to 4            |
+| Medium     | 36                      | 22            | 3 to 4            |
+| Hard       | 32                      | 14            | 3 to 5            |
+| Expert     | 28                      | 9             | 3 to 5            |
+| Diabolical | 24                      | 6             | 4 to 5            |
 
-**Graded** (generator `2`): generator v2's build under the layout: each attempt removes cells down to the givens below, then the [grader](#generator-versions) grades it under the layout; the first attempt in the tier's band (Easy 1, Medium 2, Hard 3 to 4, Expert 5, Diabolical 6) wins, else the nearest non-stuck one (the easier on equal distance, then the earliest). Killer uses the same cage sizes as Classic. The givens were chosen by measuring how often an attempt lands in each band: a minimal Diagonal or Jigsaw puzzle is mostly beyond the grader, and a Killer one with no givens mostly is too.
+**Graded** (generator `2`): generator v2's build under the layout: each attempt removes cells down to the givens below, then the [grader](#generator-versions) grades it under the layout; the first attempt in the tier's band (Easy 1, Medium 2, Hard 3 to 4, Expert 5, Diabolical 6) wins, else the nearest non-stuck one (the easier on equal distance, then the earliest). Killer uses the same cage sizes as Classic. The givens were chosen by measuring how often an attempt lands in each band: a minimal Diagonal or Jigsaw puzzle is mostly beyond the grader, and a Killer one with few givens mostly is too. Killer is graded the other way round: its two forced empty cells per cage leave Easy with at most about 35 givens, and the easy bands need many givens (more than 40 would need cages too big), so Easy lands in its band only about a quarter of the time.
 
 | Tier       | Diagonal givens | Jigsaw givens | Killer givens |
 | ---------- | --------------- | ------------- | ------------- |
-| Easy       | 38              | 38            | 44            |
-| Medium     | 26              | 25            | 24            |
-| Hard       | 25              | 24            | 6             |
-| Expert     | 23              | 24            | 3             |
+| Easy       | 38              | 38            | 40            |
+| Medium     | 26              | 25            | 26            |
+| Hard       | 25              | 24            | 10            |
+| Expert     | 23              | 24            | 6             |
 | Diabolical | 24              | 23            | 3             |
 
-Attempts are capped at 200 for Diagonal and Jigsaw and 30 for Killer (whose attempts cost more). In 600 sampled Graded puzzles (40 per variant and tier) every one landed in its band.
+Attempts are capped at 200 for Diagonal and Jigsaw and 30 for Killer (whose attempts cost more). In 600 sampled Graded puzzles (40 per variant and tier) every one landed in its band; in 2,500 Graded Killer puzzles (500 per tier) all but 3 (Diabolical) did. Per attempt a Graded Killer one lands in its band about 28% (Easy), 99% (Medium), 67% (Hard), 20% (Expert) and 19% (Diabolical) of the time.
 
-**Timing** (web client, Node 24 on a desktop x86-64, 20 numbers of every generator, variant and tier): median 5 ms, 95th percentile 118 ms, slowest 737 ms (Graded Killer Diabolical; that tier's median is 118 ms and Graded Killer Expert's 137 ms). Classic variants take under 70 ms. The Go port is several times faster.
+**Timing** (web client, Node 24 on a desktop x86-64, 20 numbers of every generator, variant and tier): median 5 ms, 95th percentile 118 ms, slowest 737 ms (Graded Killer Diabolical; that tier's median is 118 ms and Graded Killer Expert's 137 ms). Classic variants take under 70 ms. These timings are from before the Killer rule of two empty cells per cage; Graded Killer Expert and Diabolical now average about 0.2 to 0.3 s (slowest 1.8 s in 500 numbers, measured with ten generators running at once), Classic Killer under 50 ms on average (slowest 0.44 s). The Go port is several times faster.
 
 **The grader under a layout.** Hidden singles, subsets and colouring use every unit (diagonals and jigsaw regions are houses like boxes). Pointing runs from every unit from 18 on (regions, then diagonals) into rows and columns, and between a box and a diagonal that share at least two cells; claiming runs from rows and columns into regions. X-Wing and Swordfish stay row and column based. Wings and chains use the layout's peers. Standard grading is unchanged. Killer adds four techniques, tried in this order: hidden single, naked single, **cage combination**, pointing, claiming, **45 rule**, **cage pointing**, the subsets, **45 rule over lines**, then fish, wings, colouring and chains:
 

@@ -271,7 +271,8 @@ sudoku-play > header.bar { flex: none; margin-bottom: 0; }
 .notes span { display: flex; align-items: center; justify-content: center; }
 
 .paused {
-  position: absolute; inset: 0; display: flex; flex-direction: column; gap: 12px;
+  /* Above the cage sums (z-index 1), which would otherwise show through. */
+  position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; gap: 12px;
   align-items: center; justify-content: center;
   background: var(--surface); border: 2px solid var(--line-strong); border-radius: 6px;
 }
