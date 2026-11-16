@@ -1,5 +1,6 @@
 import { ENDLESS_LABEL, type AppController, type HelpTopic } from "./controller.ts";
 import { type Child, h } from "./dom.ts";
+import { firstLessonOf } from "../learn/lessons.ts";
 import { generatorHelp } from "./generator.ts";
 import { variantsHelp } from "./variants.ts";
 
@@ -43,7 +44,12 @@ function content(app: AppController, topic: HelpTopic): { title: string; body: C
       title: help.title,
       body: [
         help.intro.map((t) => h("p", null, t)),
-        h("ul", { class: "generator-levels" }, help.levels.map((l) => h("li", null, h("strong", null, `${l.name}:`), ` ${l.text}`))),
+        h("ul", { class: "generator-levels" }, help.levels.map((l) => {
+          const lesson = firstLessonOf(l.name);
+          return h("li", null, h("strong", null, `${l.name}:`), ` ${l.text}`,
+            lesson && [" ", h("button", { class: "link inline", "aria-label": `Learn the ${l.name} techniques`, onclick: () => app.openLesson(lesson.id) }, "Learn these")]);
+        })),
+        h("p", null, "The Learn tab teaches every one of these techniques, with positions to practise on."),
         help.outro.map((t) => h("p", null, t)),
       ],
     };

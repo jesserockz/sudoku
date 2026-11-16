@@ -27,6 +27,11 @@
   --maint-admin-text: #ffffff;
   --diag-tint: rgba(150, 110, 40, 0.16);
   --cage: #6b6f78;
+  --learn-unit: #f1efe6;
+  --learn-unit-diag: #e4ebf7;
+  --learn-pattern: rgba(47, 111, 219, 0.2);
+  --learn-pivot: rgba(47, 111, 219, 0.42);
+  --learn-see: rgba(198, 40, 40, 0.13);
   --radius: 10px;
   color-scheme: light;
 }
@@ -45,6 +50,11 @@
     --entry: #8db4f5;
     --peer: #252a33;
     --same: #2c3a52;
+    --learn-unit: #2a2d35;
+    --learn-unit-diag: #27303f;
+    --learn-pattern: rgba(107, 156, 240, 0.26);
+    --learn-pivot: rgba(107, 156, 240, 0.52);
+    --learn-see: rgba(239, 83, 80, 0.2);
     --selected: #34507e;
     --conflict: #ff8a80;
     --conflict-bg: #4a2326;
@@ -322,6 +332,8 @@ sudoku-play > header.bar { flex: none; margin-bottom: 0; }
 .tabs button { flex: 0 0 auto; padding: 6px 12px; min-height: 36px; font-size: 0.9rem; }
 .home-tabs { margin: 0 0 12px; }
 .home-tabs button { flex: 1 1 0; }
+/* Four home tabs on a narrow phone: less padding so they share one row. */
+@media (max-width: 360px) { .home-tabs button { padding-inline: 6px; } }
 .puzzles .status.in-progress button.link { padding: 0 4px; min-height: 0; font-size: inherit; }
 button.link.inline { padding: 0; min-height: 0; font-size: inherit; text-decoration: underline; }
 form.login.endless-open select { width: auto; flex: none; }
@@ -439,3 +451,55 @@ table.stats-table th.num, table.stats-table td.num { text-align: right; font-var
 table.stats-table td.num { white-space: nowrap; }
 svg.spark { width: 64px; height: 20px; vertical-align: middle; overflow: visible; }
 svg.spark polyline { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+
+/* Learn: the lesson list, and a lesson's worked example and exercises. */
+sudoku-learn { --key: clamp(40px, 8dvh, 60px); display: block; }
+.learn-board { container-type: inline-size; width: min(100%, 440px, 62dvh); margin: 0 auto; --board: 100cqw; }
+.learn-board .board.static .cell { cursor: default; }
+.learn-text p, .learn-text li { line-height: 1.45; }
+.learn-text ul { margin: 0; padding-left: 20px; }
+.learn-text li { margin-bottom: 6px; }
+.learn-text h2 { margin-top: 14px; }
+.learn-step { min-height: 4.4em; margin: 10px 0; line-height: 1.45; }
+.learn-steps { align-items: center; }
+.learn-task { margin: 0 0 10px; line-height: 1.4; }
+.learn-positions { display: flex; gap: 6px; margin-bottom: 10px; }
+.learn-positions button { flex: 1 1 0; padding: 4px; min-height: 36px; font-size: 0.9rem; }
+.learn-positions button.done { color: var(--done); }
+.learn-positions button.active { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.learn-feedback {
+  min-height: 4.2em; margin: 10px 0; padding: 8px 10px; line-height: 1.4;
+  border-left: 4px solid var(--line); border-radius: 4px; background: var(--surface);
+}
+.learn-feedback.good { border-left-color: var(--done); }
+.learn-feedback.bad { border-left-color: var(--conflict); }
+.learn-feedback.bad::before { content: "Not quite. "; font-weight: 700; color: var(--conflict); }
+.learn-feedback.hint { border-left-color: var(--accent); }
+.learn-feedback.hint::before { content: "Hint. "; font-weight: 700; color: var(--accent); }
+.learn-keys { text-align: center; margin: 8px 0 0; }
+@media (pointer: coarse) { .learn-keys { display: none; } }
+.learn-level .puzzles li > div { min-width: 0; }
+
+/* Highlights: the houses a step looks at, the cells of its pattern, and the
+   cells it acts on. Rings and weights back up every colour, so none of them
+   relies on hue alone. */
+.learn-board .cell.unit { background-color: var(--learn-unit); }
+/* On a Diagonal board the unit tint is cool, so it doesn't read as the warm diagonal shading. Highlights set only the
+   background colour, so the diagonal shading stays on top of them, as on the game board. */
+.learn-board :where(.board.layout-diagonal) .cell.unit { background-color: var(--learn-unit-diag); }
+.learn-board .cell.hl-see { background-color: var(--learn-see); }
+.learn-board .cell.hl-pattern { background-color: var(--learn-pattern); }
+.learn-board .cell.hl-wing { background-color: var(--colour-a-tint); box-shadow: inset 0 0 0 2px var(--colour-a); }
+.learn-board .cell.hl-pivot { background-color: var(--learn-pivot); box-shadow: inset 0 0 0 2px var(--accent); }
+.learn-board .cell.hl-colourA { background-color: var(--colour-a-tint); box-shadow: inset 0 0 0 3px var(--colour-a); }
+.learn-board .cell.hl-colourB {
+  background-color: var(--colour-b-tint);
+  box-shadow: inset 0 0 0 2px var(--colour-b), inset 0 0 0 4px var(--surface), inset 0 0 0 6px var(--colour-b);
+}
+.learn-board .cell.target { box-shadow: inset 0 0 0 2px var(--accent); }
+.learn-board .cell.peer { background-color: var(--peer); }
+.learn-board .cell.same { background-color: var(--same); }
+.learn-board .cell.selected { background-color: var(--selected); box-shadow: inset 0 0 0 2px var(--accent); }
+.learn-board .cell.placed { color: var(--done); font-weight: 700; }
+.learn-board .notes span.hot { color: var(--text); font-weight: 700; background: var(--learn-pivot); border-radius: 3px; }
+.learn-board .notes span.struck { color: var(--conflict); font-weight: 700; text-decoration: line-through; }

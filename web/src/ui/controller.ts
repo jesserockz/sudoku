@@ -7,6 +7,7 @@ import { type HomeTab, endlessGameKey, parseEndlessGameKey } from "../data/app-s
 import type { EndlessInProgress, EndlessSource } from "../data/endless.ts";
 import { OidcException } from "../api/oidc.ts";
 import { SignInError, type SudokuRepository } from "../data/repository.ts";
+import { MemoryStore } from "../data/store.ts";
 import { addDays } from "../game/calendar.ts";
 import { Game } from "../game/game.ts";
 import type { ReplayInput } from "../game/replay.ts";
@@ -14,6 +15,8 @@ import { VARIANT_DIAGONAL, VARIANT_STANDARD, isVariant } from "../core/layout.ts
 import { DIFFICULTIES, type EndlessPuzzle, isEndlessNumber, type Puzzle } from "../generator/generator.ts";
 import type { VariantPuzzle } from "../generator/variants.ts";
 import { GENERATOR_CLASSIC, isGeneratorVersion } from "../generator/versions.ts";
+import { lessonById } from "../learn/lessons.ts";
+import { LearnProgress } from "../learn/progress.ts";
 import { fingerprint, sameSettings, type SeedSettings } from "../serverless/seed.ts";
 import type { SeedProfile, SeedRepository, SeedResult } from "../serverless/seed-repository.ts";
 import { buildShareLink, parseShareLink } from "../serverless/share-link.ts";
@@ -46,7 +49,7 @@ export const ENDLESS_LABEL = "Endless";
 export const VARIANTS_LABEL = "Variants";
 
 /** Which "how it works" explainer is open over the screen. */
-export type HelpTopic = HomeTab | "generators";
+export type HelpTopic = Exclude<HomeTab, "learn"> | "generators";
 
 /**
  * An endless puzzle: `number` (from 1) of difficulty tier `difficulty` (1 = Easy .. 5 = Diabolical) in the series
@@ -75,6 +78,8 @@ export interface EndlessSummary {
 
 export type Screen =
   | { kind: "today" }
+  /** One lesson of the Learn tab. */
+  | { kind: "learn"; lesson: string }
   | { kind: "play"; generator: number; level: number }
   | { kind: "endless-play"; generator: number; variant: number; difficulty: number; number: number }
   /**
@@ -211,8 +216,12 @@ export class AppController extends EventTarget {
   #leaderboardRequest = 0;
   #statsRequest = 0;
 
-  constructor(repo: SudokuRepository, seeds: SeedRepository, host: Host) {
+  /** How far the player is through the Learn tab's lessons: kept on this device only. */
+  readonly learn: LearnProgress;
+
+  constructor(repo: SudokuRepository, seeds: SeedRepository, host: Host, learn: LearnProgress = new LearnProgress(new MemoryStore())) {
     super();
+    this.learn = learn;
     this.#repo = repo;
     this.#seeds = seeds;
     this.#host = host;
@@ -731,6 +740,21 @@ export class AppController extends EventTarget {
     this.homeTab = tab;
     this.#changed();
     this.#firstEndlessVisit();
+  }
+
+  /** Opens the Learn tab's list of lessons, from wherever the app is. */
+  openLearn(): void {
+    this.help = null;
+    this.screen = { kind: "today" };
+    this.showHomeTab("learn");
+  }
+
+  /** Opens a lesson of the Learn tab; an unknown one opens the list instead. */
+  openLesson(id: string): void {
+    if (!lessonById(id)) return this.openLearn();
+    this.#repo.setHomeTab("learn");
+    this.homeTab = "learn";
+    this.#set({ help: null, screen: { kind: "learn", lesson: id } });
   }
 
   /** Opens the explainer for `topic` (from the About screen, or the first endless visit). */

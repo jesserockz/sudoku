@@ -70,10 +70,10 @@ export function parseEndlessGameKey(key: string): { generator: number; variant: 
 }
 
 /** The home page's tabs. */
-export type HomeTab = "daily" | "endless" | "variants";
+export type HomeTab = "daily" | "endless" | "variants" | "learn";
 
 const decodeHomeTab = (json: unknown): HomeTab => {
-  if (json !== "daily" && json !== "endless" && json !== "variants") throw new TypeError(`unknown tab: ${String(json)}`);
+  if (json !== "daily" && json !== "endless" && json !== "variants" && json !== "learn") throw new TypeError(`unknown tab: ${String(json)}`);
   return json;
 };
 

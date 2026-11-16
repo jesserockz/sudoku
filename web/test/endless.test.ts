@@ -12,6 +12,7 @@ import { Game } from "../src/game/game.ts";
 import { MAX_REPLAY_EVENTS } from "../src/game/replay.ts";
 import { generateEndless } from "../src/generator/generator.ts";
 import { parseWeekSeed } from "../src/generator/week-seed.ts";
+import { LearnProgress } from "../src/learn/progress.ts";
 import { SeedRepository } from "../src/serverless/seed-repository.ts";
 import { AppController, ENDLESS_LABEL, type EndlessRef, type Host } from "../src/ui/controller.ts";
 import { ENDLESS_SEED, FakeServer } from "./fake-server.ts";
@@ -97,6 +98,8 @@ test("the home tab decoder rejects junk, and clearProgress forgets endless data"
   assert.equal(s.homeTab.read(), null);
   s.homeTab.write("endless");
   assert.equal(s.homeTab.read(), "endless");
+  s.homeTab.write("learn");
+  assert.equal(s.homeTab.read(), "learn");
   store.set("home-tab", JSON.stringify("weekly"));
   assert.equal(s.homeTab.read(), null);
 
@@ -696,4 +699,33 @@ test("the explainers open from the About screen", async () => {
   assert.equal(e.c.help, "endless");
   e.c.openHelp("generators");
   assert.equal(e.c.help, "generators");
+});
+
+test("the Learn tab and its lessons open from anywhere", async () => {
+  const e = await env();
+  const { c } = e;
+  c.openHelp("generators");
+  c.openLesson("xWing");
+  assert.deepEqual(c.screen, { kind: "learn", lesson: "xWing" });
+  assert.equal(c.help, null);
+  assert.equal(c.homeTab, "learn");
+  assert.equal(e.repo.homeTab(), "learn", "Back from the lesson, and a reload, land on the Learn tab");
+
+  c.showHomeTab("daily");
+  c.openHelp("generators");
+  c.openLearn();
+  assert.deepEqual(c.screen, { kind: "today" });
+  assert.equal(c.help, null);
+  assert.equal(c.homeTab, "learn");
+
+  c.showHomeTab("daily");
+  c.openLesson("no-such-lesson");
+  assert.deepEqual(c.screen, { kind: "today" });
+  assert.equal(c.homeTab, "learn", "an unknown lesson opens the list");
+
+  // Progress is kept in memory unless a store is handed in.
+  c.learn.markSeen("xWing");
+  assert.equal(c.learn.get("xWing").seen, true);
+  const learn = new LearnProgress(new MemoryStore());
+  assert.equal(new AppController(e.repo, new SeedRepository(new MemoryStore(), () => e.clock.now), {} as Host, learn).learn, learn);
 });
