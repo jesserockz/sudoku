@@ -270,7 +270,9 @@ test("signing in while the provider is unreachable shows the plain message", asy
   assert.equal(c.phase.kind, "sign-in");
   server.online = false;
   c.signIn();
-  await idle(c);
+  // The PKCE hash runs on Node's crypto threadpool, so it can take more
+  // than one turn of the event loop.
+  for (let i = 0; i < 1000 && c.phase.kind === "sign-in"; i++) await settled();
   assert.deepEqual(c.phase, { kind: "failed", message: SIGN_IN_UNAVAILABLE });
 });
 
