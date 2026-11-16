@@ -19,6 +19,12 @@
   --colour-a-tint: rgba(224, 122, 0, 0.32);
   --colour-b: #9c3fb0;
   --colour-b-tint: rgba(156, 63, 176, 0.3);
+  /* Maintenance banners: a calm note for players, a loud reminder for admins. */
+  --maint-bg: #fff3cd;
+  --maint-text: #5c4400;
+  --maint-line: #d9a400;
+  --maint-admin-bg: #b3261e;
+  --maint-admin-text: #ffffff;
   --radius: 10px;
   color-scheme: light;
 }
@@ -45,6 +51,11 @@
     --colour-a-tint: rgba(255, 166, 61, 0.34);
     --colour-b: #cf8be0;
     --colour-b-tint: rgba(207, 139, 224, 0.34);
+    --maint-bg: #3a3014;
+    --maint-text: #f3deb0;
+    --maint-line: #a98512;
+    --maint-admin-bg: #d32f2f;
+    --maint-admin-text: #ffffff;
     color-scheme: dark;
   }
 }
@@ -66,6 +77,31 @@ body { padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
   background: var(--selected); border: 1px solid var(--accent); border-radius: var(--radius);
   padding: 8px 12px; margin-bottom: 12px;
 }
+
+.maintenance-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap;
+  border-radius: var(--radius); padding: 10px 14px; margin-bottom: 12px;
+}
+.maintenance-banner .back { margin-top: 2px; font-weight: 600; }
+.maintenance-banner.player { background: var(--maint-bg); color: var(--maint-text); border: 1px solid var(--maint-line); flex-direction: column; align-items: flex-start; }
+/* The admin's reminder must not be missed: a solid red block with a large heading. */
+.maintenance-banner.admin {
+  background: var(--maint-admin-bg); color: var(--maint-admin-text); border: 2px solid var(--maint-admin-text);
+  padding: 14px 16px; font-size: 1.1rem; box-shadow: 0 2px 10px rgb(0 0 0 / 35%);
+}
+.maintenance-banner.admin strong { font-size: 1.2rem; }
+.maintenance-banner.admin button { background: var(--maint-admin-text); color: var(--maint-admin-bg); border-color: var(--maint-admin-text); font-weight: 700; }
+/* On the play screen, which fills the viewport exactly, the banners are one fixed-height line and the screen gives up
+   that height (--banner-h) instead of scrolling. */
+.maintenance-banner.compact {
+  height: 28px; min-height: 0; padding: 0 10px; margin-bottom: 4px; flex-wrap: nowrap; flex-direction: row; align-items: center;
+  font-size: 0.8rem; line-height: 1; white-space: nowrap; overflow: hidden; border-radius: 6px;
+}
+.maintenance-banner.compact > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.maintenance-banner.admin.compact { font-size: 0.85rem; border-width: 1px; box-shadow: none; }
+.maintenance-banner.admin.compact strong { font-size: inherit; }
+.maintenance-banner.compact button { flex: none; min-height: 0; height: 22px; padding: 0 10px; font-size: 0.8rem; }
+sudoku-app:has(> .maintenance-banner.compact) { --banner-h: 32px; }
 
 .help-overlay {
   position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center;
@@ -141,8 +177,8 @@ sudoku-app:has(> sudoku-play) { padding-bottom: 12px; }
 sudoku-play {
   --key: clamp(40px, 10dvh, 84px);
   display: flex; flex-direction: column;
-  height: calc(100vh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
-  height: calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  height: calc(100vh - 24px - var(--banner-h, 0px) - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  height: calc(100dvh - 24px - var(--banner-h, 0px) - env(safe-area-inset-top) - env(safe-area-inset-bottom));
 }
 sudoku-play > header.bar { flex: none; margin-bottom: 0; }
 .play-area {
@@ -221,8 +257,8 @@ sudoku-play > header.bar { flex: none; margin-bottom: 0; }
 @media (orientation: landscape) and (max-height: 560px) {
   sudoku-app:has(> sudoku-play) { max-width: 900px; padding-top: 4px; padding-bottom: 8px; }
   sudoku-play {
-    height: calc(100vh - 12px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
-    height: calc(100dvh - 12px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    height: calc(100vh - 12px - var(--banner-h, 0px) - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    height: calc(100dvh - 12px - var(--banner-h, 0px) - env(safe-area-inset-top) - env(safe-area-inset-bottom));
   }
   .play-area { --board: min(100cqh, 50cqw - 8px); flex-direction: row; justify-content: center; gap: 16px; }
   .play-area > * { width: auto; }
@@ -282,6 +318,13 @@ form.login select {
 .card .small { font-size: 0.85rem; }
 .card p.small { margin: 4px 0 0; }
 .card label.check { display: block; margin-bottom: 8px; }
+.maintenance-admin label.field { display: block; margin: 12px 0 4px; font-size: 0.9rem; color: var(--muted); }
+.maintenance-admin .inline { display: flex; gap: 8px; }
+.maintenance-admin .inline input {
+  flex: 1; min-width: 0; font: inherit; padding: 8px; border-radius: var(--radius);
+  border: 1px solid var(--line); background: var(--bg); color: var(--text);
+}
+.maintenance-admin .actions { margin-top: 12px; }
 .card progress { width: 100%; height: 12px; accent-color: var(--accent); }
 .releases { list-style: none; margin: 0; padding: 0; }
 .releases li {

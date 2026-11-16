@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/jesserockz/sudoku/server/internal/auth"
@@ -34,6 +35,9 @@ type Server struct {
 	mux  *http.ServeMux
 	// loc is the game timezone, from Config.Timezone.
 	loc *time.Location
+	// maint is the maintenance setting, kept in memory so the per-request
+	// check is free; loaded at start and updated by the admin PUT.
+	maint atomic.Pointer[store.Maintenance]
 }
 
 func New(deps Deps) *Server {
@@ -46,6 +50,7 @@ func New(deps Deps) *Server {
 		panic(fmt.Sprintf("api: timezone %q: %v", deps.Config.Timezone, err))
 	}
 	s := &Server{deps: deps, mux: http.NewServeMux(), loc: loc}
+	s.loadMaintenance(context.Background())
 	s.routes()
 	return s
 }
@@ -74,6 +79,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/v1/admin/endless/results/{difficulty}/{number}/{userId}/flag", s.requireAdmin(s.deleteAdminEndlessFlag))
 	s.mux.HandleFunc("GET /api/v1/admin/generator", s.requireAdmin(s.getAdminGenerator))
 	s.mux.HandleFunc("PUT /api/v1/admin/generator", s.requireAdmin(s.putAdminGenerator))
+	s.mux.HandleFunc("GET /api/v1/admin/maintenance", s.requireAdmin(s.getAdminMaintenance))
+	s.mux.HandleFunc("PUT /api/v1/admin/maintenance", s.requireAdmin(s.putAdminMaintenance))
 	s.mux.HandleFunc("GET /api/v1/admin/releases", s.requireAdmin(s.getAdminReleases))
 	s.mux.HandleFunc("POST /api/v1/admin/update", s.requireAdmin(s.postAdminUpdate))
 	s.mux.HandleFunc("GET /api/v1/admin/update", s.requireAdmin(s.getAdminUpdate))

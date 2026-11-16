@@ -1,5 +1,5 @@
 import { ApiException, SIGN_IN_UNAVAILABLE } from "../api/client.ts";
-import type { AppConfig, EndlessBoard, EndlessProgress, EndlessResult, Leaderboard, Me, MyStats, Streak, Week } from "../api/models.ts";
+import type { AppConfig, EndlessBoard, EndlessProgress, EndlessResult, Leaderboard, MaintenanceSettings, MaintenanceState, Me, MyStats, Streak, Week } from "../api/models.ts";
 import { type HomeTab, endlessGameKey, parseEndlessGameKey } from "../data/app-storage.ts";
 import type { EndlessInProgress, EndlessSource } from "../data/endless.ts";
 import { OidcException } from "../api/oidc.ts";
@@ -14,6 +14,7 @@ import type { SeedProfile, SeedRepository, SeedResult } from "../serverless/seed
 import { buildShareLink, parseShareLink } from "../serverless/share-link.ts";
 import { AdminModel } from "./admin.ts";
 import { AdminResultsModel, type ResultKey } from "./admin-results.ts";
+import { backAroundOf, maintenanceError } from "./maintenance.ts";
 import { streakSummary } from "./stats.ts";
 
 /** Register `<origin>/auth/callback` as the redirect URI with the identity provider. */
@@ -172,6 +173,12 @@ export class AppController extends EventTarget {
   adminResults: AdminResultsModel | null = null;
   /** A newer version of the app has been installed; reloading the page switches to it. */
   updateAvailable = false;
+  /**
+   * The server is in maintenance mode, or `null`. For a player it is learnt from a sync (or a leaderboard) that got
+   * 503 `maintenance`, and cleared by the next sync that succeeds. An admin is served as usual, so theirs comes from the
+   * server's config after each sync, and from the Admin page when they switch it.
+   */
+  maintenance: MaintenanceState | null = null;
 
   readonly #repo: SudokuRepository;
   readonly #seeds: SeedRepository;
@@ -180,7 +187,7 @@ export class AppController extends EventTarget {
   readonly #queued = new Map<number, number>();
   /** The endless game being played (or last played), so the play screen and its updates share one `Game`. */
   #endless: { ref: EndlessRef; puzzle: EndlessPuzzle; game: Game } | null = null;
-  /** The last sync couldn't reach the server: retried periodically, as `online` events aren't reliable. */
+  /** The last sync couldn't reach the server, or it is in maintenance: retried periodically, as `online` events aren't reliable. */
   #offline = false;
   #leaderboardRequest = 0;
   #statsRequest = 0;
@@ -251,7 +258,7 @@ export class AppController extends EventTarget {
     this.#set({ needsSignIn: this.#repo.needsSignIn, phase: { kind: "ready" } });
     this.#firstEndlessVisit();
     // Signing in has just synced everything but the stats.
-    if (loadStats) void this.#refreshStats().then(() => this.#changed());
+    if (loadStats) void Promise.all([this.#refreshStats(), this.#refreshAdminMaintenance()]).then(() => this.#changed());
   }
 
   /** Reloads the day from local state (no network). */
@@ -295,12 +302,25 @@ export class AppController extends EventTarget {
       try {
         const report = await this.#repo.refresh();
         this.#offline = false;
+        // The server answered, so it is out of maintenance for a player.
+        if (!this.#repo.me()?.admin) this.maintenance = null;
+        await this.#refreshAdminMaintenance();
         await this.#refreshStats();
-        this.notice = report.failure != null
-          ? "Some results haven't uploaded yet. They'll retry automatically."
-          : report.rejected.length > 0 ? `The server rejected ${report.rejected.length} result(s).` : null;
+        if (isMaintenance(report.failure)) {
+          // Maintenance began between the sync's requests: the rest stays queued and goes up once it is over.
+          this.#enterMaintenance(report.failure);
+          this.notice = null;
+        } else {
+          this.notice = report.failure != null
+            ? "Some results haven't uploaded yet. They'll retry automatically."
+            : report.rejected.length > 0 ? `The server rejected ${report.rejected.length} result(s).` : null;
+        }
       } catch (e) {
-        if ((e instanceof ApiException && e.isAuthUnavailable) || e instanceof OidcException) {
+        if (isMaintenance(e)) {
+          // The banner says it all, and the results wait in the queue.
+          this.#enterMaintenance(e);
+          this.notice = null;
+        } else if ((e instanceof ApiException && e.isAuthUnavailable) || e instanceof OidcException) {
           // Sign-in can't be checked or refreshed for now (the provider is down): the session is kept, so retry like offline.
           this.#offline = true;
           this.notice = `${SIGN_IN_UNAVAILABLE} Puzzles still work, and results upload once it's back.`;
@@ -324,6 +344,48 @@ export class AppController extends EventTarget {
         this.#changed();
       }
     })();
+  }
+
+  /** The server is down for maintenance (a 503 `maintenance`): remember until when, and keep retrying so it clears by itself. */
+  #enterMaintenance(e: ApiException): void {
+    this.maintenance = { until: e.maintenanceUntil };
+    this.#offline = true;
+  }
+
+  /**
+   * For an admin, who is always served: asks the (public) config whether maintenance mode is on, for the reminder banner.
+   * (A player's maintenance state is learnt from the 503s instead.)
+   */
+  async #refreshAdminMaintenance(): Promise<void> {
+    if (!this.#repo.me()?.admin) return;
+    try {
+      this.maintenance = (await this.#repo.fetchConfig(this.#repo.settings().serverUrl)).maintenance ?? null;
+    } catch {
+      // Not worth failing the sync over: the reminder is as it was.
+    }
+  }
+
+  /** The maintenance state as a player sees it: an admin is served as usual, so for them it is `null`. */
+  get serverDown(): MaintenanceState | null {
+    return this.me?.admin ? null : this.maintenance;
+  }
+
+  /** "Back around Tue 3:00 pm" when maintenance mode has an end time, else `null`. */
+  get backAround(): string | null {
+    return this.maintenance ? backAroundOf(this.maintenance, new Date(this.#host.wallMs())) : null;
+  }
+
+  /** The Admin page switched maintenance mode on or off. */
+  maintenanceChanged(settings: MaintenanceSettings): void {
+    this.maintenance = settings.enabled ? { until: settings.until } : null;
+    this.#changed();
+  }
+
+  /** Why a request failed, in words for the player; a 503 `maintenance` also puts the app into maintenance mode. */
+  #problem(e: unknown): string {
+    if (!isMaintenance(e)) return describe(e);
+    this.#enterMaintenance(e);
+    return maintenanceError(this.maintenance!, new Date(this.#host.wallMs()));
   }
 
   /** Keeps the streak (and the Stats screen's data) fresh after a sync. Stats are a nicety: a failure here is not a sync failure. */
@@ -537,6 +599,7 @@ export class AppController extends EventTarget {
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
       now: () => this.#host.nowMs(),
       generatorsChanged: () => this.sync(),
+      maintenanceChanged: (settings) => this.maintenanceChanged(settings),
     });
     this.admin = model;
     this.#set({ screen: { kind: "admin" } });
@@ -598,7 +661,12 @@ export class AppController extends EventTarget {
       if (this.#repo.isSignedIn) {
         // Signing in again failed, or the first sync did: the cached state still plays.
         this.#showReady();
-        this.#set({ notice: e instanceof SignInError ? e.message : "Signed in, but couldn't sync yet." });
+        if (isMaintenance(e)) {
+          this.#enterMaintenance(e);
+          this.#changed();
+        } else {
+          this.#set({ notice: e instanceof SignInError ? e.message : "Signed in, but couldn't sync yet." });
+        }
       } else {
         this.#set({ phase: { kind: "failed", message: describe(e) } });
       }
@@ -610,7 +678,7 @@ export class AppController extends EventTarget {
     const endSession = await this.#repo.endSessionUrl(`${this.origin}/`);
     this.#repo.signOut();
     this.games.clear();
-    Object.assign(this, { puzzles: null, week: null, me: null, streak: null, stats: null, statsGenerator: null, notice: null, needsSignIn: false, screen: { kind: "today" } });
+    Object.assign(this, { puzzles: null, week: null, me: null, streak: null, stats: null, statsGenerator: null, notice: null, needsSignIn: false, maintenance: null, screen: { kind: "today" } });
     if (endSession) this.#host.location.assign(endSession);
     else this.start();
   }
@@ -747,7 +815,7 @@ export class AppController extends EventTarget {
       },
       (e) => {
         if (request !== this.#leaderboardRequest) return;
-        this.leaderboardError = e instanceof ApiException || e instanceof OidcException ? describe(e) : "You're offline. The leaderboard needs a connection to the server.";
+        this.leaderboardError = e instanceof ApiException || e instanceof OidcException ? this.#problem(e) : "You're offline. The leaderboard needs a connection to the server.";
       },
     ).finally(() => this.#changed());
   }
@@ -823,7 +891,7 @@ export class AppController extends EventTarget {
       },
       (e) => {
         if (request !== this.#statsRequest) return;
-        this.statsError = e instanceof ApiException || e instanceof OidcException ? describe(e) : "You're offline. Your stats need a connection to the server.";
+        this.statsError = e instanceof ApiException || e instanceof OidcException ? this.#problem(e) : "You're offline. Your stats need a connection to the server.";
       },
     ).finally(() => this.#changed());
   }
@@ -851,7 +919,7 @@ export class AppController extends EventTarget {
       },
       (e) => {
         if (request !== this.#leaderboardRequest) return;
-        this.leaderboardError = e instanceof ApiException || e instanceof OidcException ? describe(e) : "You're offline. The leaderboard needs a connection to the server.";
+        this.leaderboardError = e instanceof ApiException || e instanceof OidcException ? this.#problem(e) : "You're offline. The leaderboard needs a connection to the server.";
       },
     ).finally(() => this.#changed());
   }
@@ -943,6 +1011,8 @@ export class AppController extends EventTarget {
     return this.seed ? this.#seeds.today() : this.#repo.today();
   }
 }
+
+const isMaintenance = (e: unknown): e is ApiException => e instanceof ApiException && e.isMaintenance;
 
 const sameEndless = (a: EndlessRef, b: EndlessRef) => a.generator === b.generator && a.difficulty === b.difficulty && a.number === b.number;
 

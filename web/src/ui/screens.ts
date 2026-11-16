@@ -1,3 +1,5 @@
+import { ApiException } from "../api/client.ts";
+import type { MaintenanceSettings } from "../api/models.ts";
 import { addDays, DEFAULT_TIMEZONE, describeDate, isValidZone } from "../game/calendar.ts";
 import { formatDuration } from "../game/timer.ts";
 import { DEFAULT_LEVELS, DIFFICULTIES, endlessTitle, MAX_LEVELS, puzzleTitle } from "../generator/generator.ts";
@@ -9,6 +11,7 @@ import { type AdminModel, actionLabel, flavourOf, formatBytes, progressFraction 
 import { type AppController, ENDLESS_LABEL, type Phase, type ServerInfo } from "./controller.ts";
 import { type Child, Component, h, topBar } from "./dom.ts";
 import { GENERATOR_CHOICES, generatorsSummary, sameGenerators } from "./generator.ts";
+import { fromLocalInput, maintenanceError, PLAYER_TRY_LATER, toLocalInput } from "./maintenance.ts";
 import { sparklinePoints, streakMarker, streakSummary } from "./stats.ts";
 import { actionButton, canShare, copyText, share, shareResultsButton } from "./share.ts";
 
@@ -127,7 +130,9 @@ export class SignInScreen extends Screen {
       } catch (err) {
         error.textContent = err instanceof RangeError
           ? "User id can't be empty or contain ':', and a name is required."
-          : "Sign-in failed: couldn't reach the server.";
+          : err instanceof ApiException && err.isMaintenance
+            ? maintenanceError({ until: err.maintenanceUntil }, new Date())
+            : "Sign-in failed: couldn't reach the server.";
         error.hidden = false;
       } finally {
         submit.disabled = false;
@@ -168,11 +173,22 @@ export class TodayScreen extends Screen {
     ];
   }
 
+  /** Instead of play when the puzzles aren't on the device and the server is down for maintenance. */
+  #tryLater(): Child {
+    const app = this.app;
+    return h("div", { class: "card center maintenance-later" },
+      h("p", null, PLAYER_TRY_LATER),
+      app.backAround && h("p", { class: "muted" }, app.backAround),
+      h("button", { class: "primary", disabled: app.syncing, onclick: () => app.sync() }, app.syncing ? "Checking…" : "Try again"),
+    );
+  }
+
   /** The endless tab: each difficulty's progress and next puzzle, and a way to open any number. */
   #endless(): Child {
     const app = this.app;
     const summaries = app.endlessSummaries();
     if (!summaries) {
+      if (app.serverDown) return this.#tryLater();
       return h("div", { class: "card center" },
         h("p", null, `The ${ENDLESS_LABEL.toLowerCase()} puzzles haven't been downloaded yet.`),
         h("p", { class: "muted" }, "Connect to the internet once to get them; after that they play offline."),
@@ -255,6 +271,7 @@ export class TodayScreen extends Screen {
     ];
     const puzzles = app.puzzles;
     if (!puzzles) {
+      if (app.serverDown) return [header, this.#tryLater()];
       return [
         header,
         h("div", { class: "card center" },
@@ -693,6 +710,7 @@ export class AdminScreen extends Screen {
           : "This updates the server binary only. The web client is updated separately."),
       ),
       this.#generator(m),
+      this.#maintenance(m),
       this.#progress(m),
       this.#confirm(m),
       list && !m.confirm && h("div", { class: "card" },
@@ -732,6 +750,39 @@ export class AdminScreen extends Screen {
         generatorChoices(enabled, m.generatorBusy, (next) => void m.chooseGenerators(next)),
         h("p", { class: "muted small" },
           "Changes apply straight away. With both on, players pick one with a switch on the Daily and Endless tabs, and each has its own puzzles, leaderboards and stats. Results and replays keep the generator they were played with, so turning one off loses nothing."),
+      ],
+    );
+  }
+
+  readonly #maintOn = h("input", { type: "checkbox", id: "maintenance-on" });
+  readonly #maintUntil = h("input", { type: "datetime-local", id: "maintenance-until" });
+  /** The settings the two inputs were last set from, so a change from the server resets them but a re-render doesn't. */
+  #maintApplied: MaintenanceSettings | null = null;
+
+  /** Maintenance mode: on or off, with an optional end time shown to players, applied straight away. */
+  #maintenance(m: AdminModel): Child {
+    const settings = m.maintenance;
+    if (!settings && !m.maintenanceError) return null;
+    if (settings && settings !== this.#maintApplied) {
+      this.#maintApplied = settings;
+      this.#maintOn.checked = settings.enabled;
+      this.#maintUntil.value = settings.until ? toLocalInput(settings.until) : "";
+    }
+    const save = () => void m.saveMaintenance(this.#maintOn.checked, fromLocalInput(this.#maintUntil.value));
+    return h("div", { class: "card maintenance-admin", id: "maintenance" },
+      h("h2", null, "Maintenance mode"),
+      m.maintenanceError && h("p", { class: "error" }, m.maintenanceError),
+      settings && [
+        h("p", null, settings.enabled ? "On: players can't reach the server." : "Off."),
+        h("label", { class: "check" }, this.#maintOn, " Maintenance mode"),
+        h("label", { class: "field", for: "maintenance-until" }, "Back around (optional, your time)"),
+        h("div", { class: "inline" },
+          this.#maintUntil,
+          h("button", { id: "maintenance-clear", onclick: () => { this.#maintUntil.value = ""; } }, "Clear")),
+        h("div", { class: "actions" },
+          h("button", { id: "maintenance-save", class: "primary", disabled: m.maintenanceBusy, onclick: save }, m.maintenanceBusy ? "Saving…" : "Save")),
+        h("p", { class: "muted small" },
+          "Switch it on before deploying or testing. Players see a banner and can keep playing the puzzles they have; their scores upload when it is off. Admins play as usual. The time is only shown to players: it does not switch anything off."),
       ],
     );
   }

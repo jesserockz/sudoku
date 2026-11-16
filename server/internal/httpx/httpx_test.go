@@ -38,3 +38,22 @@ func TestRecoverWrites500(t *testing.T) {
 		t.Errorf("body = %s", rec.Body)
 	}
 }
+
+func TestErrorUntil(t *testing.T) {
+	until := "2026-11-17T02:00:00Z"
+	rec := httptest.NewRecorder()
+	ErrorUntil(rec, http.StatusServiceUnavailable, CodeMaintenance, "down", &until)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if got, want := rec.Body.String(), `{"error":{"code":"maintenance","message":"down","until":"2026-11-17T02:00:00Z"}}`+"\n"; got != want {
+		t.Errorf("body = %s, want %s", got, want)
+	}
+
+	// Without an end time the field is left out.
+	rec = httptest.NewRecorder()
+	ErrorUntil(rec, http.StatusServiceUnavailable, CodeMaintenance, "down", nil)
+	if got, want := rec.Body.String(), `{"error":{"code":"maintenance","message":"down"}}`+"\n"; got != want {
+		t.Errorf("body = %s, want %s", got, want)
+	}
+}

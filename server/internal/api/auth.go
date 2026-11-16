@@ -54,6 +54,11 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			httpx.Internal(w, r, err)
 			return
 		}
+		// Authentication comes first so sign-in problems keep their 401;
+		// only then are non-admins turned away during maintenance.
+		if s.refuseMaintenance(w, s.isAdmin(id)) {
+			return
+		}
 		user, err := s.deps.Store.UpsertUser(r.Context(), id.Subject, id.DisplayName)
 		if err != nil {
 			httpx.Internal(w, r, err)
@@ -116,6 +121,12 @@ type configResponse struct {
 	OIDC     oidcConfig `json:"oidc"`
 	AuthMode string     `json:"authMode"`
 	Version  string     `json:"version"`
+	// Maintenance is non-null while maintenance mode is on.
+	Maintenance *maintenanceConfig `json:"maintenance"`
+}
+
+type maintenanceConfig struct {
+	Until *string `json:"until"`
 }
 
 type oidcConfig struct {
@@ -130,10 +141,15 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 	if scopes == nil {
 		scopes = []string{}
 	}
+	var maint *maintenanceConfig
+	if m := s.maintenance(); m.Enabled {
+		maint = &maintenanceConfig{Until: untilString(m)}
+	}
 	httpx.WriteJSON(w, http.StatusOK, configResponse{
-		Timezone: c.Timezone,
-		OIDC:     oidcConfig{Issuer: c.OIDC.Issuer, ClientID: c.OIDC.ClientID, Scopes: scopes},
-		AuthMode: c.Auth.Mode,
-		Version:  version.Version,
+		Timezone:    c.Timezone,
+		OIDC:        oidcConfig{Issuer: c.OIDC.Issuer, ClientID: c.OIDC.ClientID, Scopes: scopes},
+		AuthMode:    c.Auth.Mode,
+		Version:     version.Version,
+		Maintenance: maint,
 	})
 }

@@ -10,6 +10,22 @@ import { bool, list, num, obj, optional, str } from "../data/store.ts";
 export interface ApiError {
   code: string;
   message: string;
+  /** When the server expects to be back, on a `maintenance` error that says so. */
+  until?: Date;
+}
+
+/** The `code` of the 503 a non-admin gets while maintenance mode is on. Other 503s exist, so key off this, not the status. */
+export const MAINTENANCE_CODE = "maintenance";
+
+/** The server is in maintenance mode: `until` is when it might end (a hint only), or `null` when unknown. */
+export interface MaintenanceState {
+  until: Date | null;
+}
+
+/** `GET /api/v1/admin/maintenance`, and the answer to changing it. */
+export interface MaintenanceSettings {
+  enabled: boolean;
+  until: Date | null;
 }
 
 export interface OidcConfig {
@@ -26,6 +42,8 @@ export interface AppConfig {
   authMode: "oidc" | "dev";
   /** The server's release version; older servers don't send it. */
   version?: string;
+  /** Present while the server is in maintenance mode; older servers don't send it, which is the same as off. */
+  maintenance?: MaintenanceState;
 }
 
 /** `GET /api/v1/week`. The seed is 16 lowercase hex characters. */
@@ -305,9 +323,32 @@ const date = (json: unknown) => {
   return s;
 };
 
+/** An RFC 3339 timestamp, or throws. */
+const timestamp = (json: unknown): Date => {
+  const s = str(json);
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) throw new TypeError(`not a timestamp: ${s}`);
+  return d;
+};
+
+/** A timestamp that may be missing, `null` or unreadable: `null` then. A display hint is never worth failing over. */
+const lenientTimestamp = (json: unknown): Date | null => {
+  try {
+    return optional(json, timestamp);
+  } catch {
+    return null;
+  }
+};
+
 export function decodeApiError(json: unknown): ApiError {
   const e = obj(obj(json).error);
-  return { code: str(e.code), message: optional(e.message, str) ?? "" };
+  const until = lenientTimestamp(e.until);
+  return { code: str(e.code), message: optional(e.message, str) ?? "", ...(until ? { until } : {}) };
+}
+
+export function decodeMaintenanceSettings(json: unknown): MaintenanceSettings {
+  const o = obj(json);
+  return { enabled: bool(o.enabled), until: optional(o.until, timestamp) };
 }
 
 export function decodeOidcConfig(json: unknown): OidcConfig {
@@ -320,7 +361,11 @@ export function decodeAppConfig(json: unknown): AppConfig {
   const authMode = str(o.authMode);
   if (authMode !== "oidc" && authMode !== "dev") throw new TypeError(`unknown auth mode: ${authMode}`);
   const version = optional(o.version, str);
-  return { timezone: str(o.timezone), oidc: optional(o.oidc, decodeOidcConfig), authMode, ...(version ? { version } : {}) };
+  const maintenance = optional(o.maintenance, (m) => ({ until: lenientTimestamp(obj(m).until) }));
+  return {
+    timezone: str(o.timezone), oidc: optional(o.oidc, decodeOidcConfig), authMode,
+    ...(version ? { version } : {}), ...(maintenance ? { maintenance } : {}),
+  };
 }
 
 export function decodeWeek(json: unknown): Week {

@@ -29,6 +29,15 @@ export class FakeServer {
   reportsGenerators = true;
   /** When set, the admin generator endpoints answer this status. */
   generatorStatus: number | null = null;
+  /**
+   * Maintenance mode: while set, authenticated requests from non-admins answer 503 `maintenance` (`until` is an RFC 3339
+   * string or `null`), and `GET /config` reports it. The admin endpoints change it.
+   */
+  maintenance: { until: string | null } | null = null;
+  /** False plays an older server whose `GET /config` has no `maintenance` field. */
+  reportsMaintenance = true;
+  /** When set, the admin maintenance endpoints answer this status. */
+  maintenanceStatus: number | null = null;
   /** Answer to `GET /me/stats`; `statsStatus` makes it fail instead, and `statsGate` holds the answer back. */
   stats: unknown = {
     today: "2026-10-27",
@@ -135,7 +144,7 @@ export class FakeServer {
   async #handle(r: FakeServer["requests"][number]): Promise<Response> {
     switch (r.url.pathname) {
       case "/api/v1/config":
-        return json({ timezone: "Pacific/Auckland", authMode: this.authMode, version: "1.2.3", oidc: { issuer: ISSUER, clientId: "sudoku", scopes: ["openid", "profile", "offline_access"] } });
+        return json({ timezone: "Pacific/Auckland", authMode: this.authMode, version: "1.2.3", ...(this.reportsMaintenance ? { maintenance: this.maintenance } : {}), oidc: { issuer: ISSUER, clientId: "sudoku", scopes: ["openid", "profile", "offline_access"] } });
       case "/o/sudoku/.well-known/openid-configuration":
         return json({
           issuer: ISSUER, authorization_endpoint: "https://auth.test/o/authorize/",
@@ -155,6 +164,9 @@ export class FakeServer {
     if (this.authUnavailable) return json({ error: { code: "auth_unavailable", message: "Sign-in isn't available right now." } }, 503);
     const user = this.#user(r.headers.get("Authorization"));
     if (!user) return json({ error: { code: "unauthorized", message: "bad token" } }, 401);
+    if (this.maintenance && !this.admin) {
+      return json({ error: { code: "maintenance", message: "the server is down for maintenance", ...(this.maintenance.until ? { until: this.maintenance.until } : {}) } }, 503);
+    }
     if (r.url.pathname.startsWith("/api/v1/admin/endless/results")) {
       if (!this.admin) return json({ error: { code: "forbidden", message: "admin access required" } }, 403);
       if (r.url.pathname === "/api/v1/admin/endless/results") return json(this.adminEndlessList);
@@ -201,6 +213,16 @@ export class FakeServer {
           this.generators = [...new Set(enabled)].sort();
         }
         return json({ enabled: this.generators });
+      }
+      case "/api/v1/admin/maintenance": {
+        if (!this.admin) return json({ error: { code: "forbidden", message: "admin access required" } }, 403);
+        if (this.maintenanceStatus !== null) return json({ error: { code: "boom", message: "maintenance broke" } }, this.maintenanceStatus);
+        if (r.method === "PUT") {
+          const body = JSON.parse(r.body) as { enabled: boolean; until: string | null };
+          this.maintenance = body.enabled ? { until: body.until } : null;
+          return json({ enabled: body.enabled, until: body.until });
+        }
+        return json({ enabled: this.maintenance !== null, until: this.maintenance?.until ?? null });
       }
       case "/api/v1/week": {
         const info = weekAt(this.now());

@@ -103,10 +103,70 @@ keep the generator they were played with. After a change the admin's own app
 syncs, so its Daily tab follows. It uses `GET`/`PUT /api/v1/admin/generator`
 (`{ "enabled": [1, 2] }`, see `docs/API.md`).
 
+**Maintenance mode.** Another admin-only card, "Maintenance mode", switches the
+server's [maintenance mode](#maintenance-mode) on or off straight away: a
+checkbox, an optional "Back around" time (a `datetime-local` input in the
+admin's own time zone, sent as UTC, with a **Clear** button) and **Save**. The
+time is only a hint shown to players; passing it switches nothing off. It uses
+`GET`/`PUT /api/v1/admin/maintenance` (`{ "enabled": true, "until": "..." }`,
+see `docs/API.md`), and after a save the admin's reminder banner follows at
+once.
+
 The logic is in `src/ui/admin.ts` (`AdminModel`, with an injected clock and
 sleep so tests don't wait); `AdminScreen` in `screens.ts` only renders it.
 The three choices and the wording (`GENERATOR_CHOICES`, `generatorsSummary`)
 are in `src/ui/generator.ts`.
+
+### Maintenance mode
+
+An admin switches maintenance mode on from the Admin page before deploying or
+testing; the server keeps running, and answers non-admins `503` with the error
+code `maintenance` (and `until` when an end time is set). The client keys off the
+code, never the status, since other 503s exist. Admins are served as usual.
+Wording and time formatting are in `src/ui/maintenance.ts`.
+
+**Players.** `AppController.maintenance` (`{ until: Date | null }` or `null`) is
+set by a sync, a leaderboard, stats or endless board request that gets
+the maintenance error, and cleared by the next sync that succeeds. While it is
+set the 30-second `tick()` retries the sync, as for being offline, so the state
+clears by itself, without a reload, and the queued results upload then. Results
+solved meanwhile stay in the offline queue: a 503 is neither accepted nor
+rejected, so nothing is dropped (a sync that finds maintenance part way through
+the upload also keeps the rest queued). There is no error notice; instead:
+
+- With this week's puzzles on the device, a banner above every screen says "The
+  server is down for maintenance. Puzzles still work and your scores will upload
+  when it's back. There's nothing you need to do." with "Back around Tue 3:00 pm"
+  when an end time is known. The time is formatted with `Intl.DateTimeFormat` in
+  the player's locale and time zone (weekday and time; the date too when it is
+  more than six days away). Play carries on offline as usual.
+- Without them (a fresh device, or a week the cache doesn't cover), the Today
+  screen shows "The server is down for maintenance. Please try again later."
+  (plus the "Back around" line) with a Try again button, instead of the puzzle
+  list; the Endless tab says the same when its seed was never downloaded.
+- The leaderboards and Stats say "The server is down for maintenance. Back around
+  Tue 3:00 pm." (or "Please try again later.") instead of a generic error.
+- Signing in still works (authentication runs first); an OIDC sign-in during
+  maintenance ends up signed in with the banner and no "couldn't sync" notice.
+
+**Admins.** They are served normally, so there is no 503 to learn from: after
+each sync the app reads `maintenance` from `GET /api/v1/config` (older servers
+omit it, which is off), and the Admin page updates it when it saves. While on,
+every screen carries a big red reminder, "Maintenance mode is on. Players can't
+reach the server.", with "Players see: Back around ..." when an end time is set
+and a **Switch off in Admin** button that opens the Admin page, where the
+Maintenance mode card has the switch.
+
+**The play screen** fills the viewport exactly, so there both banners shrink to
+one fixed-height line (28 px, ellipsis for long text; "Maintenance. Back around
+..." for players, "Maintenance mode is on" and an **Admin** button for admins)
+and the screen gives up that height through the `--banner-h` custom property
+instead of scrolling. The colours are the `--maint-*` tokens in `styles.css`,
+with light and dark values; the admin banner is solid red with white text and a
+heavier border so it is unmistakable next to the player's pale amber one.
+
+`web/e2e/maintenance.cjs <url> [screenshot dir]` (a dev-auth server with `ann` as
+admin and an empty database) drives all of it with two browser contexts.
 
 ### Results and replays
 
