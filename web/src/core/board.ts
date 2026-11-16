@@ -1,4 +1,5 @@
 import { CELLS, peers } from "./geometry.ts";
+import { Layout } from "./layout.ts";
 
 export const EMPTY = 0;
 
@@ -85,17 +86,31 @@ export class Board {
     return !peers[i]!.some((p) => this.#cells[p] === digit);
   }
 
-  /** Whether the cell holds a digit that also appears in one of its peers. */
-  hasConflict(i: number): boolean {
+  /** Whether the cell holds a digit that also appears in one of its peers (under `layout`: its units and cage). */
+  hasConflict(i: number, layout: Layout = Layout.STANDARD): boolean {
     const d = this.get(i);
-    return d !== EMPTY && peers[i]!.some((p) => this.#cells[p] === d);
+    return d !== EMPTY && layout.peers[i]!.some((p) => this.#cells[p] === d);
   }
 
-  /** Indices of every filled cell whose digit repeats in a row, column or box, ascending. */
-  conflicts(): number[] {
+  /** Indices of every filled cell whose digit repeats in a row, column or box (or `layout`'s other units and cages), ascending. */
+  conflicts(layout: Layout = Layout.STANDARD): number[] {
     const out: number[] = [];
-    for (let i = 0; i < CELLS; i++) if (this.hasConflict(i)) out.push(i);
+    for (let i = 0; i < CELLS; i++) if (this.hasConflict(i, layout)) out.push(i);
     return out;
+  }
+
+  /** The indices (into `layout.cages`) of the killer cages that are full but don't add up to their sum. */
+  wrongCages(layout: Layout): number[] {
+    const out: number[] = [];
+    layout.cages.forEach((cage, k) => {
+      if (cage.cells.every((c) => this.#cells[c] !== EMPTY) && cage.cells.reduce((s, c) => s + this.#cells[c]!, 0) !== cage.sum) out.push(k);
+    });
+    return out;
+  }
+
+  /** Every cell filled and every unit and cage of `layout` right: no repeated digit, and each cage adding up to its sum. */
+  solvedUnder(layout: Layout): boolean {
+    return this.isFull && layout.isValid(this.#cells);
   }
 
   get filledCount(): number {

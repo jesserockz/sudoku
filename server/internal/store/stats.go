@@ -106,8 +106,10 @@ func (s *Store) CountingDates(ctx context.Context, date string) (map[int64][]str
 	return out, rows.Err()
 }
 
-// EndlessStat summarises a user's endless results in one difficulty tier.
+// EndlessStat summarises a user's endless results in one difficulty tier of
+// one variant.
 type EndlessStat struct {
+	Variant    int
 	Difficulty int
 	Completed  int
 	// Highest is the highest puzzle number solved.
@@ -117,13 +119,14 @@ type EndlessStat struct {
 	TotalMs int64
 }
 
-// UserEndlessStats returns a user's endless summary for each tier they have
-// played in one generator's series, ordered by difficulty. Flagged results
-// are included.
+// UserEndlessStats returns a user's endless summary for each variant and
+// tier they have played in one generator's series, ordered by variant then
+// difficulty. Flagged results are included.
 func (s *Store) UserEndlessStats(ctx context.Context, userID int64, generator int) ([]EndlessStat, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT difficulty, COUNT(*), MAX(number), MIN(elapsed_ms), SUM(elapsed_ms)
-		FROM endless_results WHERE user_id = ? AND generator = ? GROUP BY difficulty ORDER BY difficulty`, userID, generator)
+		SELECT variant, difficulty, COUNT(*), MAX(number), MIN(elapsed_ms), SUM(elapsed_ms)
+		FROM endless_results WHERE user_id = ? AND generator = ?
+		GROUP BY variant, difficulty ORDER BY variant, difficulty`, userID, generator)
 	if err != nil {
 		return nil, fmt.Errorf("user endless stats: %w", err)
 	}
@@ -131,7 +134,7 @@ func (s *Store) UserEndlessStats(ctx context.Context, userID int64, generator in
 	var out []EndlessStat
 	for rows.Next() {
 		var e EndlessStat
-		if err := rows.Scan(&e.Difficulty, &e.Completed, &e.Highest, &e.BestMs, &e.TotalMs); err != nil {
+		if err := rows.Scan(&e.Variant, &e.Difficulty, &e.Completed, &e.Highest, &e.BestMs, &e.TotalMs); err != nil {
 			return nil, fmt.Errorf("user endless stats: %w", err)
 		}
 		out = append(out, e)

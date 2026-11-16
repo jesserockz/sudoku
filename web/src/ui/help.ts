@@ -1,6 +1,7 @@
 import { ENDLESS_LABEL, type AppController, type HelpTopic } from "./controller.ts";
 import { type Child, h } from "./dom.ts";
 import { generatorHelp } from "./generator.ts";
+import { variantsHelp } from "./variants.ts";
 
 /** The colour pens, which work the same in every game. */
 const colourHelp = (): HTMLElement =>
@@ -20,6 +21,18 @@ function content(app: AppController, topic: HelpTopic): { title: string; body: C
         app.seed
           ? h("p", null, "History lists your times for every puzzle you've solved, by difficulty.")
           : h("p", null, "The leaderboard shows how many puzzles each player has solved in each difficulty, and the times on any one puzzle."),
+        colourHelp(),
+      ],
+    };
+  }
+  if (topic === "variants") {
+    const help = variantsHelp({ seed: !!app.seed, bothGenerators: app.generators.length > 1 });
+    return {
+      title: help.title,
+      body: [
+        help.intro.map((t) => h("p", null, t)),
+        h("ul", { class: "variant-rules" }, help.rules.map((r) => h("li", null, h("strong", null, `${r.name}:`), ` ${r.text}`))),
+        help.outro.map((t) => h("p", null, t)),
         colourHelp(),
       ],
     };

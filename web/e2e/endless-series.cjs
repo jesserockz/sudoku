@@ -182,8 +182,10 @@ const phone = { viewport: { width: 375, height: 812 }, deviceScaleFactor: 2, col
     const statsOf = async (generator) => {
       await page.locator(".generator-tabs").getByRole("button", { name: generator }).click();
       await page.locator(`.generator-tabs button.active`, { hasText: generator }).waitFor();
-      await page.getByText(`The ${generator} series`).waitFor();
-      return page.locator(".card", { hasText: "Endless" }).last().locator("tbody tr").first().innerText();
+      // The Endless card's note; the Variants card has its own "The ... series of each variant." line.
+      const note = `The ${generator} series, following`;
+      await page.getByText(note).waitFor();
+      return page.locator(".card", { hasText: note }).locator("tbody tr").first().innerText();
     };
     check((await statsOf("Graded")).replace(/\s+/g, " ").includes("Easy 1 #1"), "Stats shows the Graded series: one solved, up to #1");
     await shot(page, "stats-endless-graded");

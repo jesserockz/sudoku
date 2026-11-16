@@ -134,14 +134,14 @@ export class SudokuApi {
     return this.#submit("endless/results", result, decodeEndlessResult);
   }
 
-  /** How many endless puzzles of each difficulty everyone has solved in `generator`'s series. */
-  async endlessProgress(generator: number): Promise<EndlessProgress> {
-    return decodeEndlessProgress(await this.#get(`endless/leaderboard?generator=${generator}`));
+  /** How many endless puzzles of each difficulty everyone has solved in `generator`'s series of `variant` (0: standard Sudoku). */
+  async endlessProgress(generator: number, variant = 0): Promise<EndlessProgress> {
+    return decodeEndlessProgress(await this.#get(`endless/leaderboard?${seriesQuery(generator, variant)}`));
   }
 
-  /** One endless puzzle's leaderboard, in `generator`'s series. */
-  async endlessBoard(generator: number, difficulty: number, number: number): Promise<EndlessBoard> {
-    return decodeEndlessBoard(await this.#get(`endless/leaderboard/${difficulty}/${number}?generator=${generator}`));
+  /** One endless puzzle's leaderboard, in `generator`'s series of `variant` (0: standard Sudoku). */
+  async endlessBoard(generator: number, difficulty: number, number: number, variant = 0): Promise<EndlessBoard> {
+    return decodeEndlessBoard(await this.#get(`endless/leaderboard/${difficulty}/${number}?${seriesQuery(generator, variant)}`));
   }
 
   async #submit<T>(path: string, result: T, decode: (json: unknown) => T): Promise<SubmitOutcome<T>> {
@@ -197,19 +197,19 @@ export class SudokuApi {
     return decodeAdminEndlessResults(await this.#get(`admin/endless/results?date=${date}`));
   }
 
-  /** Admin only: one endless result's replay, with the puzzle's givens. */
-  async adminEndlessReplay(generator: number, difficulty: number, number: number, userId: string): Promise<EndlessReplayDetail> {
-    return decodeEndlessReplayDetail(await this.#get(`${endlessResultPath(difficulty, number, userId)}/replay?generator=${generator}`));
+  /** Admin only: one endless result's replay, with the puzzle's givens (and a variant's layout). */
+  async adminEndlessReplay(generator: number, difficulty: number, number: number, userId: string, variant = 0): Promise<EndlessReplayDetail> {
+    return decodeEndlessReplayDetail(await this.#get(`${endlessResultPath(difficulty, number, userId)}/replay?${seriesQuery(generator, variant)}`));
   }
 
   /** Admin only: flags an endless result as suspicious, replacing any earlier flag. */
-  async flagEndlessResult(generator: number, difficulty: number, number: number, userId: string, reason: string): Promise<AdminEndlessResult> {
-    return decodeAdminEndlessResult(await this.#send("PUT", `${endlessResultPath(difficulty, number, userId)}/flag?generator=${generator}`, { reason }));
+  async flagEndlessResult(generator: number, difficulty: number, number: number, userId: string, reason: string, variant = 0): Promise<AdminEndlessResult> {
+    return decodeAdminEndlessResult(await this.#send("PUT", `${endlessResultPath(difficulty, number, userId)}/flag?${seriesQuery(generator, variant)}`, { reason }));
   }
 
   /** Admin only: removes an endless result's flag. */
-  async unflagEndlessResult(generator: number, difficulty: number, number: number, userId: string): Promise<AdminEndlessResult> {
-    return decodeAdminEndlessResult(await this.#send("DELETE", `${endlessResultPath(difficulty, number, userId)}/flag?generator=${generator}`));
+  async unflagEndlessResult(generator: number, difficulty: number, number: number, userId: string, variant = 0): Promise<AdminEndlessResult> {
+    return decodeAdminEndlessResult(await this.#send("DELETE", `${endlessResultPath(difficulty, number, userId)}/flag?${seriesQuery(generator, variant)}`));
   }
 
   /** Admin only: the puzzle generators players can play. */
@@ -271,6 +271,9 @@ export class SudokuApi {
 }
 
 const resultPath = (date: string, level: number, userId: string) => `admin/results/${date}/${level}/${encodeURIComponent(userId)}`;
+
+/** An endless series as a query: `generator=N`, plus `&variant=V` for a variant (standard Sudoku's 0 is left out, as older servers expect). */
+const seriesQuery = (generator: number, variant: number) => `generator=${generator}${variant === 0 ? "" : `&variant=${variant}`}`;
 
 const endlessResultPath = (difficulty: number, number: number, userId: string) =>
   `admin/endless/results/${difficulty}/${number}/${encodeURIComponent(userId)}`;

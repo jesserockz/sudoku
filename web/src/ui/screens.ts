@@ -1,5 +1,6 @@
 import { ApiException } from "../api/client.ts";
-import type { MaintenanceSettings } from "../api/models.ts";
+import { type MaintenanceSettings, variantOf } from "../api/models.ts";
+import { VARIANT_STANDARD, variantName } from "../core/layout.ts";
 import { addDays, DEFAULT_TIMEZONE, describeDate, isValidZone } from "../game/calendar.ts";
 import { formatDuration } from "../game/timer.ts";
 import { DEFAULT_LEVELS, DIFFICULTIES, endlessTitle, MAX_LEVELS, puzzleTitle } from "../generator/generator.ts";
@@ -8,12 +9,13 @@ import { generateSeed, normalizeSeed, seedSettings, type SeedSettings } from "..
 import { parseShareLink } from "../serverless/share-link.ts";
 import { WEB_VERSION } from "../version.ts";
 import { type AdminModel, actionLabel, flavourOf, formatBytes, progressFraction } from "./admin.ts";
-import { type AppController, ENDLESS_LABEL, type Phase, type ServerInfo } from "./controller.ts";
+import { type AppController, ENDLESS_LABEL, type Phase, type ServerInfo, VARIANTS_LABEL } from "./controller.ts";
 import { type Child, Component, h, topBar } from "./dom.ts";
 import { GENERATOR_CHOICES, generatorsSummary, sameGenerators } from "./generator.ts";
 import { fromLocalInput, maintenanceError, PLAYER_TRY_LATER, toLocalInput } from "./maintenance.ts";
 import { sparklinePoints, streakMarker, streakSummary } from "./stats.ts";
 import { actionButton, canShare, copyText, share, shareResultsButton } from "./share.ts";
+import { VARIANT_PICKS, seriesName, variantRuleSentence } from "./variants.ts";
 
 /** A screen: a component that renders from the app's state. */
 abstract class Screen extends Component {
@@ -56,6 +58,14 @@ function generatorSwitch(app: AppController, current: number, choose: (version: 
         class: current === v && "active", "aria-pressed": String(current === v), onclick: () => choose(v),
       }, generatorName(v)))),
     help && h("button", { class: "link inline", onclick: () => app.openHelp("generators") }, "What's this?"));
+}
+
+/** The Diagonal / Jigsaw / Killer picker of the Variants tab and the variants' leaderboard: `current` is marked. */
+function variantSwitch(current: number, choose: (variant: number) => void): HTMLElement {
+  return h("div", { class: "tabs generator-tabs variant-tabs", role: "group", "aria-label": "Variant" },
+    VARIANT_PICKS.map((v) => h("button", {
+      class: current === v && "active", "aria-pressed": String(current === v), onclick: () => choose(v),
+    }, variantName(v))));
 }
 
 /** The Classic / Graded / Both buttons of the admin and seed cards, with the setting `enabled` marked. */
@@ -150,7 +160,10 @@ export class SignInScreen extends Screen {
   }
 }
 
-/** `<sudoku-today>`: the day's games, and either the leaderboard or the seed's sharing options; with a server, also the endless tab. */
+/**
+ * `<sudoku-today>`: the day's games, and either the leaderboard or the seed's sharing options; also the Endless
+ * tab, and the Variants tab (the same as Endless, for the variant picked at its top).
+ */
 export class TodayScreen extends Screen {
   // Made once, so a half-typed number survives the app's changes (e.g. a sync finishing).
   readonly #difficulty = h("select", { id: "endless-difficulty", "aria-label": "Difficulty" },
@@ -161,16 +174,17 @@ export class TodayScreen extends Screen {
 
   protected render(): Child {
     const app = this.app;
+    const labels = { daily: "Daily", endless: ENDLESS_LABEL, variants: VARIANTS_LABEL } as const;
     const tabs = app.hasEndless && h("div", { class: "tabs home-tabs", role: "tablist" },
-      (["daily", "endless"] as const).map((tab) => h("button", {
+      (["daily", "endless", "variants"] as const).map((tab) => h("button", {
         role: "tab", class: app.homeTab === tab && "active", "aria-selected": String(app.homeTab === tab),
         onclick: () => app.showHomeTab(tab),
-      }, tab === "daily" ? "Daily" : ENDLESS_LABEL)));
+      }, labels[tab])));
     const [header, body] = this.#daily();
-    return [
-      header, tabs, generatorSwitch(app, app.generator, (v) => void app.chooseGenerator(v), true),
-      app.hasEndless && app.homeTab === "endless" ? this.#endless() : body,
-    ];
+    let content: Child = body;
+    if (app.hasEndless && app.homeTab === "endless") content = this.#endless(VARIANT_STANDARD);
+    else if (app.hasEndless && app.homeTab === "variants") content = [variantSwitch(app.variant, (v) => app.chooseVariant(v)), this.#endless(app.variant)];
+    return [header, tabs, generatorSwitch(app, app.generator, (v) => void app.chooseGenerator(v), true), content];
   }
 
   /** Instead of play when the puzzles aren't on the device and the server is down for maintenance. */
@@ -183,10 +197,13 @@ export class TodayScreen extends Screen {
     );
   }
 
-  /** The endless tab: each difficulty's progress and next puzzle, and a way to open any number. */
-  #endless(): Child {
+  /**
+   * The Endless tab (`variant` 0) or the Variants tab's picked variant: each difficulty's progress and next puzzle,
+   * and a way to open any number.
+   */
+  #endless(variant: number): Child {
     const app = this.app;
-    const summaries = app.endlessSummaries();
+    const summaries = app.endlessSummaries(variant);
     if (!summaries) {
       if (app.serverDown) return this.#tryLater();
       return h("div", { class: "card center" },
@@ -196,7 +213,7 @@ export class TodayScreen extends Screen {
       );
     }
     const generator = app.generator;
-    const elsewhere = app.endlessElsewhere();
+    const elsewhere = app.endlessElsewhere(variant);
     const rows = summaries.map((d) => {
       const name = DIFFICULTIES[d.difficulty - 1]!.name;
       const resumingNext = d.inProgress.some((g) => g.number === d.next);
@@ -207,10 +224,10 @@ export class TodayScreen extends Screen {
           h("div", { class: ["status", d.solved > 0 && "done"] },
             d.solved === 0 ? "None solved yet" : `${d.solved} solved${d.highest > d.solved ? ` · up to #${d.highest}` : ""}`),
           others.length > 0 && h("div", { class: "status in-progress" }, "In progress: ",
-            others.map((g) => h("button", { class: "link", onclick: () => app.openEndless({ generator, difficulty: d.difficulty, number: g.number }) },
+            others.map((g) => h("button", { class: "link", onclick: () => void app.openEndless({ generator, variant, difficulty: d.difficulty, number: g.number }) },
               `#${g.number} (${formatDuration(g.elapsedMs)})`))),
         ),
-        h("button", { class: "primary", onclick: () => app.openEndless({ generator, difficulty: d.difficulty, number: d.next }) },
+        h("button", { class: "primary", onclick: () => void app.openEndless({ generator, variant, difficulty: d.difficulty, number: d.next }) },
           `${resumingNext ? "Resume" : "Play"} #${d.next}`),
       );
     });
@@ -219,25 +236,29 @@ export class TodayScreen extends Screen {
       e.preventDefault();
       const number = Number(this.#number.value);
       error.hidden = Number.isSafeInteger(number) && number >= 1;
-      if (error.hidden) app.openEndless({ generator, difficulty: Number(this.#difficulty.value), number });
+      if (error.hidden) void app.openEndless({ generator, variant, difficulty: Number(this.#difficulty.value), number });
     };
     return [
       h("div", { class: "card" },
-        h("h2", { id: "endless-series" }, `${generatorName(generator)} series`),
+        h("h2", { id: "endless-series" }, `${seriesName(generator, variant)} series`),
+        variant !== VARIANT_STANDARD && h("p", { class: "variant-rule" }, `${variantRuleSentence(variant)} `,
+          h("button", { class: "link inline", onclick: () => app.openHelp("variants") }, "How it works")),
         h("p", { class: "muted" }, app.seed
           ? "Numbered puzzles with no end. Everyone with your seed gets the same ones, and times count forever."
           : "Numbered puzzles with no end. Everyone gets the same ones, and times count forever.",
           app.me && ` · ${app.me.displayName}`),
-        app.generators.length > 1 && h("p", { class: "muted small" }, "Each generator has its own series, numbered from #1, with its own progress."),
+        app.generators.length > 1 && h("p", { class: "muted small" }, variant === VARIANT_STANDARD
+          ? "Each generator has its own series, numbered from #1, with its own progress."
+          : "Each generator has its own series of every variant, numbered from #1, with its own progress."),
         h("ul", { class: "puzzles" }, rows),
       ),
       elsewhere.length > 0 && h("div", { class: "card", id: "endless-elsewhere" },
         h("h2", null, "Unfinished in another series"),
         h("ul", { class: "puzzles" }, elsewhere.map((g) => h("li", null,
           h("div", null,
-            h("div", { class: "name" }, `${generatorName(g.generator)} ${endlessTitle(g.difficulty, g.number)}`),
+            h("div", { class: "name" }, `${seriesName(g.generator, g.variant)} ${endlessTitle(g.difficulty, g.number)}`),
             h("div", { class: "status in-progress" }, `In progress (${formatDuration(g.elapsedMs)})`)),
-          h("button", { onclick: () => app.openEndless({ generator: g.generator, difficulty: g.difficulty, number: g.number }) }, "Resume"),
+          h("button", { onclick: () => void app.openEndless(g) }, "Resume"),
         ))),
       ),
       h("div", { class: "card" },
@@ -248,7 +269,7 @@ export class TodayScreen extends Screen {
         ),
       ),
       h("div", { class: "actions" },
-        h("button", { onclick: () => app.openEndlessScores(1) }, app.seed ? "History" : "Leaderboard"),
+        h("button", { onclick: () => app.openEndlessScores(1, null, generator, variant) }, app.seed ? "History" : "Leaderboard"),
         !app.seed && h("button", { onclick: () => app.openStats() }, "Stats")),
     ];
   }
@@ -370,7 +391,7 @@ export class TodayScreen extends Screen {
         h("button", { class: "link inline", onclick: () => app.openHelp("generators") }, "What's this?")),
       generatorChoices(app.generators, false, (enabled) => void app.setSeedGenerators(enabled)),
       h("p", { class: "muted small" },
-        "Changes apply straight away. With both on, you pick one with the switch on the Daily and Endless tabs. Everyone in your group needs the same generators on to get the same puzzles."),
+        "Changes apply straight away. With both on, you pick one with the switch on the Daily, Endless and Variants tabs. Everyone in your group needs the same generators on to get the same puzzles."),
     );
   }
 
@@ -469,10 +490,11 @@ export class StatsScreen extends Screen {
         h("td", null, name(d.difficulty)), h("td", { class: "num" }, String(d.completed)),
         h("td", { class: "num" }, ms(d.bestMs)), h("td", { class: "num" }, ms(d.averageMs)),
         h("td", { class: "num" }, spark(d.recent.map((r) => r.elapsedMs)))));
-      const endless = stats.endless.map((d) => h("tr", null,
+      const endlessRows = (rows: typeof stats.endless) => rows.map((d) => h("tr", null,
         h("td", null, name(d.difficulty)), h("td", { class: "num" }, String(d.completed)),
         h("td", { class: "num" }, d.highest > 0 ? `#${d.highest}` : "-"),
         h("td", { class: "num" }, ms(d.bestMs)), h("td", { class: "num" }, ms(d.averageMs))));
+      const endlessHead = () => head("", "Solved", "Highest", "Best", "Average");
       body = [
         h("div", { class: "card" },
           h("h2", null, "Streak"),
@@ -491,7 +513,15 @@ export class StatsScreen extends Screen {
         h("div", { class: "card" },
           h("h2", null, ENDLESS_LABEL),
           h("p", { class: "muted small" }, `The ${generatorName(stats.generator)} series, following the generator chosen above.`),
-          h("table", { class: "board-table stats-table" }, head("", "Solved", "Highest", "Best", "Average"), h("tbody", null, endless)),
+          h("table", { class: "board-table stats-table" }, endlessHead(), h("tbody", null, endlessRows(stats.endless))),
+        ),
+        stats.variants.length > 0 && h("div", { class: "card", id: "stats-variants" },
+          h("h2", null, VARIANTS_LABEL),
+          h("p", { class: "muted small" }, `The ${generatorName(stats.generator)} series of each variant.`),
+          stats.variants.map((v) => [
+            h("h3", null, variantName(v.variant)),
+            h("table", { class: "board-table stats-table" }, endlessHead(), h("tbody", null, endlessRows(v.endless))),
+          ]),
         ),
       ];
     }
@@ -508,8 +538,9 @@ export class EndlessScoresScreen extends Screen {
   protected render(): Child {
     const app = this.app;
     if (app.screen.kind !== "endless-scores") return null;
-    const { generator, difficulty, number } = app.screen;
+    const { generator, variant, difficulty, number } = app.screen;
     const meId = app.me?.id;
+    const series = seriesName(generator, variant);
     const suspiciousBadge = (suspicious: boolean) =>
       suspicious && h("span", { class: "badge suspicious", title: "An admin flagged this result as suspicious" }, "suspicious");
 
@@ -529,7 +560,8 @@ export class EndlessScoresScreen extends Screen {
               h("td", { class: "time" }, `${p.completed} solved`, h("div", { class: "muted small" }, `up to #${p.highest}`)),
             ))));
     } else {
-      const board = app.endlessBoard?.difficulty === difficulty && app.endlessBoard.number === number ? app.endlessBoard : null;
+      const board = app.endlessBoard?.difficulty === difficulty && app.endlessBoard.number === number && variantOf(app.endlessBoard) === variant
+        ? app.endlessBoard : null;
       body = !board
         ? h("p", { class: "muted" }, "Loading…")
         : board.entries.length === 0
@@ -545,30 +577,31 @@ export class EndlessScoresScreen extends Screen {
     const open = (e: Event) => {
       e.preventDefault();
       const n = Number(this.#number.value);
-      if (Number.isSafeInteger(n) && n >= 1) app.openEndlessScores(difficulty, n, generator);
+      if (Number.isSafeInteger(n) && n >= 1) app.openEndlessScores(difficulty, n, generator, variant);
     };
     return [
-      topBar(`${ENDLESS_LABEL} leaderboard`, () => app.openToday()),
+      topBar(`${variant === VARIANT_STANDARD ? ENDLESS_LABEL : variantName(variant)} leaderboard`, () => app.openToday()),
+      variant !== VARIANT_STANDARD && variantSwitch(variant, (v) => app.openEndlessScores(difficulty, number, generator, v)),
       h("div", { class: "tabs generator-tabs", role: "group", "aria-label": "Series" },
         GENERATOR_VERSIONS.map((v) => h("button", {
-          class: generator === v && "active", "aria-pressed": String(generator === v), onclick: () => app.openEndlessScores(difficulty, number, v),
+          class: generator === v && "active", "aria-pressed": String(generator === v), onclick: () => app.openEndlessScores(difficulty, number, v, variant),
         }, generatorName(v)))),
       h("div", { class: "tabs" },
         DIFFICULTIES.map((d, i) => h("button", {
-          class: difficulty === i + 1 && "active", onclick: () => app.openEndlessScores(i + 1, number, generator),
+          class: difficulty === i + 1 && "active", onclick: () => app.openEndlessScores(i + 1, number, generator, variant),
         }, d.name))),
       number === null
-        ? h("div", { class: "card" }, h("h2", null, `${generatorName(generator)} ${DIFFICULTIES[difficulty - 1]!.name}: puzzles solved`), body)
+        ? h("div", { class: "card" }, h("h2", null, `${series} ${DIFFICULTIES[difficulty - 1]!.name}: puzzles solved`), body)
         : [
           h("div", { class: "date-nav" },
-            h("button", { class: "link", disabled: number <= 1, onclick: () => app.openEndlessScores(difficulty, number - 1, generator) }, `‹ #${number - 1}`),
-            h("span", null, `${generatorName(generator)} ${endlessTitle(difficulty, number)}`),
-            h("button", { class: "link", onclick: () => app.openEndlessScores(difficulty, number + 1, generator) }, `#${number + 1} ›`),
+            h("button", { class: "link", disabled: number <= 1, onclick: () => app.openEndlessScores(difficulty, number - 1, generator, variant) }, `‹ #${number - 1}`),
+            h("span", null, `${series} ${endlessTitle(difficulty, number)}`),
+            h("button", { class: "link", onclick: () => app.openEndlessScores(difficulty, number + 1, generator, variant) }, `#${number + 1} ›`),
           ),
           h("div", { class: "card" }, body),
           h("div", { class: "actions" },
-            h("button", { onclick: () => app.openEndless({ generator, difficulty, number }) }, "Play this puzzle"),
-            h("button", { class: "link", onclick: () => app.openEndlessScores(difficulty, null, generator) }, "Everyone's progress"),
+            h("button", { onclick: () => void app.openEndless({ generator, variant, difficulty, number }) }, "Play this puzzle"),
+            h("button", { class: "link", onclick: () => app.openEndlessScores(difficulty, null, generator, variant) }, "Everyone's progress"),
           ),
         ],
       h("div", { class: "card" },
@@ -610,10 +643,11 @@ export class HistoryScreen extends Screen {
         )),
       endless.length > 0 && h("div", { class: "card", id: "history-endless" },
         h("h2", null, ENDLESS_LABEL),
-        GENERATOR_VERSIONS.map((generator) => {
-          const inSeries = endless.filter((r) => r.generator === generator);
+        // Every series: each generator's standard puzzles, then its variants (History is sorted that way too).
+        GENERATOR_VERSIONS.flatMap((generator) => [VARIANT_STANDARD, ...VARIANT_PICKS].map((variant) => ({ generator, variant }))).map(({ generator, variant }) => {
+          const inSeries = endless.filter((r) => r.generator === generator && variantOf(r) === variant);
           return inSeries.length > 0 && [
-            h("h3", null, `${generatorName(generator)} series`),
+            h("h3", null, `${seriesName(generator, variant)} series`),
             DIFFICULTIES.map((d, i) => {
               const solved = inSeries.filter((r) => r.difficulty === i + 1);
               return solved.length > 0 && [
@@ -661,6 +695,7 @@ export class AboutScreen extends Screen {
       h("div", { class: "actions" },
         h("button", { onclick: () => app.openHelp("daily") }, "How Daily works"),
         app.hasEndless && h("button", { onclick: () => app.openHelp("endless") }, `How ${ENDLESS_LABEL} works`),
+        app.hasEndless && h("button", { onclick: () => app.openHelp("variants") }, `How ${VARIANTS_LABEL} works`),
         h("button", { onclick: () => app.openHelp("generators") }, "Classic and Graded"),
       ),
       app.me?.admin && !app.seed && h("div", { class: "actions" },
@@ -749,7 +784,7 @@ export class AdminScreen extends Screen {
         h("p", null, `On: ${generatorsSummary(enabled)}`),
         generatorChoices(enabled, m.generatorBusy, (next) => void m.chooseGenerators(next)),
         h("p", { class: "muted small" },
-          "Changes apply straight away. With both on, players pick one with a switch on the Daily and Endless tabs, and each has its own puzzles, leaderboards and stats. Results and replays keep the generator they were played with, so turning one off loses nothing."),
+          "Changes apply straight away. With both on, players pick one with a switch on the Daily, Endless and Variants tabs, and each has its own puzzles, leaderboards and stats. Results and replays keep the generator they were played with, so turning one off loses nothing."),
       ],
     );
   }

@@ -127,6 +127,12 @@ type snapshot struct {
 // admin to read. r must already be Wellformed. givens and solution are the
 // puzzle's 81-digit strings.
 func Check(r Replay, givens, solution string, elapsedMs int64) error {
+	return CheckLayout(r, puzzle.StandardLayout(), givens, solution, elapsedMs)
+}
+
+// CheckLayout is Check on a puzzle of a variant with layout l, whose peers
+// are the cells a place clears the digit from in their notes.
+func CheckLayout(r Replay, l *puzzle.Layout, givens, solution string, elapsedMs int64) error {
 	ev := r.Events
 	if err := checkShape(ev); err != nil {
 		return err
@@ -134,7 +140,7 @@ func Check(r Replay, givens, solution string, elapsedMs int64) error {
 	if err := checkTimer(ev); err != nil {
 		return err
 	}
-	wallMs, err := checkMoves(ev, givens, solution)
+	wallMs, err := checkMoves(ev, l, givens, solution)
 	if err != nil {
 		return err
 	}
@@ -195,7 +201,7 @@ func checkTimer(ev []Event) error {
 
 // checkMoves covers checks 3 and 4 and also returns the wall-clock time spent
 // with the timer running, for check 5.
-func checkMoves(ev []Event, givensStr, solutionStr string) (wallMs int64, err error) {
+func checkMoves(ev []Event, l *puzzle.Layout, givensStr, solutionStr string) (wallMs int64, err error) {
 	var cur snapshot
 	var givens, solution [cells]byte
 	for i := 0; i < cells; i++ {
@@ -257,7 +263,7 @@ func checkMoves(ev []Event, givensStr, solutionStr string) (wallMs int64, err er
 			}
 			cur.grid[c] = d
 			cur.notes[c] = 0
-			for _, p := range puzzle.Peers(c) {
+			for _, p := range l.LayoutPeers(c) {
 				cur.notes[p] &^= 1 << (d - 1)
 			}
 		case ActErase:

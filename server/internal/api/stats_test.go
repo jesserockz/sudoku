@@ -166,8 +166,13 @@ func TestBuildStatsEmpty(t *testing.T) {
 	if got.Streak.LastDate != nil || got.Streak.Current != 0 || got.Streak.Best != 0 {
 		t.Errorf("streak = %+v", got.Streak)
 	}
-	if len(got.Daily) != 5 || len(got.Endless) != 5 {
-		t.Fatalf("daily %d, endless %d", len(got.Daily), len(got.Endless))
+	if len(got.Daily) != 5 || len(got.Endless) != 5 || len(got.Variants) != 3 {
+		t.Fatalf("daily %d, endless %d, variants %d", len(got.Daily), len(got.Endless), len(got.Variants))
+	}
+	for i, v := range got.Variants {
+		if v.Variant != i+1 || len(v.Endless) != 5 || v.Endless[4] != (endlessStatJSON{Difficulty: 5}) {
+			t.Errorf("variants[%d] = %+v", i, v)
+		}
 	}
 	for i := range got.Daily {
 		d, e := got.Daily[i], got.Endless[i]
@@ -224,6 +229,11 @@ func TestMyStatsEndToEnd(t *testing.T) {
 		{UserID: a, Generator: 1, Difficulty: 2, Number: 5, ElapsedMs: 100000, AutoFlag: "No replay submitted"},
 		// Another series is not in the Classic stats.
 		{UserID: a, Generator: 2, Difficulty: 2, Number: 1, ElapsedMs: 5000},
+		{UserID: a, Generator: 2, Variant: 3, Difficulty: 2, Number: 1, ElapsedMs: 5000},
+		// Variants have their own numbers, apart from the standard series.
+		{UserID: a, Generator: 1, Variant: 2, Difficulty: 4, Number: 9, ElapsedMs: 30000},
+		{UserID: a, Generator: 1, Variant: 2, Difficulty: 4, Number: 2, ElapsedMs: 40000},
+		{UserID: a, Generator: 1, Variant: 3, Difficulty: 1, Number: 1, ElapsedMs: 50000},
 	} {
 		r.CompletedAt, r.ReplayStatus = "x", "missing"
 		if _, _, err := st.InsertEndlessResult(ctx, r); err != nil {
@@ -267,6 +277,31 @@ func TestMyStatsEndToEnd(t *testing.T) {
 	if e := ga.Endless[0]; e.Completed != 0 || e.BestMs != nil {
 		t.Errorf("alice endless 1 = %+v", e)
 	}
+	if e := ga.Endless[3]; e.Completed != 0 {
+		t.Errorf("alice endless 4 counts a variant: %+v", e)
+	}
+	var vs []int
+	for _, v := range ga.Variants {
+		vs = append(vs, v.Variant)
+		if len(v.Endless) != 5 {
+			t.Errorf("variant %d has %d tiers", v.Variant, len(v.Endless))
+		}
+	}
+	if !reflect.DeepEqual(vs, []int{1, 2, 3}) {
+		t.Fatalf("variants = %v", vs)
+	}
+	if want := (endlessStatJSON{4, 2, 9, ptr(int64(30000)), ptr(int64(35000))}); !reflect.DeepEqual(ga.Variants[1].Endless[3], want) {
+		t.Errorf("alice jigsaw 4 = %+v, want %+v", ga.Variants[1].Endless[3], want)
+	}
+	if want := (endlessStatJSON{1, 1, 1, ptr(int64(50000)), ptr(int64(50000))}); !reflect.DeepEqual(ga.Variants[2].Endless[0], want) {
+		t.Errorf("alice killer 1 = %+v, want %+v", ga.Variants[2].Endless[0], want)
+	}
+	if e := ga.Variants[2].Endless[1]; e.Completed != 0 {
+		t.Errorf("alice killer 2 counts another generator: %+v", e)
+	}
+	if e := ga.Variants[0].Endless[3]; e.Completed != 0 {
+		t.Errorf("alice diagonal 4 counts another variant: %+v", e)
+	}
 
 	// An admin flag keeps the day off the streak but the result in the record.
 	gb := get("dev:bob:Bob")
@@ -285,7 +320,9 @@ func TestMyStatsEndToEnd(t *testing.T) {
 	// A newcomer gets zeros and the fixed shape.
 	body := decode[json.RawMessage](t, do(t, srv, "GET", "/api/v1/me/stats", "dev:eve:Eve", nil))
 	if !strings.HasPrefix(string(body), `{"generator":1,"today":"2026-10-26","streak":{"current":0,"best":0,"lastDate":null},"daily":[{"difficulty":1,"completed":0,"bestMs":null,"averageMs":null,"recent":[]}`) ||
-		!strings.HasSuffix(string(body), `{"difficulty":5,"completed":0,"highest":0,"bestMs":null,"averageMs":null}]}`) {
+		!strings.Contains(string(body), `"endless":[{"difficulty":1,"completed":0,"highest":0,"bestMs":null,"averageMs":null}`) ||
+		!strings.Contains(string(body), `{"difficulty":5,"completed":0,"highest":0,"bestMs":null,"averageMs":null}],"variants":[{"variant":1,"endless":[{"difficulty":1,`) ||
+		!strings.HasSuffix(string(body), `{"variant":3,"endless":[{"difficulty":1,"completed":0,"highest":0,"bestMs":null,"averageMs":null},{"difficulty":2,"completed":0,"highest":0,"bestMs":null,"averageMs":null},{"difficulty":3,"completed":0,"highest":0,"bestMs":null,"averageMs":null},{"difficulty":4,"completed":0,"highest":0,"bestMs":null,"averageMs":null},{"difficulty":5,"completed":0,"highest":0,"bestMs":null,"averageMs":null}]}]}`) {
 		t.Errorf("empty body = %s", body)
 	}
 

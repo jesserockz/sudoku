@@ -7,7 +7,7 @@
 // Ann (admin) opens Server admin: the Puzzle generators card has Classic / Graded / Both with Classic marked.
 // Bob (a player) has no switch and an explainer that names Classic with no word of a choice. Ann switches to
 // Graded (straight away: Bob's next load names Graded, still without a switch), then to Both: Bob gets the
-// Classic / Graded switch on the Daily and Endless tabs with its "What's this?" link, picks Graded (remembered),
+// Classic / Graded switch on the Daily, Endless and Variants tabs with its "What's this?" link, picks Graded (remembered),
 // plays and solves a Graded daily, sees it on the Graded leaderboard and not on the Classic one, and Stats opens
 // on Graded. Ann's results list names the generator. In a fresh browser, serverless play has the same three
 // choices in its seed card, kept per seed in localStorage (an old #64 schedule reads as its latest entry), with
@@ -189,7 +189,7 @@ const phone = { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, col
     check(await easyGrid(player, "Classic · Easy") === classicEasy, "Classic's puzzles, named in the play screen");
     await shot(player, "daily-switch-classic");
     await sw.getByRole("button", { name: "What's this?" }).click();
-    await checkExplainer(player, "switch", "You can play Classic or Graded: pick with the switch on the Daily and Endless tabs.", { choice: true });
+    await checkExplainer(player, "switch", "You can play Classic or Graded: pick with the switch on the Daily, Endless and Variants tabs.", { choice: true });
     await sw.getByRole("button", { name: "Graded", exact: true }).click();
     await player.locator(".generator-switch button.active", { hasText: "Graded" }).waitFor();
     check(await player.evaluate(() => localStorage.getItem("sudoku.generator")) === "2", "the pick is kept in localStorage");
@@ -281,7 +281,7 @@ const phone = { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, col
     const stored = await seedPage.evaluate(() => Object.entries(localStorage).filter(([k]) => k.startsWith("sudoku.seed-generator-")).map(([, v]) => v));
     check(JSON.stringify(stored) === '["[1,2]"]', "the seed's enabled set is in localStorage");
     await seedPage.locator(".generator-switch").getByRole("button", { name: "What's this?" }).click();
-    await checkExplainer(seedPage, "seed switch", "You can play Classic or Graded: pick with the switch on the Daily and Endless tabs.", { seed: true });
+    await checkExplainer(seedPage, "seed switch", "You can play Classic or Graded: pick with the switch on the Daily, Endless and Variants tabs.", { seed: true });
     await seedPage.locator(".generator-switch").getByRole("button", { name: "Graded", exact: true }).click();
     await seedPage.locator(".generator-switch button.active", { hasText: "Graded" }).waitFor();
     await setting.scrollIntoViewIfNeeded();

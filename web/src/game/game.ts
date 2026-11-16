@@ -1,5 +1,6 @@
 import { Board, EMPTY } from "../core/board.ts";
-import { CELLS, peers } from "../core/geometry.ts";
+import { CELLS } from "../core/geometry.ts";
+import { Layout } from "../core/layout.ts";
 import { Colours } from "./colours.ts";
 import { Notes } from "./notes.ts";
 import type { ReplayEvent } from "./replay.ts";
@@ -38,6 +39,9 @@ interface Snapshot {
  * {@link record} (the game itself knows no wall clock). A restored game has
  * lost its undo history, so the first event recorded after a restore is
  * preceded by a `restore` event.
+ *
+ * A game follows its puzzle's {@link Layout}: a variant's extra units and
+ * cages count for clearing notes, and for when the puzzle is solved.
  */
 export class Game {
   readonly board: Board;
@@ -49,13 +53,15 @@ export class Game {
   readonly completedElapsedMs: number | null;
   /** Every recorded action, oldest first. */
   readonly replay: readonly ReplayEvent[];
+  /** The puzzle's rules: standard Sudoku, or a variant's units and cages. */
+  readonly layout: Layout;
   readonly #history: readonly Snapshot[];
   /** Restored from storage and nothing recorded since. */
   readonly #restored: boolean;
 
   private constructor(
     board: Board, notes: Notes, colours: Colours, timer: ElapsedTimer, completedElapsedMs: number | null, history: readonly Snapshot[],
-    replay: readonly ReplayEvent[], restored: boolean,
+    replay: readonly ReplayEvent[], restored: boolean, layout: Layout,
   ) {
     this.board = board;
     this.notes = notes;
@@ -65,23 +71,24 @@ export class Game {
     this.#history = history;
     this.replay = replay;
     this.#restored = restored;
+    this.layout = layout;
   }
 
   /** A fresh game with the timer not yet started; call `resume` when play begins. */
-  static create(givens: string): Game {
+  static create(givens: string, layout: Layout = Layout.STANDARD): Game {
     const board = Board.parse(givens);
     if (board.givenCount === 0) throw new RangeError("puzzle has no givens");
-    return new Game(board, Notes.EMPTY, Colours.EMPTY, ElapsedTimer.NOT_STARTED, null, [], [], false);
+    return new Game(board, Notes.EMPTY, Colours.EMPTY, ElapsedTimer.NOT_STARTED, null, [], [], false, layout);
   }
 
-  /** Restores a saved game, paused. */
-  static restore(saved: SavedGame): Game {
+  /** Restores a saved game, paused. `layout` is its puzzle's (a saved game doesn't keep it). */
+  static restore(saved: SavedGame, layout: Layout = Layout.STANDARD): Game {
     const board = Board.restore(saved.givens, saved.entries);
     const notes = Notes.fromMasks(saved.notes);
-    const completed = saved.completed && board.isSolved;
+    const completed = saved.completed && board.solvedUnder(layout);
     return new Game(
       board, completed ? Notes.EMPTY : notes, completed ? Colours.EMPTY : Colours.parse(saved.colours), ElapsedTimer.paused(saved.elapsedMs), completed ? saved.elapsedMs : null, [],
-      saved.replay ?? [], true,
+      saved.replay ?? [], true, layout,
     );
   }
 
@@ -108,7 +115,7 @@ export class Game {
    */
   place(i: number, digit: number, nowMs: number): Game {
     if (this.isComplete || this.board.isGiven(i) || this.board.get(i) === digit) return this;
-    return this.#record(this.board.with(i, digit), this.notes.cleared(i).withoutDigit(peers[i]!, digit), nowMs);
+    return this.#record(this.board.with(i, digit), this.notes.cleared(i).withoutDigit(this.layout.peers[i]!, digit), nowMs);
   }
 
   /** Clears a player-entered digit, or the notes of an empty cell. */
@@ -151,7 +158,7 @@ export class Game {
   undo(): Game {
     if (!this.canUndo) return this;
     const last = this.#history[this.#history.length - 1]!;
-    return new Game(last.board, last.notes, this.colours, this.timer, null, this.#history.slice(0, -1), this.replay, this.#restored);
+    return new Game(last.board, last.notes, this.colours, this.timer, null, this.#history.slice(0, -1), this.replay, this.#restored, this.layout);
   }
 
   pause(nowMs: number): Game {
@@ -166,7 +173,7 @@ export class Game {
   /** Appends `event` to the replay, after a `restore` event (at the same times) if this game was just restored. */
   record(event: ReplayEvent): Game {
     const restore: ReplayEvent[] = this.#restored ? [{ t: event.t, w: event.w, a: "restore" }] : [];
-    return new Game(this.board, this.notes, this.colours, this.timer, this.completedElapsedMs, this.#history, [...this.replay, ...restore, event], false);
+    return new Game(this.board, this.notes, this.colours, this.timer, this.completedElapsedMs, this.#history, [...this.replay, ...restore, event], false, this.layout);
   }
 
   /** How many of each digit are on the board, indexed by digit (index 0 counts empty cells). */
@@ -191,18 +198,18 @@ export class Game {
 
   /** `nowMs` is only needed when the change can solve the board, i.e. a placement. */
   #record(board: Board, notes: Notes, nowMs: number | null): Game {
-    if (nowMs !== null && board.isSolved) {
+    if (nowMs !== null && board.solvedUnder(this.layout)) {
       const elapsed = Math.round(this.timer.elapsedMs(nowMs));
-      return new Game(board, Notes.EMPTY, Colours.EMPTY, ElapsedTimer.paused(elapsed), elapsed, [], this.replay, this.#restored);
+      return new Game(board, Notes.EMPTY, Colours.EMPTY, ElapsedTimer.paused(elapsed), elapsed, [], this.replay, this.#restored, this.layout);
     }
-    return new Game(board, notes, this.colours, this.timer, null, [...this.#history, { board: this.board, notes: this.notes }], this.replay, this.#restored);
+    return new Game(board, notes, this.colours, this.timer, null, [...this.#history, { board: this.board, notes: this.notes }], this.replay, this.#restored, this.layout);
   }
 
   #withColours(colours: Colours): Game {
-    return new Game(this.board, this.notes, colours, this.timer, this.completedElapsedMs, this.#history, this.replay, this.#restored);
+    return new Game(this.board, this.notes, colours, this.timer, this.completedElapsedMs, this.#history, this.replay, this.#restored, this.layout);
   }
 
   #withTimer(timer: ElapsedTimer): Game {
-    return new Game(this.board, this.notes, this.colours, timer, this.completedElapsedMs, this.#history, this.replay, this.#restored);
+    return new Game(this.board, this.notes, this.colours, timer, this.completedElapsedMs, this.#history, this.replay, this.#restored, this.layout);
   }
 }

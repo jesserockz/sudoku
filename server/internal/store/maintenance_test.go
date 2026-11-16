@@ -95,8 +95,8 @@ func TestMigrateAddsMaintenance(t *testing.T) {
 	}
 	defer s2.Close()
 	var version int
-	if err := s2.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 9 {
-		t.Errorf("user_version = %d (%v), want 9", version, err)
+	if err := s2.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != migrationNumber(t, -1) {
+		t.Errorf("user_version = %d (%v), want the latest migration", version, err)
 	}
 	if m, err := s2.Maintenance(ctx); err != nil || m.Enabled {
 		t.Errorf("maintenance after upgrade: %+v, %v", m, err)

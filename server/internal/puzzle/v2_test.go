@@ -285,7 +285,7 @@ func TestGraderNeverRemovesATrueCandidate(t *testing.T) {
 	for n := range 250 {
 		solution := randomSolution(make([]int, cells), random)
 		givens := removeCells(solution, targets[n%5], random)
-		g, err := newGrader(givens[:])
+		g, err := newGrader(givens[:], standardLayout)
 		if err != nil {
 			t.Fatal(err)
 		}

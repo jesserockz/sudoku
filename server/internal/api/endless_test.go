@@ -273,7 +273,7 @@ func TestGetMyEndless(t *testing.T) {
 	}
 	at := "2026-10-26T09:15:00+13:00"
 	want := myEndlessResponse{Results: []endlessResultJSON{
-		{1, 1, 2, 90000, at}, {1, 1, 10, 80000, at}, {1, 3, 2, 70000, at},
+		{1, 0, 1, 2, 90000, at}, {1, 0, 1, 10, 80000, at}, {1, 0, 3, 2, 70000, at},
 	}}
 	if got := decode[myEndlessResponse](t, resp); !reflect.DeepEqual(got, want) {
 		t.Errorf("results = %+v", got)

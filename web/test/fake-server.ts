@@ -50,6 +50,13 @@ export class FakeServer {
       difficulty, completed: difficulty === 1 ? 2 : 0, highest: difficulty === 1 ? 5 : 0,
       bestMs: difficulty === 1 ? 60000 : null, averageMs: difficulty === 1 ? 70000 : null,
     })),
+    variants: [1, 2, 3].map((variant) => ({
+      variant,
+      endless: [1, 2, 3, 4, 5].map((difficulty) => ({
+        difficulty, completed: variant === 3 && difficulty === 1 ? 1 : 0, highest: variant === 3 && difficulty === 1 ? 1 : 0,
+        bestMs: variant === 3 && difficulty === 1 ? 300000 : null, averageMs: variant === 3 && difficulty === 1 ? 300000 : null,
+      })),
+    })),
   };
   statsStatus: number | null = null;
   statsGate: Promise<void> | null = null;
@@ -103,7 +110,10 @@ export class FakeServer {
   readonly requests: { method: string; url: URL; headers: Headers; body: string }[] = [];
   /** Stored daily results; one without a `generator` plays a result from before there were several generators (Classic). */
   readonly stored: GameResult[] = [];
-  /** Stored endless results; one without a `generator` plays a result from before there were several series (Classic). */
+  /**
+   * Stored endless results; one without a `generator` plays a result from before there were several series (Classic),
+   * and one without a `variant` is standard Sudoku's (0), as the API leaves it out.
+   */
   readonly storedEndless: (Omit<EndlessResult, "generator"> & { generator?: number })[] = [];
 
   constructor(now: () => number, authMode: "dev" | "oidc" = "dev") {
@@ -180,10 +190,12 @@ export class FakeServer {
     if (board) {
       const [difficulty, number] = [Number(board[1]), Number(board[2])];
       const generator = Number(r.url.searchParams.get("generator") ?? this.generator);
-      const entries = this.storedEndless.filter((s) => (s.generator ?? 1) === generator && s.difficulty === difficulty && s.number === number)
+      const variant = Number(r.url.searchParams.get("variant") ?? 0);
+      const entries = this.storedEndless
+        .filter((s) => (s.generator ?? 1) === generator && (s.variant ?? 0) === variant && s.difficulty === difficulty && s.number === number)
         .sort((a, b) => a.elapsedMs - b.elapsedMs)
         .map((s, i) => ({ rank: i + 1, userId: "alice", displayName: "Alice", elapsedMs: s.elapsedMs, suspicious: false }));
-      return json({ generator, difficulty, number, entries });
+      return json({ generator, variant, difficulty, number, entries });
     }
     if (r.url.pathname.startsWith("/api/v1/admin/results")) {
       if (!this.admin) return json({ error: { code: "forbidden", message: "admin access required" } }, 403);
@@ -259,17 +271,22 @@ export class FakeServer {
         }
         if (this.rejectAll) return json({ error: { code: "invalid_result", message: "nope" } }, 400);
         const result = JSON.parse(r.body) as EndlessResult;
-        const existing = this.storedEndless.find((s) => (s.generator ?? 1) === result.generator && s.difficulty === result.difficulty && s.number === result.number);
+        if (result.variant !== undefined && ![0, 1, 2, 3].includes(result.variant)) {
+          return json({ error: { code: "invalid_result", message: "unknown variant" } }, 400);
+        }
+        const existing = this.storedEndless.find((s) => (s.generator ?? 1) === result.generator && (s.variant ?? 0) === (result.variant ?? 0)
+          && s.difficulty === result.difficulty && s.number === result.number);
         if (existing) return json(existing, 200);
         this.storedEndless.push(result);
         return json(result, 201);
       }
       case "/api/v1/endless/leaderboard": {
         const generator = Number(r.url.searchParams.get("generator") ?? this.generator);
+        const variant = Number(r.url.searchParams.get("variant") ?? 0);
         return json({
-          generator,
+          generator, variant,
           difficulties: [1, 2, 3, 4, 5].map((difficulty) => {
-            const mine = this.storedEndless.filter((s) => (s.generator ?? 1) === generator && s.difficulty === difficulty);
+            const mine = this.storedEndless.filter((s) => (s.generator ?? 1) === generator && (s.variant ?? 0) === variant && s.difficulty === difficulty);
             return {
               difficulty,
               players: mine.length === 0 ? [] : [{

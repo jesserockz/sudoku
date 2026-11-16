@@ -64,7 +64,7 @@ e.g. `Bearer dev:alice:Alice`. Dev tokens carry only the claims `sub` and `name`
 
 ## Endless seed
 
-Endless puzzles are numbered puzzles per difficulty, unlimited and shared by everyone, kept forever. There is one **series** per [generator version](#generator-versions): Classic (`1`) and Graded (`2`), each numbered from `#1` with its own results, progress and leaderboards. A puzzle is named by `(generator, difficulty, number)`; every `generator` below is `1` or `2` and a missing one means `1`, so data and clients from before the series existed are Classic's. `difficulty` is the tier `1..5` (Easy 40, Medium 36, Hard 32, Expert 28, Diabolical 24 givens), which is not the daily `level`. `number` is `1..9007199254740991` (2^53-1, the largest integer JavaScript represents exactly).
+Endless puzzles are numbered puzzles per difficulty, unlimited and shared by everyone, kept forever. There is one **series** per [generator version](#generator-versions) and [variant](#variants): Classic (`1`) and Graded (`2`), each in variants `0` (standard), `1` (Diagonal), `2` (Jigsaw) and `3` (Killer), each numbered from `#1` with its own results, progress and leaderboards. A puzzle is named by `(generator, variant, difficulty, number)`; every `generator` below is `1` or `2` and a missing one means `1`, so data and clients from before the series existed are Classic's; every `variant` is `0..3` and a missing one means `0`, so everything from before variants existed is standard. `difficulty` is the tier `1..5` (Easy 40, Medium 36, Hard 32, Expert 28, Diabolical 24 givens), which is not the daily `level`. `number` is `1..9007199254740991` (2^53-1, the largest integer JavaScript represents exactly).
 
 - `endlessSeed = HMAC-SHA256(key = serverSecret, message = "sudoku-endless")`, truncated to the **first 8 bytes**, encoded as **16 lowercase hex characters**, exactly as the weekly seed is. It never changes for a given server secret, so a client can fetch it once.
 - The puzzle seed is derived with SplitMix64 (all arithmetic on unsigned 64-bit integers, wrapping), then fed to the same generator as the dailies (grid, cell removal to the tier's target, up to 8 attempts):
@@ -78,6 +78,7 @@ h = mix(h + number)
 ```
 
 - The web client (`web/src/generator/`, `generateEndless`) and the server's Go port (`server/internal/puzzle/`, `GenerateEndless`) are pinned by the same golden puzzles. The server regenerates an endless puzzle to check [replays](#replays) and never stores puzzles.
+- A variant puzzle (`variant` above `0`) mixes the variant into this seed, as described under [Variant seed](#variant-seed).
 
 ## Generator versions
 
@@ -95,6 +96,79 @@ An admin **enables** Classic, Graded or both (see [`PUT /api/v1/admin/generator`
 - **Mid-game rule.** A submission naming any known generator (`1` or `2`) is accepted, enabled or not, within the usual limits. A game started before the admin disabled its generator, or queued offline, is never lost.
 - **Nothing is reset.** Results keep the generator they were played with. Results stored before generators could be chosen took the version the old schedule gave their date's ISO week. A replay is checked against the puzzle of its own generator: the same replay is valid as a Graded result and fails as a Classic one (or the other way round).
 - The server uses a result's generator everywhere it regenerates a daily puzzle: checking a submitted replay, and serving an admin a result's `givens`.
+
+## Variants
+
+Variants are endless series with extra rules: **Diagonal**, **Jigsaw** and **Killer**. This section is the puzzle engine (`web/src/core/layout.ts`, `web/src/generator/variants.ts`, `layout-solver.ts` and the layout-aware `grader.ts`; the Go port in `server/internal/puzzle/` `layout.go`, `variants.go`, `layout_solver.go` and `grader.go`). Both are bit-identical, pinned by `testdata/variants.json` (regenerate it, only when a change is intentional, with `node scripts/variants-fixture.ts` in `web/`).
+
+| `variant` | Name     | Rules                                                                                                |
+| --------- | -------- | ---------------------------------------------------------------------------------------------------- |
+| `0`       | Standard | Rows, columns and 3x3 boxes: the existing endless series, unchanged                                  |
+| `1`       | Diagonal | Standard, plus both long diagonals each hold 1 to 9                                                  |
+| `2`       | Jigsaw   | Rows, columns and 9 irregular connected regions of 9 cells (no boxes)                                |
+| `3`       | Killer   | Standard, plus cages of 2 or more cells covering the grid, each with a sum, no repeated digit in one |
+
+An endless puzzle is named `(generator, variant, difficulty, number)`. Variant `0` is exactly the [endless series](#endless-seed) (`generateEndlessVariant(g, 0, ...)` / `GenerateEndlessVariant(g, 0, ...)` return `generateEndlessVersion`'s puzzle with the standard layout), so a missing `variant` means `0` and nothing existing changes.
+
+### Variant seed
+
+```
+h = endless puzzle seed of the generator (see Endless seed: Classic or Graded)
+if variant > 0:
+  VARIANT_DOMAIN = 0x76617269616e74          // "variant" in ASCII
+  h = mix(h ^ mix(VARIANT_DOMAIN + variant))
+```
+
+Every loop below is capped by attempts or by search nodes (calls of the solver's search step), so output is a pure function of the inputs.
+
+### Layouts
+
+A layout is the variant's units and cages. Units are numbered `0..8` rows, `9..17` columns, `18..26` regions (boxes, or the jigsaw regions), then for Diagonal `27` the main diagonal (cells `0, 10, .., 80`) and `28` the anti-diagonal (cells `8, 16, .., 72`). Cells are `row * 9 + col`. What a client needs to draw and check a puzzle:
+
+- **Jigsaw regions**: an array of 81 region indices `0..8` (`Layout.regions`, Go `Layout.Regions`), each region nine orthogonally connected cells. Standard, Diagonal and Killer have the boxes there.
+- **Killer cages**: `[{ "cells": [..], "sum": n }]` (`Layout.cages`, Go `Layout.Cages`), cells ascending, cages ordered by their lowest cell, covering every cell exactly once. A cage's first cell is its top-left one (where the sum is drawn).
+- Peers (cells that cannot share a digit) are the cells sharing any unit, and for Killer also the cage.
+
+**Jigsaw regions** come from the puzzle seed. Attempt `a` (from `0`) seeds xoshiro256** with `mix(mix(seed ^ JIGSAW_DOMAIN) + a)` (`JIGSAW_DOMAIN = 0x6a6967736177`, "jigsaw"), starts from the boxes and tries 600 moves: draw a cell `a` and a direction; if the neighbour there is in another region B, draw a cell `c` of B (ascending) that touches `a`'s region A other than through `a`, and trade them (`a` joins B, `c` joins A), undone if A or B is no longer connected. The layout is kept if the solver finds a complete grid for it, with candidates in random order, within 2000 nodes (not every partition has one). After 16 failed attempts (rare) the layout is one of four fixed fallback layouts, `seed mod 4`, with its stored solution (`FALLBACK_JIGSAWS`).
+
+**Killer cages** are carved over the attempt's (standard) solution: cells visited in a random order, each unassigned cell starts a cage aiming for a size drawn from the tier's range and grows one random adjacent unassigned cell at a time (from those, ascending, whose digit is not in the cage yet) until it has its size or cannot grow. Then each cage smaller than the range's minimum joins the first adjacent cage it fits (at most the maximum size, no repeated digit). Last, each cage still of one cell joins the first adjacent cage that lacks its digit whatever that cage's size (so a cage can exceed the maximum); one with no such neighbour stays and makes the attempt unplayable (below). The sum is the cage's digits' total.
+
+**Every Killer cage keeps at least 2 empty cells** (cells that are not givens), in both generators and every tier. Removal tries the first two cells of each cage in the shuffled order first, whatever the tier's givens (so a Killer puzzle can end below them), then the rest in order while above them. An attempt is *playable* only if every cage ended with 2 or more empty cells (a forced removal that would lose uniqueness keeps its cell); an unplayable attempt is never chosen over a playable one, and only when none of the attempts is playable does the usual fallback pick one. Measured over 5,000 puzzles (500 per tier and generator) no build ever fell back to an unplayable attempt: 6 to 9% of attempts are unplayable, so with 8 (Classic) or 30 (Graded) attempts it is vanishingly rare.
+
+### Difficulty
+
+**Classic** (generator `1`): up to 8 attempts, each a full grid (and layout) with cells removed in random order while the puzzle stays provably unique under the layout, down to the tier's givens; the first to reach them, else the one with the fewest givens, wins. Each uniqueness check has a 3,000-node budget; a check over budget keeps the cell, so puzzles are always unique.
+
+| Tier       | Diagonal, Jigsaw givens | Killer givens | Killer cage sizes |
+| ---------- | ----------------------- | ------------- | ----------------- |
+| Easy       | 40                      | 30            | 3 to 4            |
+| Medium     | 36                      | 22            | 3 to 4            |
+| Hard       | 32                      | 14            | 3 to 5            |
+| Expert     | 28                      | 9             | 3 to 5            |
+| Diabolical | 24                      | 6             | 4 to 5            |
+
+**Graded** (generator `2`): generator v2's build under the layout: each attempt removes cells down to the givens below, then the [grader](#generator-versions) grades it under the layout; the first attempt in the tier's band (Easy 1, Medium 2, Hard 3 to 4, Expert 5, Diabolical 6) wins, else the nearest non-stuck one (the easier on equal distance, then the earliest). Killer uses the same cage sizes as Classic. The givens were chosen by measuring how often an attempt lands in each band: a minimal Diagonal or Jigsaw puzzle is mostly beyond the grader, and a Killer one with few givens mostly is too. Killer is graded the other way round: its two forced empty cells per cage leave Easy with at most about 35 givens, and the easy bands need many givens (more than 40 would need cages too big), so Easy lands in its band only about a quarter of the time.
+
+| Tier       | Diagonal givens | Jigsaw givens | Killer givens |
+| ---------- | --------------- | ------------- | ------------- |
+| Easy       | 38              | 38            | 40            |
+| Medium     | 26              | 25            | 26            |
+| Hard       | 25              | 24            | 10            |
+| Expert     | 23              | 24            | 6             |
+| Diabolical | 24              | 23            | 3             |
+
+Attempts are capped at 200 for Diagonal and Jigsaw and 30 for Killer (whose attempts cost more). In 600 sampled Graded puzzles (40 per variant and tier) every one landed in its band; in 2,500 Graded Killer puzzles (500 per tier) all but 3 (Diabolical) did. Per attempt a Graded Killer one lands in its band about 28% (Easy), 99% (Medium), 67% (Hard), 20% (Expert) and 19% (Diabolical) of the time.
+
+**Timing** (web client, Node 24 on a desktop x86-64, 20 numbers of every generator, variant and tier): median 5 ms, 95th percentile 118 ms, slowest 737 ms (Graded Killer Diabolical; that tier's median is 118 ms and Graded Killer Expert's 137 ms). Classic variants take under 70 ms. These timings are from before the Killer rule of two empty cells per cage; Graded Killer Expert and Diabolical now average about 0.2 to 0.3 s (slowest 1.8 s in 500 numbers, measured with ten generators running at once), Classic Killer under 50 ms on average (slowest 0.44 s). The Go port is several times faster.
+
+**The grader under a layout.** Hidden singles, subsets and colouring use every unit (diagonals and jigsaw regions are houses like boxes). Pointing runs from every unit from 18 on (regions, then diagonals) into rows and columns, and between a box and a diagonal that share at least two cells; claiming runs from rows and columns into regions. X-Wing and Swordfish stay row and column based. Wings and chains use the layout's peers. Standard grading is unchanged. Killer adds four techniques, tried in this order: hidden single, naked single, **cage combination**, pointing, claiming, **45 rule**, **cage pointing**, the subsets, **45 rule over lines**, then fish, wings, colouring and chains:
+
+| Technique          | Level | What it does                                                                                                                                                                                                        |
+| ------------------ | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cage combination   | 2     | A cage's empty cells keep only digits of some filling: one candidate each, no repeat among peers, adding up to the rest of the sum                                                                                  |
+| 45 rule            | 3     | For each row, column and box: the innies of the cages partly inside add up to 45 less the cages wholly inside, the outies to the touching cages less 45; each set with 1 to 4 empty cells is restricted like a cage |
+| Cage pointing      | 5     | A digit every filling of a cage must use, whose places in the cage share a row, column or box, goes from the rest of that unit                                                                                      |
+| 45 rule over lines | 6     | The 45 rule on 2 and 3 adjacent rows, then columns (90 and 135)                                                                                                                                                     |
 
 ## Endpoints
 
@@ -264,12 +338,13 @@ The [endless seed](#endless-seed).
 
 ### `GET /api/v1/me/endless`
 
-All of the caller's endless results of every series, ordered by `generator`, difficulty then number; each carries its `generator`. Lets a fresh device know which puzzles are already solved.
+All of the caller's endless results of every series, ordered by `generator`, `variant`, difficulty then number; each carries its `generator` and `variant`. Lets a fresh device know which puzzles are already solved.
 
 ```json
 {
   "results": [
-    { "difficulty": 1, "number": 12, "elapsedMs": 183000, "completedAt": "2026-10-26T09:15:00+13:00" }
+    { "generator": 1, "variant": 0, "difficulty": 1, "number": 12, "elapsedMs": 183000, "completedAt": "2026-10-26T09:15:00+13:00" },
+    { "generator": 1, "variant": 3, "difficulty": 2, "number": 1, "elapsedMs": 420000, "completedAt": "2026-10-27T19:02:00+13:00" }
   ]
 }
 ```
@@ -294,6 +369,14 @@ The caller's streak and personal statistics, for the Stats screen.
   ],
   "endless": [
     { "difficulty": 1, "completed": 12, "highest": 14, "bestMs": 120000, "averageMs": 180000 }
+  ],
+  "variants": [
+    {
+      "variant": 1,
+      "endless": [
+        { "difficulty": 1, "completed": 3, "highest": 3, "bestMs": 210000, "averageMs": 260000 }
+      ]
+    }
   ]
 }
 ```
@@ -307,7 +390,8 @@ The caller's streak and personal statistics, for the Stats screen.
 - `daily` always has five entries, `difficulty` 1 (Easy) to 5 (Diabolical) in order. A daily result's difficulty is the tier of its level given the number of games on its day (the level schedule for that date's ISO week, see `levels` in `GET /api/v1/week`), the same mapping as for the endless tiers. It counts all of the caller's daily results, flagged or not: it is their own record.
   - `completed` is the number of results; `bestMs` is the fastest and `averageMs` the mean rounded to the nearest millisecond. Both are `null` when `completed` is 0.
   - `recent` is the caller's 20 most recent results of that difficulty, by date and then level, oldest first. It is empty when there are none.
-- `endless` is for the same `generator` as `daily` (one series' numbers; the query parameter and its default are as above). It always has five entries, `difficulty` 1 to 5 in order. `completed` is the number of puzzles solved, `highest` the highest puzzle number solved (0 when none), and `bestMs` and `averageMs` as above (`null` when none).
+- `endless` is for the same `generator` as `daily` (one series' numbers; the query parameter and its default are as above), in the standard variant (`0`). It always has five entries, `difficulty` 1 to 5 in order. `completed` is the number of puzzles solved, `highest` the highest puzzle number solved (0 when none), and `bestMs` and `averageMs` as above (`null` when none). Flagged results are included.
+- `variants` is the same numbers for each [variant](#variants) of that `generator`: always three entries, `variant` `1` (Diagonal), `2` (Jigsaw) and `3` (Killer) in order, each with an `endless` list shaped exactly like the one above. Older servers don't send it; clients treat a missing `variants` as no variant results.
 
 ### `POST /api/v1/endless/results`
 
@@ -316,6 +400,7 @@ Submit one completed endless puzzle.
 ```json
 {
   "generator": 2,
+  "variant": 3,
   "difficulty": 1,
   "number": 12,
   "elapsedMs": 183000,
@@ -326,10 +411,11 @@ Submit one completed endless puzzle.
 
 - The rules are those of `POST /api/v1/results`, with `difficulty` and `number` in place of `date` and `level`, and no date limits: an endless puzzle can be solved at any time.
 - `generator` is the series (`1` when missing; anything else is `400 invalid_result`). Any series is accepted at any time, enabled or not (the [mid-game rule](#enabled-generators)), so results queued offline still land after the admin changes the enabled generators. The replay is checked against that series' puzzle.
-- **Idempotent**: one result per `(user, generator, difficulty, number)`. The first accepted submission wins; later ones are ignored.
+- `variant` is the [variant](#variants), `0..3` (`0` when missing or `null`; another number is `400 invalid_result`, a non-integer `400 bad_request`). The replay is checked against that variant's puzzle, under its layout.
+- **Idempotent**: one result per `(user, generator, variant, difficulty, number)`. The first accepted submission wins; later ones are ignored.
   - `201 Created` - stored.
   - `200 OK` - a result already existed; the body is the **stored** result, which may differ from the one submitted.
-  - Both return the result object `{ "generator", "difficulty", "number", "elapsedMs", "completedAt" }` (never the replay).
+  - Both return the result object `{ "generator", "variant", "difficulty", "number", "elapsedMs", "completedAt" }` (never the replay).
 - **Sanity caps** (`400 invalid_result` on failure):
   - `difficulty` in `1..5`.
   - `number` in `1..9007199254740991`.
@@ -343,11 +429,12 @@ Clients queue results offline and retry until they receive `200`/`201`. A `400` 
 
 ### `GET /api/v1/endless/leaderboard`
 
-Every player's progress in each difficulty of one series. The query parameter `generator` (`1` or `2`, else `400 bad_request`) picks it; it defaults to the default generator (the first enabled), as for `GET /api/v1/me/stats`.
+Every player's progress in each difficulty of one series. The query parameter `generator` (`1` or `2`, else `400 bad_request`) picks it; it defaults to the default generator (the first enabled), as for `GET /api/v1/me/stats`. The query parameter `variant` (`0..3`, else `400 bad_request` with the message `variant must be 0..3`) picks the [variant](#variants); it defaults to `0`. Both are echoed.
 
 ```json
 {
   "generator": 1,
+  "variant": 0,
   "difficulties": [
     {
       "difficulty": 1,
@@ -368,11 +455,12 @@ Every player's progress in each difficulty of one series. The query parameter `g
 
 ### `GET /api/v1/endless/leaderboard/{difficulty}/{number}`
 
-The times on one endless puzzle of one series (the optional `generator` parameter works as on the progress leaderboard), laid out as a puzzle in the daily leaderboard.
+The times on one endless puzzle of one series (the optional `generator` and `variant` parameters work as on the progress leaderboard, and are echoed), laid out as a puzzle in the daily leaderboard.
 
 ```json
 {
   "generator": 1,
+  "variant": 0,
   "difficulty": 1,
   "number": 12,
   "entries": [
@@ -383,7 +471,7 @@ The times on one endless puzzle of one series (the optional `generator` paramete
 ```
 
 - Entries are sorted by time ascending, with the same ranking, tie ordering and `suspicious` rules as a daily puzzle. `entries` is empty when nobody has solved the puzzle.
-- `400 bad_request` if `difficulty` is not `1..5`, `number` is not `1..9007199254740991` or `generator` is not `1` or `2`.
+- `400 bad_request` if `difficulty` is not `1..5`, `number` is not `1..9007199254740991`, `generator` is not `1` or `2` or `variant` is not `0..3`.
 
 ## Replays
 
@@ -414,6 +502,8 @@ Every event has `t`, the game timer in integer milliseconds (the in-game clock, 
 | ------------ | -------- | ----------------------------------------------------------------------------------------------------- |
 | `start`      |          | The puzzle was opened for the first time (always the first event, `t` = 0)                            |
 | `place`      | `c`, `d` | Digit `d` placed in `c` (replacing any other digit; clears `c`'s notes and `d` from its peers' notes) |
+
+A cell's peers are those of the puzzle's [layout](#layouts): for a variant they include the diagonals, the jigsaw region and the killer cage, so a `place` clears the digit from those notes too.
 | `erase`      | `c`      | Cleared `c`: its digit if it has one, else its notes                                                  |
 | `noteAdd`    | `c`, `d` | Pencil mark `d` added to the empty cell `c`                                                           |
 | `noteRemove` | `c`, `d` | Pencil mark `d` removed from `c`                                                                      |
@@ -431,7 +521,7 @@ Only actions that change something are recorded: a `place` of the digit already 
 
 ### Replay checks
 
-The server replays the events on the puzzle (a daily regenerated from the week seed, an endless one from the endless seed) and checks, in order:
+The server replays the events on the puzzle (a daily regenerated from the week seed, an endless one from the endless seed in its generator and variant, under that variant's layout) and checks, in order:
 
 1. **Shape**: `start` is first with `t` = 0, `finish` is last, and neither appears anywhere else.
 2. **Timer**: `t` never decreases, and it stays the same while the timer is stopped (after `pause` or `restore`, until `resume`), except that `restore` itself may move it forward (the time banked by the last save before the app was closed) and `resume` may be up to **1 second** later than the event before it (older clients stamped it a few milliseconds late).
@@ -492,11 +582,11 @@ Removes the flag (automatic or not). `200` with the updated list item; also `200
 
 ## Admin endpoints (endless results)
 
-The same anti-cheat tools for [endless](#endless-seed) results, with the same access rules as the admin endpoints above. Each list item has its `generator`. The per-result routes below take an optional query parameter `generator` (`1` or `2`, default `1`, else `400 bad_request`) naming the series, so they address the right result and the replay's `givens` come from that series' puzzle.
+The same anti-cheat tools for [endless](#endless-seed) results, with the same access rules as the admin endpoints above. Each list item has its `generator` and `variant`. The per-result routes below take optional query parameters `generator` (`1` or `2`, default `1`, else `400 bad_request`) and `variant` (`0..3`, default `0`, else `400 bad_request`) naming the series, so they address the right result and the replay's `givens` (and `layout`) come from that series' puzzle.
 
 ### `GET /api/v1/admin/endless/results?date=YYYY-MM-DD`
 
-Every endless result **submitted** on a day (defaults to today, any past date allowed), where the day runs from midnight to midnight in the game timezone. Endless puzzles have no date of their own, so the submission time is what places a result on a day. Ordered by generator, difficulty, number, then time.
+Every endless result **submitted** on a day (defaults to today, any past date allowed), where the day runs from midnight to midnight in the game timezone. Endless puzzles have no date of their own, so the submission time is what places a result on a day. Ordered by generator, variant, difficulty, number, then time.
 
 ```json
 {
@@ -506,6 +596,7 @@ Every endless result **submitted** on a day (defaults to today, any past date al
       "userId": "2",
       "displayName": "Bob",
       "generator": 1,
+      "variant": 0,
       "difficulty": 5,
       "number": 12,
       "elapsedMs": 120000,
@@ -529,7 +620,21 @@ Every endless result **submitted** on a day (defaults to today, any past date al
 
 ### `GET /api/v1/admin/endless/results/{difficulty}/{number}/{userId}/replay`
 
-One result with everything needed to watch it back: the fields of a list item above, plus `givens` (the puzzle's starting grid as 81 digits, `0` = empty; never the solution) and `events` (the stored replay's events, `[]` when there is none). `400 bad_request` for a bad path value, `404 not_found` if there is no such result.
+One result with everything needed to watch it back: the fields of a list item above, plus `givens` (the puzzle's starting grid as 81 digits, `0` = empty; never the solution), `layout` for a variant and `events` (the stored replay's events, `[]` when there is none). `400 bad_request` for a bad path or query value, `404 not_found` if there is no such result.
+
+`layout` is what a client needs to draw a variant's board (see [Layouts](#layouts)); it is absent for variant `0`:
+
+```json
+{
+  "regions": [0, 0, 0, 1, 1, 1, 2, 2, 2, "... 81 region indices 0..8"],
+  "diagonals": false,
+  "cages": [{ "cells": [0, 1, 9], "sum": 14 }, "..."]
+}
+```
+
+- `regions` is each cell's region: its box, or for Jigsaw its irregular region.
+- `diagonals` is `true` for Diagonal.
+- `cages` is the Killer cages (cells ascending, ordered by their lowest cell), `[]` for the other variants.
 
 ### `PUT /api/v1/admin/endless/results/{difficulty}/{number}/{userId}/flag`
 

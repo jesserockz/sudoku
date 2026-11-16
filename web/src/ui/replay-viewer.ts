@@ -2,6 +2,7 @@
 // replay back on the game clock, and points out what's worth a closer look (long gaps, time hidden or
 // paused, a steady machine-like pace). Digits stay hidden unless the admin reveals them.
 import type { EndlessReplayDetail, ReplayDetail } from "../api/models.ts";
+import { Layout } from "../core/layout.ts";
 import { colOf, rowOf } from "../core/geometry.ts";
 import { Game } from "../game/game.ts";
 import type { ReplayEvent } from "../game/replay.ts";
@@ -142,7 +143,7 @@ export function applyEvent(game: Game, e: ReplayEvent): Game {
     case "undo": return game.undo();
     case "clear": return game.clearAll();
     // A reload loses the undo history.
-    case "restore": return Game.restore(game.save(0));
+    case "restore": return Game.restore(game.save(0), game.layout);
     default: return game;
   }
 }
@@ -177,7 +178,8 @@ export class ReplayViewer extends EventTarget {
     this.detail = detail;
     this.events = detail.events;
     this.analysis = analyse(this.events);
-    let game = Game.create(detail.givens);
+    // A variant's replay is played under its layout, so it is solved (and notes clear) as it was in the game.
+    let game = Game.create(detail.givens, ("layout" in detail && detail.layout) || Layout.STANDARD);
     this.#frames = [game];
     for (const e of this.events) this.#frames.push(game = applyEvent(game, e));
   }

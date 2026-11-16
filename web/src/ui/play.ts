@@ -1,10 +1,12 @@
 import { colOf, index, rowOf } from "../core/geometry.ts";
 import { formatDuration } from "../game/timer.ts";
+import { variantName } from "../core/layout.ts";
 import { generatorName } from "../generator/versions.ts";
 import { SudokuBoard, SudokuKeypad } from "./board.ts";
 import { ENDLESS_LABEL, type AppController, type PuzzleRef } from "./controller.ts";
 import { type Child, Component, h, topBar } from "./dom.ts";
 import { shareResultsButton } from "./share.ts";
+import { seriesName } from "./variants.ts";
 import { ScreenWakeLock } from "./wake-lock.ts";
 
 /**
@@ -169,8 +171,8 @@ export class PlayScreen extends Component {
           typeof ref === "number"
             ? h("button", { onclick: () => app.openToday() }, "Today's puzzles")
             : [
-              h("button", { onclick: () => app.openEndless({ generator: ref.generator, difficulty: ref.difficulty, number: ref.number + 1 }) }, `Play #${ref.number + 1}`),
-              h("button", { onclick: () => app.openToday() }, `${ENDLESS_LABEL} puzzles`),
+              h("button", { onclick: () => void app.openEndless({ ...ref, number: ref.number + 1 }) }, `Play #${ref.number + 1}`),
+              h("button", { onclick: () => app.openToday() }, `${ref.variant ? variantName(ref.variant) : ENDLESS_LABEL} puzzles`),
             ],
         ),
       );
@@ -206,7 +208,7 @@ export class PlayScreen extends Component {
     }
 
     return [
-      topBar(typeof ref !== "number" ? `${generatorName(ref.generator)} · ${puzzle.title}`
+      topBar(typeof ref !== "number" ? `${seriesName(ref.generator, ref.variant ?? 0)} · ${puzzle.title}`
         : app.generators.length > 1 ? `${generatorName(app.generator)} · ${puzzle.title}` : puzzle.title, () => app.openToday(),
         this.#timer,
         !game.isComplete && !paused && h("button", { class: "link", onclick: () => this.#pause() }, "Pause")),

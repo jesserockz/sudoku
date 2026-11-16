@@ -430,7 +430,7 @@ test("openEndless ignores bad difficulties and numbers", async () => {
     assert.equal(c.screen.kind, "today");
   }
   c.openEndless({ generator: 1, difficulty: 5, number: Number.MAX_SAFE_INTEGER });
-  assert.deepEqual(c.screen, { kind: "endless-play", generator: 1, difficulty: 5, number: Number.MAX_SAFE_INTEGER });
+  assert.deepEqual(c.screen, { kind: "endless-play", generator: 1, variant: 0, difficulty: 5, number: Number.MAX_SAFE_INTEGER });
 });
 
 test("opening an endless puzzle stamps one start event, and it resumes after playing another", async () => {
@@ -439,7 +439,7 @@ test("opening an endless puzzle stamps one start event, and it resumes after pla
   const a: EndlessRef = { generator: 1, difficulty: 2, number: 3 };
   const b: EndlessRef = { generator: 1, difficulty: 1, number: 1 };
   c.openEndless(a);
-  assert.deepEqual(c.screen, { kind: "endless-play", generator: 1, difficulty: 2, number: 3 });
+  assert.deepEqual(c.screen, { kind: "endless-play", generator: 1, variant: 0, difficulty: 2, number: 3 });
   assert.deepEqual(c.endlessStatusOf(a), { kind: "in-progress", elapsedMs: 0 });
   const g = c.gameOf(a)!;
   assert.deepEqual(g.replay.map((x) => x.a), ["start"]);
@@ -534,7 +534,7 @@ test("a puzzle solved elsewhere opens its scores", async () => {
   server.storedEndless.push({ generator: 1, difficulty: 2, number: 5, elapsedMs: 9000, completedAt: "x" });
   await syncNow(c);
   c.openEndless({ generator: 1, difficulty: 2, number: 5 });
-  assert.deepEqual(c.screen, { kind: "endless-scores", generator: 1, difficulty: 2, number: 5 });
+  assert.deepEqual(c.screen, { kind: "endless-scores", generator: 1, variant: 0, difficulty: 2, number: 5 });
   await until(() => c.endlessBoard !== null);
   assert.deepEqual(c.endlessBoard!.entries.map((x) => x.elapsedMs), [9000]);
   assert.equal(c.gameOf({ generator: 1, difficulty: 2, number: 5 }), null);
@@ -545,7 +545,7 @@ test("openEndlessScores loads the progress, a puzzle's board, and reports failur
   const { c, server } = e;
   server.storedEndless.push({ generator: 1, difficulty: 1, number: 3, elapsedMs: 8000, completedAt: "x" });
   c.openEndlessScores(1);
-  assert.deepEqual(c.screen, { kind: "endless-scores", generator: 1, difficulty: 1, number: null });
+  assert.deepEqual(c.screen, { kind: "endless-scores", generator: 1, variant: 0, difficulty: 1, number: null });
   assert.equal(c.endlessProgress, null);
   await until(() => c.endlessProgress !== null);
   assert.equal(c.endlessProgress!.difficulties[0]!.players[0]!.completed, 1);
@@ -595,7 +595,7 @@ test("a stale endless leaderboard response is ignored", async () => {
 test("openScoresFor opens the right scores for both kinds of puzzle", async () => {
   const { c } = await env();
   c.openScoresFor({ generator: 1, difficulty: 3, number: 8 });
-  assert.deepEqual(c.screen, { kind: "endless-scores", generator: 1, difficulty: 3, number: 8 });
+  assert.deepEqual(c.screen, { kind: "endless-scores", generator: 1, variant: 0, difficulty: 3, number: 8 });
   await until(() => c.endlessBoard !== null);
   c.openScoresFor(1);
   assert.equal(c.screen.kind, "scores");

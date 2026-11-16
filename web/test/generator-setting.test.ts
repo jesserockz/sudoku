@@ -1,5 +1,5 @@
 // Enabled generators: the server admin (or a seed's player) turns on Classic, Graded or both, straight away. With
-// both on, players pick one with a switch on the Daily and Endless tabs; each generator has its own daily puzzles,
+// both on, players pick one with a switch on the Daily, Endless and Variants tabs; each generator has its own daily puzzles,
 // saved games, results, leaderboard and stats.
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -420,7 +420,7 @@ test("the explainer says which generator is used with a server, points to the sw
   assert.equal(generatorHelp({ enabled: [C], seed: false }).intro[0], "Puzzles here use Classic.");
 
   const both = generatorHelp({ enabled: [C, G], seed: false });
-  assert.equal(both.intro[0], "You can play Classic or Graded: pick with the switch on the Daily and Endless tabs.");
+  assert.equal(both.intro[0], "You can play Classic or Graded: pick with the switch on the Daily, Endless and Variants tabs.");
   assert.match(both.outro[1]!, /^Each generator has its own daily puzzles, Endless series, leaderboards and stats/);
 
   const seedOne = generatorHelp({ enabled: [C], seed: true });
@@ -633,11 +633,11 @@ test("Stats opens on the generator in use and can show the other one", async () 
 test("the Endless tab and its leaderboard follow the pick", async () => {
   const { c, server } = await env((server) => { server.generators = [1, 2]; });
   c.openEndlessScores(1);
-  assert.deepEqual(c.screen, { kind: "endless-scores", generator: C, difficulty: 1, number: null });
+  assert.deepEqual(c.screen, { kind: "endless-scores", generator: C, variant: 0, difficulty: 1, number: null });
   c.openToday();
   await c.chooseGenerator(G);
   c.openEndlessScores(1);
-  assert.deepEqual(c.screen, { kind: "endless-scores", generator: G, difficulty: 1, number: null });
+  assert.deepEqual(c.screen, { kind: "endless-scores", generator: G, variant: 0, difficulty: 1, number: null });
   await until(() => c.endlessProgress !== null);
   assert.equal(server.requests.at(-1)!.url.searchParams.get("generator"), "2");
   c.openToday();

@@ -44,7 +44,7 @@ export function generatorHelp({ enabled, seed }: GeneratorHelpContext): Generato
   const both = enabled !== null && enabled.length > 1;
   let lead: string | null = null;
   if (both) {
-    lead = "You can play Classic or Graded: pick with the switch on the Daily and Endless tabs.";
+    lead = "You can play Classic or Graded: pick with the switch on the Daily, Endless and Variants tabs.";
   } else if (enabled !== null) {
     lead = `${seed ? "This seed's puzzles" : "Puzzles here"} use ${generatorName(enabled[0]!)}.`;
   }

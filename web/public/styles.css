@@ -25,6 +25,8 @@
   --maint-line: #d9a400;
   --maint-admin-bg: #b3261e;
   --maint-admin-text: #ffffff;
+  --diag-tint: rgba(150, 110, 40, 0.16);
+  --cage: #6b6f78;
   --radius: 10px;
   color-scheme: light;
 }
@@ -56,6 +58,8 @@
     --maint-line: #a98512;
     --maint-admin-bg: #d32f2f;
     --maint-admin-text: #ffffff;
+    --diag-tint: rgba(255, 214, 140, 0.11);
+    --cage: #a3a8b3;
     color-scheme: dark;
   }
 }
@@ -109,6 +113,16 @@ sudoku-app:has(> .maintenance-banner.compact) { --banner-h: 32px; }
 }
 .help-overlay .help { width: 100%; max-width: 440px; max-height: calc(100vh - 32px); overflow-y: auto; margin: 0; }
 .help-overlay .help p { margin: 0 0 10px; line-height: 1.45; }
+.help-overlay .help ul.variant-rules { margin: 0 0 10px; padding-left: 20px; line-height: 1.45; }
+/* A variant's puzzle is being generated: a short wait, shown over the screen. */
+.preparing {
+  position: fixed; inset: 0; z-index: 11; display: flex; align-items: center; justify-content: center;
+  padding: 16px; background: rgb(0 0 0 / 25%); cursor: progress;
+}
+.preparing p {
+  margin: 0; padding: 12px 16px; background: var(--surface); color: var(--text);
+  border: 1px solid var(--line); border-radius: var(--radius);
+}
 
 .boot { text-align: center; color: var(--muted); margin-top: 30vh; }
 
@@ -219,6 +233,36 @@ sudoku-play > header.bar { flex: none; margin-bottom: 0; }
   background-image: linear-gradient(var(--colour-b-tint), var(--colour-b-tint));
   box-shadow: inset 0 0 0 2px var(--colour-b), inset 0 0 0 4px var(--surface), inset 0 0 0 6px var(--colour-b);
 }
+/* Variants. Diagonal: a tint over the cell's own background, so selection
+   and other highlights still show through. Jigsaw: the region borders replace
+   the box borders. Killer: a dashed line inset on each side where a cage ends,
+   and the sum in the cage's first cell, with that cell's notes moved down to
+   make room for it. */
+.board .cell.diag { background-image: linear-gradient(var(--diag-tint), var(--diag-tint)); }
+.board .cell.diag.colour-1 { background-image: linear-gradient(var(--colour-a-tint), var(--colour-a-tint)), linear-gradient(var(--diag-tint), var(--diag-tint)); }
+.board .cell.diag.colour-2 { background-image: linear-gradient(var(--colour-b-tint), var(--colour-b-tint)), linear-gradient(var(--diag-tint), var(--diag-tint)); }
+.board.layout-jigsaw .cell.c2, .board.layout-jigsaw .cell.c5 { border-right: 1px solid var(--line); }
+.board.layout-jigsaw .cell.r2, .board.layout-jigsaw .cell.r5 { border-bottom: 1px solid var(--line); }
+.board.layout-jigsaw .cell.jr { border-right: 2px solid var(--line-strong); }
+.board.layout-jigsaw .cell.jb { border-bottom: 2px solid var(--line-strong); }
+.cell.cage::before {
+  content: ""; position: absolute; top: 0; right: 0; bottom: 0; left: 0;
+  border: 0 dashed var(--cage); pointer-events: none;
+}
+.cell.ct::before { top: 3px; border-top-width: 1px; }
+.cell.cr::before { right: 3px; border-right-width: 1px; }
+.cell.cb::before { bottom: 3px; border-bottom-width: 1px; }
+.cell.cl::before { left: 3px; border-left-width: 1px; }
+/* An explicit base colour (with no specificity, so every highlight still wins) for the sum to inherit. */
+:where(.board.layout-killer .cell) { background-color: var(--surface); }
+.cage-sum {
+  position: absolute; top: 1px; left: 2px; z-index: 1; padding: 0 1px;
+  font-size: clamp(8px, 25cqmin, 13px); font-weight: 600; line-height: 1; color: var(--text);
+  /* The cell's own colour (selected, peer...), hiding the dashed line behind the sum. */
+  background-color: inherit; border-radius: 2px;
+}
+.cage-sum.wrong { color: var(--conflict); background-color: var(--conflict-bg); outline: 1px solid var(--conflict); }
+.cell.has-sum .notes { top: 28%; }
 .notes {
   position: absolute; inset: 1px; display: grid;
   grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr);
@@ -227,7 +271,8 @@ sudoku-play > header.bar { flex: none; margin-bottom: 0; }
 .notes span { display: flex; align-items: center; justify-content: center; }
 
 .paused {
-  position: absolute; inset: 0; display: flex; flex-direction: column; gap: 12px;
+  /* Above the cage sums (z-index 1), which would otherwise show through. */
+  position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; gap: 12px;
   align-items: center; justify-content: center;
   background: var(--surface); border: 2px solid var(--line-strong); border-radius: 6px;
 }
@@ -347,6 +392,7 @@ form.login select {
 .generator-switch { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; margin: 0 0 12px; }
 .generator-switch .generator-tabs { margin: 0; padding-bottom: 0; }
 .generator-switch .generator-tabs button { min-width: 88px; }
+.variant-tabs button { flex: 1 1 0; }
 /* The setting in force can't be chosen again, but stays marked rather than greyed out. */
 .generator-choices button.active:disabled { opacity: 1; cursor: default; }
 

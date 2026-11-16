@@ -40,14 +40,22 @@ type endlessStatJSON struct {
 	AverageMs  *int64 `json:"averageMs"`
 }
 
+// variantStatsJSON is the endless stats of one variant.
+type variantStatsJSON struct {
+	Variant int               `json:"variant"`
+	Endless []endlessStatJSON `json:"endless"`
+}
+
 type statsResponse struct {
 	// Generator is the generator version the per-difficulty daily and
 	// endless stats are for; the streak is not tied to one.
-	Generator int               `json:"generator"`
-	Today     string            `json:"today"`
-	Streak    streakJSON        `json:"streak"`
-	Daily     []dailyStatJSON   `json:"daily"`
-	Endless   []endlessStatJSON `json:"endless"`
+	Generator int             `json:"generator"`
+	Today     string          `json:"today"`
+	Streak    streakJSON      `json:"streak"`
+	Daily     []dailyStatJSON `json:"daily"`
+	// Endless is variant 0's; Variants holds variants 1..3 in order.
+	Endless  []endlessStatJSON  `json:"endless"`
+	Variants []variantStatsJSON `json:"variants"`
 }
 
 func (s *Server) getMyStats(w http.ResponseWriter, r *http.Request) {
@@ -129,7 +137,6 @@ func buildStats(today week.Date, results []store.UserDailyResult, schedule store
 		Today:     today.String(),
 		Streak:    computeStreak(dates, today),
 		Daily:     make([]dailyStatJSON, puzzle.Tiers),
-		Endless:   make([]endlessStatJSON, puzzle.Tiers),
 	}
 	for i, a := range acc {
 		d := dailyStatJSON{Difficulty: i + 1, Completed: a.count, Recent: append([]recentJSON{}, a.recent...)}
@@ -138,17 +145,27 @@ func buildStats(today week.Date, results []store.UserDailyResult, schedule store
 		}
 		out.Daily[i] = d
 	}
-	for i := range out.Endless {
-		out.Endless[i] = endlessStatJSON{Difficulty: i + 1}
+	// One list of five tiers per variant: 0 is Endless, the rest Variants.
+	byVariant := make([][]endlessStatJSON, puzzle.Variants)
+	for v := range byVariant {
+		byVariant[v] = make([]endlessStatJSON, puzzle.Tiers)
+		for i := range byVariant[v] {
+			byVariant[v][i] = endlessStatJSON{Difficulty: i + 1}
+		}
 	}
 	for _, e := range endless {
-		out.Endless[e.Difficulty-1] = endlessStatJSON{
+		byVariant[e.Variant][e.Difficulty-1] = endlessStatJSON{
 			Difficulty: e.Difficulty,
 			Completed:  e.Completed,
 			Highest:    e.Highest,
 			BestMs:     ptr(e.BestMs),
 			AverageMs:  ptr(meanMs(e.TotalMs, int64(e.Completed))),
 		}
+	}
+	out.Endless = byVariant[puzzle.VariantStandard]
+	out.Variants = make([]variantStatsJSON, 0, puzzle.Variants-1)
+	for v := puzzle.VariantStandard + 1; v < puzzle.Variants; v++ {
+		out.Variants = append(out.Variants, variantStatsJSON{Variant: v, Endless: byVariant[v]})
 	}
 	return out
 }
