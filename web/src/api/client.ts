@@ -1,10 +1,10 @@
 import {
   type AdminEndlessResult, type AdminEndlessResults, type AdminResult, type AdminResults, type ApiError, type AppConfig,
-  type EndlessBoard, type EndlessInfo, type EndlessProgress, type EndlessReplayDetail, type EndlessResult, type GameResult, type GeneratorSettings,
+  type EndlessBoard, type EndlessInfo, type EndlessProgress, type EndlessReplayDetail, type EndlessResult, type GameResult, type GeneratorSettings, type MaintenanceSettings, MAINTENANCE_CODE,
   type Leaderboard, type Me, type MyEndlessResults, type MyResults, type MyStats, type ReleaseList, type ReplayDetail, type UpdateStatus, type Week,
   decodeAdminEndlessResult, decodeAdminEndlessResults, decodeAdminResult, decodeAdminResults, decodeApiError, decodeAppConfig,
   decodeEndlessBoard, decodeEndlessInfo, decodeEndlessProgress, decodeEndlessReplayDetail, decodeEndlessResult, decodeGameResult,
-  decodeGeneratorSettings, decodeLeaderboard, decodeMe, decodeMyEndlessResults, decodeMyResults, decodeMyStats, decodeReleaseList, decodeReplayDetail, decodeUpdateStatus,
+  decodeGeneratorSettings, decodeLeaderboard, decodeMaintenanceSettings, decodeMe, decodeMyEndlessResults, decodeMyResults, decodeMyStats, decodeReleaseList, decodeReplayDetail, decodeUpdateStatus,
   decodeWeek,
 } from "./models.ts";
 
@@ -29,6 +29,16 @@ export class ApiException extends Error {
   /** The server couldn't check the sign-in for now (503 `auth_unavailable`): keep the session and retry later. */
   get isAuthUnavailable(): boolean {
     return this.status === 503 && this.error?.code === "auth_unavailable";
+  }
+
+  /** The server is in maintenance mode (and the caller is no admin). Not every 503 is: see {@link MAINTENANCE_CODE}. */
+  get isMaintenance(): boolean {
+    return this.error?.code === MAINTENANCE_CODE;
+  }
+
+  /** When maintenance might end, if the server said. */
+  get maintenanceUntil(): Date | null {
+    return this.error?.until ?? null;
   }
 }
 
@@ -210,6 +220,16 @@ export class SudokuApi {
   /** Admin only: enables exactly the generators in `enabled` (non-empty), straight away. */
   async setGenerators(enabled: number[]): Promise<GeneratorSettings> {
     return decodeGeneratorSettings(await this.#send("PUT", "admin/generator", { enabled }));
+  }
+
+  /** Admin only: whether maintenance mode is on, and the end time shown to players. */
+  async adminMaintenance(): Promise<MaintenanceSettings> {
+    return decodeMaintenanceSettings(await this.#get("admin/maintenance"));
+  }
+
+  /** Admin only: switches maintenance mode on or off straight away; `until` is an optional end time shown to players. */
+  async setMaintenance(enabled: boolean, until: Date | null): Promise<MaintenanceSettings> {
+    return decodeMaintenanceSettings(await this.#send("PUT", "admin/maintenance", { enabled, until: until ? until.toISOString() : null }));
   }
 
   async #post(path: string, body?: unknown): Promise<UpdateStatus> {

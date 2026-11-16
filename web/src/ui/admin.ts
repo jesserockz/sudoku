@@ -1,7 +1,7 @@
 // The Admin page's logic, free of the DOM: lists the server's releases, installs or rolls back one
 // after a confirmation, follows the progress and waits for the restarted server to report the new version.
 import { ApiException } from "../api/client.ts";
-import type { GeneratorSettings, Release, ReleaseList, UpdateStatus } from "../api/models.ts";
+import type { GeneratorSettings, MaintenanceSettings, Release, ReleaseList, UpdateStatus } from "../api/models.ts";
 
 /** The parts of {@link SudokuApi} the admin page uses. */
 export interface AdminApi {
@@ -11,6 +11,8 @@ export interface AdminApi {
   rollback(): Promise<UpdateStatus>;
   adminGenerators(): Promise<GeneratorSettings>;
   setGenerators(enabled: number[]): Promise<GeneratorSettings>;
+  adminMaintenance(): Promise<MaintenanceSettings>;
+  setMaintenance(enabled: boolean, until: Date | null): Promise<MaintenanceSettings>;
 }
 
 /** What the page needs from outside; tests supply their own clock and sleep. */
@@ -22,6 +24,8 @@ export interface AdminHost {
   now(): number;
   /** The enabled generators changed: the app picks up the new week (they apply straight away). */
   generatorsChanged(): void;
+  /** Maintenance mode was read or changed: the app shows or clears its reminder banner. */
+  maintenanceChanged(settings: MaintenanceSettings): void;
 }
 
 export const POLL_MS = 1000;
@@ -115,6 +119,12 @@ export class AdminModel extends EventTarget {
   generatorError: string | null = null;
   /** A generator change is in flight; its buttons are disabled. */
   generatorBusy = false;
+  /** Whether maintenance mode is on and its end time shown to players, or `null` until loaded. */
+  maintenance: MaintenanceSettings | null = null;
+  /** Loading or saving maintenance mode failed (the message), or `null`. */
+  maintenanceError: string | null = null;
+  /** A maintenance request is in flight; its controls are disabled. */
+  maintenanceBusy = false;
 
   readonly #api: AdminApi;
   readonly #host: AdminHost;
@@ -147,7 +157,7 @@ export class AdminModel extends EventTarget {
 
   /** Loads the enabled generators and the releases, and picks up an update that is already under way (e.g. the page was reopened). */
   async load(): Promise<void> {
-    await Promise.all([this.#fetchGenerator(), this.#fetchList()]);
+    await Promise.all([this.#fetchGenerator(), this.#fetchMaintenance(), this.#fetchList()]);
     const update = this.list?.update;
     if (!update || this.progress.kind !== "none") return;
     if (RUNNING.has(update.state) || update.state === "restarting") {
@@ -183,6 +193,31 @@ export class AdminModel extends EventTarget {
     this.generatorBusy = false;
     this.#changed();
     return ok;
+  }
+
+  async #fetchMaintenance(): Promise<void> {
+    await this.#maintenanceRequest(() => this.#api.adminMaintenance());
+  }
+
+  /** Switches maintenance mode on or off, with an optional end time (`null`: none) shown to players. It applies straight away. */
+  async saveMaintenance(enabled: boolean, until: Date | null): Promise<void> {
+    await this.#maintenanceRequest(() => this.#api.setMaintenance(enabled, until));
+  }
+
+  /** Runs one maintenance request, unless one is already running. */
+  async #maintenanceRequest(request: () => Promise<MaintenanceSettings>): Promise<void> {
+    if (this.maintenanceBusy) return;
+    this.maintenanceBusy = true;
+    this.maintenanceError = null;
+    this.#changed();
+    try {
+      this.maintenance = await request();
+      this.#host.maintenanceChanged(this.maintenance);
+    } catch (e) {
+      this.maintenanceError = describeError(e);
+    }
+    this.maintenanceBusy = false;
+    this.#changed();
   }
 
   async #fetchList(): Promise<void> {

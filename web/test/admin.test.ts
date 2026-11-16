@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
 import { ApiException } from "../src/api/client.ts";
-import type { GeneratorSettings, Release, ReleaseList, UpdateStatus } from "../src/api/models.ts";
+import type { GeneratorSettings, MaintenanceSettings, Release, ReleaseList, UpdateStatus } from "../src/api/models.ts";
 import {
   AdminModel, POLL_MS, RESTART_TIMEOUT_MS, actionLabel, describeError, flavourOf, formatBytes, progressFraction,
   type AdminApi, type AdminHost,
@@ -48,6 +48,27 @@ class FakeApi implements AdminApi {
     return this.#generator(`set:${enabled.join(",")}`);
   }
 
+  maintenanceInfo: MaintenanceSettings = { enabled: false, until: null };
+  maintenanceCalls: string[] = [];
+  maintenanceError: Error | null = null;
+  /** Holds back the next maintenance answer until called. */
+  maintenanceGate: Promise<void> | null = null;
+
+  async #maintenance(call: string): Promise<MaintenanceSettings> {
+    this.maintenanceCalls.push(call);
+    await this.maintenanceGate;
+    if (this.maintenanceError) throw this.maintenanceError;
+    return this.maintenanceInfo;
+  }
+
+  adminMaintenance(): Promise<MaintenanceSettings> {
+    return this.#maintenance("get");
+  }
+
+  setMaintenance(enabled: boolean, until: Date | null): Promise<MaintenanceSettings> {
+    return this.#maintenance(`set:${enabled}:${until?.toISOString() ?? "null"}`);
+  }
+
   async adminReleases(pre: boolean): Promise<ReleaseList> {
     this.calls.push(`releases:${pre}`);
     if (this.listError) throw this.listError;
@@ -85,6 +106,7 @@ let versions: (string | null | Error)[];
 let host: AdminHost;
 let sleeps: number[];
 let generatorChanges: number;
+let maintenanceChanges: MaintenanceSettings[];
 
 beforeEach(() => {
   api = new FakeApi();
@@ -92,7 +114,9 @@ beforeEach(() => {
   versions = ["1.2.3"];
   sleeps = [];
   generatorChanges = 0;
+  maintenanceChanges = [];
   host = {
+    maintenanceChanged: (settings) => { maintenanceChanges.push(settings); },
     generatorsChanged: () => { generatorChanges++; },
     now: () => clock,
     sleep: async (ms) => { sleeps.push(ms); clock += ms; },
@@ -597,4 +621,55 @@ test("only one generator request runs at a time", async () => {
   assert.deepEqual(api.generatorCalls, ["get", "set:2"]);
   assert.equal(m.generatorBusy, false);
   assert.equal(generatorChanges, 1);
+});
+
+test("maintenance mode loads with the page and is saved straight away", async () => {
+  api.maintenanceInfo = { enabled: true, until: new Date("2026-11-17T02:00:00Z") };
+  const m = model();
+  await m.load();
+  assert.deepEqual(api.maintenanceCalls, ["get"]);
+  assert.deepEqual(m.maintenance, api.maintenanceInfo);
+  assert.deepEqual(maintenanceChanges, [api.maintenanceInfo], "the app is told what the server has");
+
+  api.maintenanceInfo = { enabled: false, until: null };
+  await m.saveMaintenance(false, null);
+  assert.deepEqual(api.maintenanceCalls, ["get", "set:false:null"]);
+  assert.deepEqual(m.maintenance, { enabled: false, until: null });
+  assert.equal(m.maintenanceError, null);
+  assert.equal(m.maintenanceBusy, false);
+  assert.equal(maintenanceChanges.length, 2);
+
+  const end = new Date("2026-11-20T01:00:00Z");
+  api.maintenanceInfo = { enabled: true, until: end };
+  await m.saveMaintenance(true, end);
+  assert.equal(api.maintenanceCalls.at(-1), "set:true:2026-11-20T01:00:00.000Z");
+  assert.deepEqual(maintenanceChanges.at(-1), { enabled: true, until: end });
+});
+
+test("a maintenance failure is shown and changes nothing", async () => {
+  const m = model();
+  await m.load();
+  const before = m.maintenance;
+  api.maintenanceError = apiError(500, "maintenance broke");
+  await m.saveMaintenance(true, null);
+  assert.equal(m.maintenanceError, "maintenance broke");
+  assert.equal(m.maintenance, before);
+  assert.equal(m.maintenanceBusy, false);
+  assert.equal(maintenanceChanges.length, 1, "only the load told the app");
+  // The next try clears the message.
+  api.maintenanceError = null;
+  await m.saveMaintenance(true, null);
+  assert.equal(m.maintenanceError, null);
+});
+
+test("a second maintenance request is ignored while one is running", async () => {
+  const m = model();
+  let release!: () => void;
+  api.maintenanceGate = new Promise((resolve) => { release = resolve; });
+  const first = m.saveMaintenance(true, null);
+  assert.equal(m.maintenanceBusy, true);
+  await m.saveMaintenance(false, null);
+  release();
+  await first;
+  assert.deepEqual(api.maintenanceCalls, ["set:true:null"]);
 });

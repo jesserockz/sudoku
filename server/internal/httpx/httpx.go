@@ -26,6 +26,11 @@ const (
 	CodeUpdateUnavailable     = "update_unavailable"
 	CodeReleaseNotFound       = "release_not_found"
 	CodeUpstreamError         = "upstream_error"
+
+	// CodeMaintenance is the code of the 503 a non-admin gets while the
+	// admin has maintenance mode on. Clients key off the code, not the
+	// status: other 503s exist (identity server outages).
+	CodeMaintenance = "maintenance"
 )
 
 // WriteJSON writes v as a JSON response with the given status.
@@ -45,11 +50,19 @@ type errorBody struct {
 type errorDetail struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	// Until is an RFC 3339 UTC time, only on maintenance errors that have one.
+	Until *string `json:"until,omitempty"`
 }
 
 // Error writes the API error envelope: {"error":{"code":...,"message":...}}.
 func Error(w http.ResponseWriter, status int, code, message string) {
 	WriteJSON(w, status, errorBody{Error: errorDetail{Code: code, Message: message}})
+}
+
+// ErrorUntil is Error with the optional until time (RFC 3339 UTC) of a
+// maintenance error; nil leaves it out.
+func ErrorUntil(w http.ResponseWriter, status int, code, message string, until *string) {
+	WriteJSON(w, status, errorBody{Error: errorDetail{Code: code, Message: message, Until: until}})
 }
 
 // Internal logs err and writes a generic 500 so internals don't leak.

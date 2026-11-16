@@ -36,7 +36,7 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	if err := s2.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 8 {
+	if version != 9 {
 		t.Errorf("user_version = %d", version)
 	}
 	u, err := s2.UpsertUser(ctx, "alice", "Alice")

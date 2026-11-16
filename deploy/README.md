@@ -161,6 +161,23 @@ systemctl restart sudoku-server
 Database migrations run automatically at startup. Take a backup first
 (`systemctl start sudoku-backup`).
 
+## Maintenance mode
+
+To deploy or test without players hitting a half-updated server, switch
+maintenance mode on from the **Admin** page (Maintenance mode section,
+optionally with the time you expect to be back) before you start, and switch
+it off when you are done. The server keeps running throughout:
+
+- Players see a banner saying the server is down for maintenance (and when
+  it is expected back). They can keep playing the puzzles they already have;
+  their scores wait on the device and upload by themselves once it is off. A
+  device without this week's puzzle is asked to try again later.
+- Admins get the normal experience with a large reminder banner on every
+  screen, so you can test as usual.
+- The setting is stored in the database, so it survives a restart of the
+  service. It is not cleared by the end time passing, so remember to switch
+  it off.
+
 ## Updating from the web
 
 An admin (see "Admins") can update the server from the **Admin** page, reached

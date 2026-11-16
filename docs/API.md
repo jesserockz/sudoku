@@ -36,6 +36,7 @@ Non-2xx responses carry:
 | 500    | `internal`                | Server fault                                   |
 | 502    | `upstream_error`          | GitHub failed (admin endpoints)                |
 | 503    | `auth_unavailable`        | Token can't be checked for now (see below)     |
+| 503    | `maintenance`             | Maintenance mode is on (non-admins)            |
 
 ## Authentication
 
@@ -114,11 +115,24 @@ Unauthenticated. Lets the web client discover how to log in.
     "scopes": ["openid", "profile", "offline_access"]
   },
   "authMode": "oidc",
-  "version": "0.1.0"
+  "version": "0.1.0",
+  "maintenance": null
 }
 ```
 
-`authMode` is `"oidc"` or `"dev"`. `version` is the server's release version (semver, no leading `v`); older servers don't send it.
+`authMode` is `"oidc"` or `"dev"`. `version` is the server's release version (semver, no leading `v`); older servers don't send it. `maintenance` is `null` normally and `{ "until": "2026-11-17T02:00:00Z" }` while [maintenance mode](#admin-endpoints-maintenance-mode) is on (`until` is `null` when no end time is set); older servers don't send the field, which clients read as off.
+
+`503` is not always maintenance: other 503s (for example identity server outages) use other codes, so clients must key off `code`, not the status.
+
+### Maintenance errors
+
+While [maintenance mode](#admin-endpoints-maintenance-mode) is on, every `/api/v1` request from a **non-admin** is answered `503` with a `Retry-After: 60` header and
+
+```json
+{ "error": { "code": "maintenance", "message": "the server is down for maintenance", "until": "2026-11-17T02:00:00Z" } }
+```
+
+`until` (RFC 3339, UTC) is only present when the admin set an end time. It is a display hint: nothing happens when it passes. Authentication runs first, so a request with no or an invalid token still gets its normal `401` and sign-in keeps working; an authenticated admin is served as usual. `GET /healthz` and `GET /api/v1/config` (the only unauthenticated routes) stay up. Nothing is stored for a refused request, so a client keeps a refused result queued and retries later.
 
 ### `GET /api/v1/week`
 
@@ -542,6 +556,22 @@ The [enabled generators](#enabled-generators), with the same access rules as the
 Body `{ "enabled": [2] }`. Makes that the enabled set, **immediately**: there is no pending change and no schedule. Duplicates are collapsed and the order doesn't matter. A missing, `null`, empty or non-list `enabled`, or one holding anything but `1` and `2`, is `400 bad_request`. `200` with the object of `GET /api/v1/admin/generator`.
 
 The old `DELETE /api/v1/admin/generator/pending` is gone (`404 not_found`).
+
+## Admin endpoints (maintenance mode)
+
+Maintenance mode lets the owner deploy and test while the server keeps running. Same access rules as the other admin endpoints (`401` / `403`). The setting is stored in the database and kept in memory, and takes effect **immediately**. See [Maintenance errors](#maintenance-errors) for what non-admins get.
+
+### `GET /api/v1/admin/maintenance`
+
+```json
+{ "enabled": true, "until": "2026-11-17T02:00:00Z" }
+```
+
+`until` is an RFC 3339 UTC timestamp or `null`. It is a display hint only; maintenance stays on until switched off. A fresh server has it off.
+
+### `PUT /api/v1/admin/maintenance`
+
+Body `{ "enabled": true, "until": "2026-11-17T15:00:00+13:00" }`. `enabled` is required. `until` is optional (missing or `null` clears it) and must be an RFC 3339 timestamp with any offset; it is stored and returned normalised to UTC. A time in the past is accepted. A missing or non-boolean `enabled`, or an `until` that does not parse, is `400 bad_request`. `200` with the object of `GET /api/v1/admin/maintenance`. The admin making the request is never locked out.
 
 ## Admin endpoints (self-update)
 
