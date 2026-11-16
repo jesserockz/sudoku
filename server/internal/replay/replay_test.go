@@ -153,7 +153,7 @@ func TestCheckWallSlack(t *testing.T) {
 	long[n-1].T += 100_000
 	long[n-1].W += 100_000
 	elapsed := f.elapsed + 100_000
-	wall, err := checkMoves(long, f.givens, f.solution)
+	wall, err := checkMoves(long, puzzle.StandardLayout(), f.givens, f.solution)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -424,5 +424,51 @@ func TestJSONRoundTrip(t *testing.T) {
 	}
 	if string(out) != in {
 		t.Errorf("round trip = %s", out)
+	}
+}
+
+// TestCheckLayoutClearsVariantPeers plays a Diagonal puzzle where a place
+// clears a note from a cell that is a peer only through a diagonal: the next
+// noteAdd there is legal under the variant's layout, not under the standard
+// one.
+func TestCheckLayoutClearsVariantPeers(t *testing.T) {
+	p, err := puzzle.GenerateEndlessVariant(puzzle.VersionClassic, puzzle.VariantDiagonal, 0x1234abcd5678ef01, 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Two empty cells of the main diagonal in different boxes.
+	x, y := -1, -1
+	for i := 0; i < 9 && y < 0; i++ {
+		c := i * 10
+		switch {
+		case p.Givens[c] != '0':
+		case x < 0:
+			x = c
+		case c/27 != x/27:
+			y = c
+		}
+	}
+	if y < 0 {
+		t.Fatal("no two empty diagonal cells in different boxes")
+	}
+	d := int(p.Solution[y] - '0')
+	rec := &recorder{w: 1_761_423_000_000}
+	rec.plain(ActStart)
+	rec.plain(ActResume)
+	rec.move(ActNoteAdd, x, d)
+	rec.move(ActPlace, y, d)
+	rec.move(ActNoteAdd, x, d)
+	for c := 0; c < 81; c++ {
+		if p.Givens[c] == '0' && c != y {
+			rec.move(ActPlace, c, int(p.Solution[c]-'0'))
+		}
+	}
+	rec.plain(ActFinish)
+	r := Replay{Version: 1, Events: rec.ev}
+	if err := CheckLayout(r, p.Layout, p.Givens, p.Solution, rec.t); err != nil {
+		t.Errorf("under the diagonal layout: %v", err)
+	}
+	if err := Check(r, p.Givens, p.Solution, rec.t); err == nil || !strings.Contains(err.Error(), "that note is already there") {
+		t.Errorf("under the standard layout: %v", err)
 	}
 }

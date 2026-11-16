@@ -1,11 +1,12 @@
 import { type Week, weekPuzzles } from "../api/models.ts";
 import { inWeek, today, weekOf } from "../game/calendar.ts";
 import { Game, type SavedGame } from "../game/game.ts";
-import type { EndlessPuzzle, Puzzle } from "../generator/generator.ts";
+import type { Puzzle } from "../generator/generator.ts";
+import type { VariantPuzzle } from "../generator/variants.ts";
 import { type KeyValueStore, StoredValue, list, num, obj, optional, record, str } from "../data/store.ts";
 import { decodeSavedGame, endlessGameKey, gameKey, gameKeyDate } from "../data/app-storage.ts";
 import { type EndlessInProgress, EndlessPuzzleCache, type EndlessSolved, type EndlessSource, endlessInProgressOf } from "../data/endless.ts";
-import { type EndlessResult, decodeEndlessResult } from "../api/models.ts";
+import { type EndlessResult, decodeEndlessResult, variantOf } from "../api/models.ts";
 import { GENERATOR_CLASSIC, enabledGenerators } from "../generator/versions.ts";
 import { endlessSeed, fingerprint, resultsSummary, seedSettings, seedWeekFor, type SeedSettings, weekSeed } from "./seed.ts";
 
@@ -202,53 +203,57 @@ export class SeedRepository implements EndlessSource {
     return this.#endlessSeed !== null && this.#endlessSeed.seed === this.profile()?.settings.seed;
   }
 
-  /** Endless puzzle `number` of `difficulty` in `generator`'s series, or `null` until {@link loadEndless} has run for the active seed. */
-  endlessPuzzle(generator: number, difficulty: number, number: number): EndlessPuzzle | null {
+  /**
+   * Endless puzzle `number` of `difficulty` in `generator`'s series of `variant`, or `null` until {@link loadEndless}
+   * has run for the active seed.
+   */
+  endlessPuzzle(generator: number, difficulty: number, number: number, variant = 0): VariantPuzzle | null {
     if (!this.endlessReady()) return null;
-    return this.#endlessPuzzles.get(this.#endlessSeed!.hex, generator, difficulty, number);
+    return this.#endlessPuzzles.get(this.#endlessSeed!.hex, generator, difficulty, number, variant);
   }
 
   /** Every solved endless puzzle of the active seed, by {@link endlessGameKey}. */
   endlessSolved(): Map<string, EndlessSolved> {
-    return new Map(this.endlessHistory().map((r) => [endlessGameKey(r.generator, r.difficulty, r.number), { elapsedMs: r.elapsedMs, synced: true }]));
+    return new Map(this.endlessHistory().map((r) => [endlessGameKey(r.generator, r.difficulty, r.number, variantOf(r)), { elapsedMs: r.elapsedMs, synced: true }]));
   }
 
-  /** Every endless solve of the active seed, by series, difficulty then number. */
+  /** Every endless solve of the active seed, by series, variant, difficulty then number. Entries without a variant are standard Sudoku's. */
   endlessHistory(): EndlessResult[] {
     const profile = this.profile();
     const results = profile ? (this.#endlessHistory(profile).read() ?? []) : [];
-    return results.sort((a, b) => a.generator - b.generator || a.difficulty - b.difficulty || a.number - b.number);
+    return results.sort((a, b) => a.generator - b.generator || variantOf(a) - variantOf(b) || a.difficulty - b.difficulty || a.number - b.number);
   }
 
-  /** Endless games started and not solved yet, by series, difficulty then number. */
+  /** Endless games started and not solved yet, by series, variant, difficulty then number. */
   endlessInProgress(): EndlessInProgress[] {
     return endlessInProgressOf(this.#endlessGames().read());
   }
 
   /** A saved game for an endless puzzle, if it still matches the puzzle. */
-  loadEndlessGame(generator: number, puzzle: EndlessPuzzle): Game | null {
-    const saved = this.#endlessGames().read()?.[endlessGameKey(generator, puzzle.tier, puzzle.number)];
-    return saved && saved.givens === puzzle.givens ? Game.restore(saved) : null;
+  loadEndlessGame(generator: number, puzzle: VariantPuzzle): Game | null {
+    const saved = this.#endlessGames().read()?.[endlessGameKey(generator, puzzle.tier, puzzle.number, puzzle.variant)];
+    return saved && saved.givens === puzzle.givens ? Game.restore(saved, puzzle.layout) : null;
   }
 
-  saveEndlessGame(generator: number, difficulty: number, number: number, game: Game, nowMs: number): void {
-    this.#endlessGames().update((games) => ({ ...games, [endlessGameKey(generator, difficulty, number)]: game.save(nowMs) }));
+  saveEndlessGame(generator: number, difficulty: number, number: number, game: Game, nowMs: number, variant = 0): void {
+    this.#endlessGames().update((games) => ({ ...games, [endlessGameKey(generator, difficulty, number, variant)]: game.save(nowMs) }));
   }
 
   /**
    * Records a just-finished endless game in the history and drops its saved
    * game, which has nothing left to resume. The first result for a puzzle counts.
    */
-  async completeEndless(generator: number, difficulty: number, number: number, game: Game): Promise<EndlessResult> {
+  async completeEndless(generator: number, difficulty: number, number: number, game: Game, variant = 0): Promise<EndlessResult> {
     const profile = this.#requireProfile();
     if (game.completedElapsedMs === null) throw new Error("game isn't complete");
-    const key = endlessGameKey(generator, difficulty, number);
+    const key = endlessGameKey(generator, difficulty, number, variant);
     this.#endlessGames().update((games) => Object.fromEntries(Object.entries(games ?? {}).filter(([k]) => k !== key)));
     const history = this.#endlessHistory(profile);
-    const existing = (history.read() ?? []).find((r) => r.generator === generator && r.difficulty === difficulty && r.number === number);
+    const existing = (history.read() ?? []).find((r) => endlessGameKey(r.generator, r.difficulty, r.number, variantOf(r)) === key);
     if (existing) return existing;
     const result: EndlessResult = {
-      generator, difficulty, number, elapsedMs: game.completedElapsedMs, completedAt: new Date(this.#now()).toISOString().replace(".000Z", "Z"),
+      generator, ...(variant === 0 ? {} : { variant }), difficulty, number, elapsedMs: game.completedElapsedMs,
+      completedAt: new Date(this.#now()).toISOString().replace(".000Z", "Z"),
     };
     history.update((h) => [...(h ?? []), result]);
     return result;

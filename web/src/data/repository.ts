@@ -7,7 +7,8 @@ import { OidcClient, OidcException, TokenSession, type TokenResponse, createPkce
 import { formatTimestamp, inWeek, today } from "../game/calendar.ts";
 import { Game } from "../game/game.ts";
 import { MAX_REPLAY_EVENTS, REPLAY_VERSION } from "../game/replay.ts";
-import { type EndlessPuzzle, type Puzzle } from "../generator/generator.ts";
+import { type Puzzle } from "../generator/generator.ts";
+import type { VariantPuzzle } from "../generator/variants.ts";
 import { GENERATOR_CLASSIC } from "../generator/versions.ts";
 import { type AppStorage, type HomeTab, type Settings, endlessGameKey, gameKey, gameKeyDate } from "./app-storage.ts";
 import { randomToken } from "./crypto.ts";
@@ -309,16 +310,34 @@ export class SudokuRepository implements EndlessSource {
     this.#storage.endlessHelpSeen.write(true);
   }
 
+  /** The variant the player last picked on the Variants tab, or `null` if they never have. */
+  variantPick(): number | null {
+    return this.#storage.variant.read();
+  }
+
+  setVariantPick(variant: number): void {
+    this.#storage.variant.write(variant);
+  }
+
+  /** Whether the variants explainer has already popped up on this device. */
+  variantsHelpSeen(): boolean {
+    return this.#storage.variantsHelpSeen.read() ?? false;
+  }
+
+  markVariantsHelpSeen(): void {
+    this.#storage.variantsHelpSeen.write(true);
+  }
+
   /** Whether the endless seed has been fetched once. */
   endlessReady(): boolean {
     return this.#storage.endless.read() !== null;
   }
 
-  /** Endless puzzle `number` of `difficulty` in `generator`'s series, or `null` until the endless seed has been fetched once. */
-  endlessPuzzle(generator: number, difficulty: number, number: number): EndlessPuzzle | null {
+  /** Endless puzzle `number` of `difficulty` in `generator`'s series of `variant`, or `null` until the endless seed has been fetched once. */
+  endlessPuzzle(generator: number, difficulty: number, number: number, variant = 0): VariantPuzzle | null {
     const seed = this.#storage.endless.read()?.seed;
     if (!seed) return null;
-    return this.#endlessPuzzles.get(seed, generator, difficulty, number);
+    return this.#endlessPuzzles.get(seed, generator, difficulty, number, variant);
   }
 
   /** Every solved endless puzzle, by {@link endlessGameKey}: the server's record, then the offline queue. */
@@ -329,36 +348,38 @@ export class SudokuRepository implements EndlessSource {
     return solved;
   }
 
-  /** Endless games started on this device and not solved yet, by series, difficulty then number. */
+  /** Endless games started on this device and not solved yet, by series, variant, difficulty then number. */
   endlessInProgress(): EndlessInProgress[] {
     return endlessInProgressOf(this.#storage.endlessGames.read());
   }
 
   /** A saved game for an endless puzzle, if it still matches the puzzle. */
-  loadEndlessGame(generator: number, puzzle: EndlessPuzzle): Game | null {
-    const saved = this.#storage.endlessGames.read()?.[endlessGameKey(generator, puzzle.tier, puzzle.number)];
-    return saved && saved.givens === puzzle.givens ? Game.restore(saved) : null;
+  loadEndlessGame(generator: number, puzzle: VariantPuzzle): Game | null {
+    const saved = this.#storage.endlessGames.read()?.[endlessGameKey(generator, puzzle.tier, puzzle.number, puzzle.variant)];
+    return saved && saved.givens === puzzle.givens ? Game.restore(saved, puzzle.layout) : null;
   }
 
-  saveEndlessGame(generator: number, difficulty: number, number: number, game: Game, nowMs: number): void {
-    this.#storage.endlessGames.update((games) => ({ ...games, [endlessGameKey(generator, difficulty, number)]: game.save(nowMs) }));
+  saveEndlessGame(generator: number, difficulty: number, number: number, game: Game, nowMs: number, variant = 0): void {
+    this.#storage.endlessGames.update((games) => ({ ...games, [endlessGameKey(generator, difficulty, number, variant)]: game.save(nowMs) }));
   }
 
-  /** Queues the result of a just-finished endless game. */
-  async completeEndless(generator: number, difficulty: number, number: number, game: Game): Promise<EndlessResult> {
+  /** Queues the result of a just-finished endless game. Standard Sudoku's (variant 0) leaves `variant` out, as older servers expect. */
+  async completeEndless(generator: number, difficulty: number, number: number, game: Game, variant = 0): Promise<EndlessResult> {
     if (game.completedElapsedMs === null) throw new Error("game isn't complete");
-    const result: EndlessResult = { generator, difficulty, number, elapsedMs: game.completedElapsedMs, completedAt: formatTimestamp(this.#now()) };
+    const result: EndlessResult = {
+      generator, ...(variant === 0 ? {} : { variant }), difficulty, number, elapsedMs: game.completedElapsedMs, completedAt: formatTimestamp(this.#now()),
+    };
     if (game.replay.length <= MAX_REPLAY_EVENTS) result.replay = { version: REPLAY_VERSION, events: game.replay.slice() };
     await this.endlessSync.enqueue(result);
     return result;
   }
 
-  endlessProgress(generator: number): Promise<EndlessProgress> {
-    return this.#client().endlessProgress(generator);
+  endlessProgress(generator: number, variant = 0): Promise<EndlessProgress> {
+    return this.#client().endlessProgress(generator, variant);
   }
 
-  endlessBoard(generator: number, difficulty: number, number: number): Promise<EndlessBoard> {
-    return this.#client().endlessBoard(generator, difficulty, number);
+  endlessBoard(generator: number, difficulty: number, number: number, variant = 0): Promise<EndlessBoard> {
+    return this.#client().endlessBoard(generator, difficulty, number, variant);
   }
 
   /** Keeps the server's endless results, and drops finished games it has: they'd otherwise pile up forever. */

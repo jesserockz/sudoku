@@ -1,7 +1,7 @@
 // The admin results page's logic, free of the DOM: a day's results by level with their replay check and
 // flag, opening one in the replay viewer, and flagging or unflagging it.
-import type {
-  AdminEndlessResult, AdminEndlessResults, AdminResult, AdminResults, EndlessReplayDetail, ReplayDetail,
+import {
+  type AdminEndlessResult, type AdminEndlessResults, type AdminResult, type AdminResults, type EndlessReplayDetail, type ReplayDetail, variantOf,
 } from "../api/models.ts";
 import { addDays } from "../game/calendar.ts";
 import { describeError } from "./admin.ts";
@@ -14,9 +14,9 @@ export interface ResultsApi {
   flagResult(generator: number, date: string, level: number, userId: string, reason: string): Promise<AdminResult>;
   unflagResult(generator: number, date: string, level: number, userId: string): Promise<AdminResult>;
   adminEndlessResults(date: string): Promise<AdminEndlessResults>;
-  adminEndlessReplay(generator: number, difficulty: number, number: number, userId: string): Promise<EndlessReplayDetail>;
-  flagEndlessResult(generator: number, difficulty: number, number: number, userId: string, reason: string): Promise<AdminEndlessResult>;
-  unflagEndlessResult(generator: number, difficulty: number, number: number, userId: string): Promise<AdminEndlessResult>;
+  adminEndlessReplay(generator: number, difficulty: number, number: number, userId: string, variant?: number): Promise<EndlessReplayDetail>;
+  flagEndlessResult(generator: number, difficulty: number, number: number, userId: string, reason: string, variant?: number): Promise<AdminEndlessResult>;
+  unflagEndlessResult(generator: number, difficulty: number, number: number, userId: string, variant?: number): Promise<AdminEndlessResult>;
 }
 
 /** Which list the page shows: the day's games, or the endless puzzles submitted that day. */
@@ -34,6 +34,8 @@ export interface DailyResultKey {
 export interface EndlessResultKey {
   /** The series: the generator version of the puzzle. */
   generator: number;
+  /** The variant, absent for standard Sudoku (0), as in the API's results. */
+  variant?: number;
   difficulty: number;
   number: number;
   userId: string;
@@ -46,13 +48,16 @@ const isEndlessKey = (k: ResultKey): k is EndlessResultKey => "difficulty" in k;
 
 const same = (a: ResultKey, b: ResultKey): boolean => {
   if (isEndlessKey(a) || isEndlessKey(b)) {
-    return isEndlessKey(a) && isEndlessKey(b) && a.generator === b.generator && a.difficulty === b.difficulty && a.number === b.number && a.userId === b.userId;
+    return isEndlessKey(a) && isEndlessKey(b) && a.generator === b.generator && variantOf(a) === variantOf(b) && a.difficulty === b.difficulty
+      && a.number === b.number && a.userId === b.userId;
   }
   return a.generator === b.generator && a.level === b.level && a.userId === b.userId;
 };
 
 const copyKey = (k: ResultKey): ResultKey =>
-  isEndlessKey(k) ? { generator: k.generator, difficulty: k.difficulty, number: k.number, userId: k.userId } : { generator: k.generator, level: k.level, userId: k.userId };
+  isEndlessKey(k)
+    ? { generator: k.generator, ...(variantOf(k) === 0 ? {} : { variant: variantOf(k) }), difficulty: k.difficulty, number: k.number, userId: k.userId }
+    : { generator: k.generator, level: k.level, userId: k.userId };
 
 /** The difficulties an endless list is grouped by. */
 export const ENDLESS_DIFFICULTIES: readonly number[] = [1, 2, 3, 4, 5];
@@ -158,7 +163,7 @@ export class AdminResultsModel extends EventTarget {
     this.#changed();
     try {
       const detail = isEndlessKey(key)
-        ? await this.#api.adminEndlessReplay(key.generator, key.difficulty, key.number, key.userId)
+        ? await this.#api.adminEndlessReplay(key.generator, key.difficulty, key.number, key.userId, variantOf(key))
         : await this.#api.adminReplay(key.generator, this.date, key.level, key.userId);
       if (this.opened !== opened) return;
       const viewer = new ReplayViewer(detail);
@@ -186,13 +191,13 @@ export class AdminResultsModel extends EventTarget {
   flag(key: ResultKey, reason: string): Promise<void> {
     const text = reason.trim();
     return this.#change(() => isEndlessKey(key)
-      ? this.#api.flagEndlessResult(key.generator, key.difficulty, key.number, key.userId, text)
+      ? this.#api.flagEndlessResult(key.generator, key.difficulty, key.number, key.userId, text, variantOf(key))
       : this.#api.flagResult(key.generator, this.date, key.level, key.userId, text));
   }
 
   unflag(key: ResultKey): Promise<void> {
     return this.#change(() => isEndlessKey(key)
-      ? this.#api.unflagEndlessResult(key.generator, key.difficulty, key.number, key.userId)
+      ? this.#api.unflagEndlessResult(key.generator, key.difficulty, key.number, key.userId, variantOf(key))
       : this.#api.unflagResult(key.generator, this.date, key.level, key.userId));
   }
 

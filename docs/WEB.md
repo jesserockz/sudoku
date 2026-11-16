@@ -254,6 +254,31 @@ goldens still pass.
   implementations must agree. Regenerate it, only when a change is intentional,
   with `node scripts/generator-v2-fixture.ts`.
 
+### Variants engine
+
+`src/generator/variants.ts` builds the endless puzzles of the variants
+(Diagonal, Jigsaw, Killer) for both generators:
+`generateEndlessVariant(generator, variant, endlessSeed, tier, number)` returns
+a `VariantPuzzle` (an `EndlessPuzzle` with `generator`, `variant` and
+`layout`). Variant 0 is `generateEndlessVersion`'s puzzle unchanged.
+
+- **Layouts** (`src/core/layout.ts`): a `Layout` holds a variant's units
+  (rows, columns, regions, diagonals), peers and killer cages; `regions` is a
+  region index per cell (the boxes, or a jigsaw's regions) and `cages` is
+  `{ cells, sum }[]`, which is what the board needs to draw and check a
+  variant. `Layout.STANDARD`, `Layout.DIAGONAL`, `Layout.jigsaw(regions)` and
+  `Layout.killer(cages)` build them; `isValid(cells)` checks a grid.
+- **Solver** (`src/generator/layout-solver.ts`): backtracking under any layout
+  with cage sum pruning and a node budget; standard puzzles keep `solver.ts`.
+- **Grader**: `grade(cells, layout)` grades under a layout; killer layouts
+  add cage combinations, the 45 rule, cage pointing and the 45 rule over lines
+  (`KILLER_TECHNIQUES`). Standard grading is unchanged.
+- Seeds, layouts, tiers and levels are specified in `docs/API.md` (Variants).
+  The shared fixture `testdata/variants.json` (regenerate with
+  `node scripts/variants-fixture.ts`) pins the Go port. Generation takes a
+  few milliseconds typically; the slowest measured (Graded Killer, the
+  hardest tiers) took 0.74 s.
+
 ### Generator setting
 
 The puzzle generators are **Classic** (v1) and **Graded** (v2) (`generatorName`
@@ -271,12 +296,12 @@ a server and in serverless play:
   `Week.generators`). An older server that only sends `generator` (or nothing)
   reads as that one alone (or Classic). The first enabled is the **default**:
   the server assumes it for a request or result that doesn't name one.
-- The generator the Daily and Endless tabs play is `AppController.generator`:
+- The generator the Daily, Endless and Variants tabs play is `AppController.generator`:
   the player's pick while it is enabled, else the default. With one enabled
-  there is nothing to pick and that one plays. With both enabled, both tabs
+  there is nothing to pick and that one plays. With both enabled, all three tabs
   show a **Classic | Graded** switch (`.generator-switch`, styled like Stats'
   `.generator-tabs`) with a "What's this?" link; `chooseGenerator` stores the
-  pick in `sudoku.generator` (one per device, shared by both tabs and by
+  pick in `sudoku.generator` (one per device, shared by the tabs and by
   serverless play, kept across sign-out) and reloads the day.
 - Each generator has its own daily puzzles (`weekPuzzles(week, generator,
   date)`; the puzzle caches key on it), saved games (Classic keeps its
@@ -295,7 +320,7 @@ a server and in serverless play:
   `src/ui/generator.ts`, shown by the help dialog as the `generators` topic)
   describes both generators and the five Graded levels. Its first line depends
   on the setting: with both enabled "You can play Classic or Graded: pick with
-  the switch on the Daily and Endless tabs."; with a server and one enabled
+  the switch on the Daily, Endless and Variants tabs."; with a server and one enabled
   just "Puzzles here use Graded." (no word of a choice, so players don't ask
   for the other); in serverless play with one "This seed's puzzles use
   Classic.", and its closing line points to the seed card. It opens from the
@@ -329,7 +354,9 @@ are different puzzles. Games of a repeated tier are titled "Medium 1",
 The app keeps its state as JSON documents in `localStorage`, under keys
 prefixed `sudoku.`: settings and identity, the cached week (seed, games per
 day and enabled generators), `me`, games in progress (`games`, keyed by
-`gameKey`: `date/level` for Classic, `g2/date/level` for Graded), the server's
+`gameKey`: `date/level` for Classic, `g2/date/level` for Graded), endless and
+variant games and results (see [Endless puzzles](#endless-puzzles) and
+[Variants](#variants)), the server's
 results for today (each with its generator), the player's Classic / Graded
 pick (`generator`, kept on sign-out), the last
 streak (`streak`, from `GET /api/v1/me/stats`; cleared on sign-out) and the offline
@@ -450,6 +477,19 @@ and with both (the switch on Daily and Endless, the pick kept, a Graded daily
 solved and on the Graded leaderboard only, Stats on the pick, the admin list
 naming the generator), and the seed card's choices, switch, history and the
 migration of an old schedule. It leaves the server on Classic.
+`web/e2e/variants.cjs <url> [screenshot dir]` (same server, with `ann` as
+admin) checks the [Variants](#variants) tab: the first-visit explainer and its
+rules, the picker (Diagonal first, remembered with the tab across a reload),
+Easy #1 of each variant drawn with its layout (17 shaded diagonal cells; bold
+jigsaw borders that aren't the boxes'; 81 caged cells, a dashed outline and one
+sum per cage adding up to 405), a digit that only breaks the diagonal (or a
+jigsaw region) shown as a conflict, Killer Easy #1 solved through the UI with
+the solution from the app's own generator (it imports `src/generator/variants.ts`,
+which Node runs as TypeScript, with the endless seed from `localStorage`), the
+result on the server with the variant, the Killer leaderboard (and not the
+Jigsaw one), the puzzle's board, the Stats Variants card, the admin replay with
+its cages, and the Variants tab in seed play. Screenshots are at phone width,
+in light and dark, with notes and a colour pen on the killer board.
 
 The first signs in, goes offline and reloads, solves a puzzle offline, checks
 the result reaches `GET /api/v1/me/results` once back online, and covers the
@@ -542,6 +582,8 @@ In dev auth mode the app instead asks for a user id and display name and sends
   server's 10000-event cap is left out, and the result is then flagged.
 - **Endless** (the home page's second tab, next to **Daily**; with a server or
   a seed): see [Endless puzzles](#endless-puzzles).
+- **Variants** (the third tab: Diagonal, Jigsaw and Killer; with a server or a
+  seed): see [Variants](#variants).
 - **Leaderboard**: total and per-puzzle boards with shared ranks, plus each
   player's progress (e.g. 3/5), for today and the previous 8 days. Online
   only; offline it says so, and it loads once the connection is back. Results
@@ -574,14 +616,18 @@ In dev auth mode the app instead asks for a user id and display name and sends
   opens on the generator the Daily tab plays (`AppController.generator`). Picking the other one fetches
   `GET /api/v1/me/stats?generator=N` again (`AppController.showStatsGenerator`);
   a sync keeps the pick. The streak does not change with it; the Endless card follows the same
-  toggle, as endless numbers are kept per series (see below).
+  toggle, as endless numbers are kept per series (see below), and so does the
+  **Variants** card under it: the same table for each variant, from
+  `variants` in `GET /api/v1/me/stats` (left out when an older server sends
+  none).
 
 ## Endless puzzles
 
-The home page has two tabs, **Daily** (the day's games, as
-above) and **Endless**; the one last shown is remembered on the device
-(`home-tab` in `localStorage`). The tab's name is `ENDLESS_LABEL` in
-`src/ui/controller.ts`.
+The home page has three tabs, **Daily** (the day's games, as
+above), **Endless** and **Variants** (see [Variants](#variants)); the one last
+shown is remembered on the device (`home-tab` in `localStorage`: `daily`,
+`endless` or `variants`). The tabs' names are `ENDLESS_LABEL` and
+`VARIANTS_LABEL` in `src/ui/controller.ts`.
 
 Endless puzzles are numbered from 1 within each of the five difficulty tiers,
 with no upper limit (up to 2^53 - 1, so numbers stay exact in JSON). Puzzle
@@ -636,6 +682,94 @@ were (`<tier>/<n>`) and prefixes the others (`g2/<tier>/<n>`):
 Seed play has the Endless tab too, see [Serverless play](#serverless-play-a-shared-seed):
 the puzzles are the same, but without a server there is no leaderboard.
 
+## Variants
+
+The **Variants** tab is the Endless tab for Sudoku with an extra rule
+([Variants engine](#variants-engine), `docs/API.md` Variants):
+
+| Variant      | Extra rule                                             | Drawn as                                         |
+| ------------ | ------------------------------------------------------ | ------------------------------------------------ |
+| Diagonal (1) | Both long diagonals hold 1 to 9                        | The two diagonals shaded                         |
+| Jigsaw (2)   | Nine irregular regions replace the boxes               | Bold borders between regions, no box borders     |
+| Killer (3)   | Cages with a sum, no repeated digit in a cage          | Dashed cage outlines, the sum in the first cell  |
+
+- **The tab**: a **Diagonal | Jigsaw | Killer** picker (`AppController.variant`,
+  remembered per device in `variant` in `localStorage`, Diagonal until the
+  player picks; `chooseVariant`), then the same screen as Endless for the
+  picked variant (`TodayScreen` renders both with the variant as a parameter):
+  the series' name ("Classic Killer series"), the variant's rule in one line
+  with a "How it works" link, each difficulty's progress and next number, other
+  games in progress, **Unfinished in another series** (games of the other
+  variants or generator), **Open a puzzle**, and Leaderboard and Stats (History
+  in seed play). The Classic | Graded switch shows above it while both are
+  enabled: every generator has its own series of every variant.
+- **Naming**: an endless puzzle is `(generator, variant, difficulty, number)`;
+  variant 0 is standard Sudoku (the Endless tab), unchanged everywhere.
+  `EndlessRef.variant`, `endless-play` and `endless-scores` screens carry it.
+  Series read "Classic Diagonal", "Graded Killer" (`seriesName` in
+  `src/ui/variants.ts`), as in the play header ("Graded Killer · Easy #3"),
+  the leaderboard, History, the admin lists and the replay heading.
+- **Puzzles** come from `generateEndlessVariant` through `EndlessPuzzleCache`
+  (`src/data/endless.ts`), which keeps the 16 most recently used puzzles, as a
+  variant can take up to about 0.7 s to generate. Opening a variant's puzzle
+  that isn't already open sets `AppController.preparing` first: `<sudoku-app>`
+  shows "Preparing Classic Killer Easy #3…" over the screen for a frame
+  (`Host.nextFrame`, a `requestAnimationFrame` in the browser) before the work
+  starts, so the tap shows a response. `openEndless` returns a promise that
+  settles once the puzzle is open.
+- **Rules in play**: a `Game` has its puzzle's `Layout` (`Game.create(givens,
+  layout)`, `Game.restore(saved, layout)`). Placing a digit clears it from the
+  notes of the layout's peers (a diagonal, a jigsaw region, a cage), and the
+  game is solved only when the grid is full and right under the layout
+  (`Board.solvedUnder`: no repeat in any unit or cage, every cage adding up).
+  `Board.conflicts(layout)` marks repeats in any unit or cage, so a digit that
+  only breaks the variant's rule is a conflict; the selected cell's peers
+  follow the layout too. A full killer cage that doesn't add up has its sum
+  marked in red (`Board.wrongCages`).
+- **Drawing** (`<sudoku-board>`, from the game's layout): the board gets
+  `layout-diagonal`, `layout-jigsaw` or `layout-killer`, and each cell the
+  classes from `cellDecor` in `src/ui/cell-view.ts`: `diag` on a diagonal (a
+  tint layered over the cell's own background, like the colour pens, so
+  selection and other highlights still show); `jr` / `jb` where the next cell
+  right / below is in another jigsaw region (bold borders that replace the box
+  borders); `cage` with `ct`, `cr`, `cb`, `cl` on the sides where a killer
+  cage ends (a dashed line inset 3 px, drawn by `::before`) and `has-sum` on
+  the cage's first cell, which holds a small `.cage-sum` in its top-left corner
+  (its notes start lower to make room). The sum is also in that cell's label
+  for screen readers ("cage of 3 adding to 12"). The tokens `--diag-tint` and
+  `--cage` have light and dark values. The admin replay viewer draws the
+  layout from the replay's `layout` the same way.
+- **Storage**: variant games and results are keyed by `endlessGameKey` with a
+  `v<variant>/` prefix in front of the endless key: `v3/2/5` is Classic Killer
+  Medium #5 and `v3/g2/2/5` the Graded one; standard keys are unchanged
+  (`2/5`, `g2/2/5`). That covers `endless-games`, the queue
+  (`endless-pending`) and, in seed play, `seed-endless-games-<fp>`. Results
+  (`EndlessResult.variant`, sent with `POST /api/v1/endless/results`) carry the
+  variant, left out for standard Sudoku as older servers expect; one without
+  it is standard. Seed play's history (`seed-endless-history-<fp>`) keeps it
+  the same way.
+- **Leaderboards** are per generator and variant: `GET
+  /api/v1/endless/leaderboard?generator=G&variant=V` and the per-puzzle board
+  (`variant` left out for standard Sudoku). The variants' leaderboard is titled
+  "Killer leaderboard" and has the variant picker and the Classic / Graded
+  switch.
+- **Stats** has a **Variants** card (see Stats above); **History** in seed play
+  lists every series, standard and variant ("Classic Jigsaw series").
+- **Admin**: endless results name the series ("Graded Killer #4"), and the
+  replay and flag calls send `&variant=`; a variant replay's `layout`
+  (`{ regions, diagonals, cages }`) is decoded into a `Layout`
+  (`decodeLayout`) so the replay plays and draws under the variant's rules.
+- **How Variants works**: the first time the Variants tab is shown on a device,
+  a dialog explains it (`variants-help-seen` in `localStorage` keeps it to
+  once); About has a **How Variants works** button, and the tab's "How it
+  works" link opens it too. It gives each rule in plain words (Diagonal: "the
+  two long diagonals also hold 1 to 9 once each."; Jigsaw: "the bold shapes
+  replace the 3x3 boxes; each holds 1 to 9 once."; Killer: "dashed cages show
+  a sum: the digits in a cage add up to it and don't repeat."), that each
+  variant has five difficulties with their own numbered puzzles, and that
+  variants work with Classic and Graded. The text is `variantsHelp` in
+  `src/ui/variants.ts`.
+
 ## Serverless play (a shared seed)
 
 A group can play without a server: everyone enters the same **seed** (any
@@ -672,10 +806,12 @@ passphrase, or a generated one) and gets the same daily games
   its latest entry alone, so a change that was still pending applies now; the
   next change stores the new format. It is a local choice: it is not part of a
   share link, so a group has to agree on it for everyone to get the same
-  puzzles. With both on, the Daily and Endless tabs have the same switch as
+  puzzles. With both on, the Daily, Endless and Variants tabs have the same switch as
   with a server (the pick is the device's `generator`).
 - **Share results** copies a summary of the day to paste into a message, tagged
   with a short fingerprint of the seed (e.g. `#287caf`) instead of the seed.
+- **Variants**: the Variants tab works as with a server, with History instead of
+  the leaderboard (see [Variants](#variants)).
 - **Storage**: the active seed (`seed`), and per seed (keyed by its
   fingerprint) games in progress (`seed-games-<fp>`, current week only, keyed
   by `gameKey` like the server's) and the history of solve times
@@ -683,8 +819,10 @@ passphrase, or a generated one) and gets the same daily games
   Classic's). Endless puzzles are kept
   per seed the same way: games in progress (`seed-endless-games-<fp>`, never
   pruned, and dropped once solved) and solve times
-  (`seed-endless-history-<fp>`: generator, difficulty, number, elapsed time,
-  when; entries without a generator are Classic's).
+  (`seed-endless-history-<fp>`: generator, variant, difficulty, number,
+  elapsed time, when; entries without a generator are Classic's, and those
+  without a variant standard Sudoku's). Variant games are keyed with the
+  `v<variant>/` prefix (see [Variants](#variants)).
   Switching seeds and back resumes where you were.
 
 In the app:

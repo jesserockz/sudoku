@@ -28,6 +28,7 @@ const GOOD = {
   streak: { current: 4, best: 12, lastDate: "2026-10-27" },
   daily: [{ difficulty: 1, completed: 2, bestMs: 5, averageMs: 7, recent: [{ date: "2026-10-26", level: 1, elapsedMs: 5 }] }],
   endless: [{ difficulty: 1, completed: 1, highest: 3, bestMs: 9, averageMs: 9 }],
+  variants: [{ variant: 3, endless: [{ difficulty: 2, completed: 1, highest: 1, bestMs: 40, averageMs: 40 }] }],
 };
 
 test("decodeMyStats reads the stats, with null times when nothing is solved", () => {
@@ -42,6 +43,14 @@ test("decodeMyStats reads the stats, with null times when nothing is solved", ()
   assert.deepEqual(empty.daily[0], { difficulty: 2, completed: 0, bestMs: null, averageMs: null, recent: [] });
   assert.deepEqual(empty.endless[0], { difficulty: 2, completed: 0, highest: 0, bestMs: null, averageMs: null });
   assert.equal(decodeStreak({ current: 1, best: 1 }).lastDate, null);
+});
+
+test("decodeMyStats reads the variants' numbers: none from a server that predates them, and refuses an unknown variant", () => {
+  const { variants: _, ...old } = GOOD;
+  assert.deepEqual(decodeMyStats(old).variants, []);
+  assert.deepEqual(decodeMyStats({ ...GOOD, variants: null }).variants, []);
+  assert.throws(() => decodeMyStats({ ...GOOD, variants: [{ variant: 4, endless: [] }] }), TypeError);
+  assert.throws(() => decodeMyStats({ ...GOOD, variants: [{ variant: 1, endless: [{ difficulty: 1 }] }] }), TypeError);
 });
 
 test("decodeMyStats reads the generator, which is Classic for an older server", () => {

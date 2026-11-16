@@ -1,5 +1,6 @@
 // Request and response bodies of the v1 API, field for field as in docs/API.md,
 // with decoders that check what the server (or localStorage) gave us.
+import { type Cage, Layout, VARIANT_DIAGONAL, VARIANT_JIGSAW, VARIANT_KILLER, VARIANT_STANDARD, isVariant } from "../core/layout.ts";
 import { dayOfWeek, inWeek, isIsoDate } from "../game/calendar.ts";
 import { DEFAULT_LEVELS, type Puzzle } from "../generator/generator.ts";
 import { GENERATOR_CLASSIC, enabledGenerators, generateDayVersion, isGeneratorVersion } from "../generator/versions.ts";
@@ -181,6 +182,13 @@ export interface EndlessStat {
   averageMs: number | null;
 }
 
+/** One variant's endless stats, in `GET /api/v1/me/stats`'s `variants`. */
+export interface VariantStats {
+  /** 1 Diagonal, 2 Jigsaw, 3 Killer. */
+  variant: number;
+  endless: EndlessStat[];
+}
+
 /** `GET /api/v1/me/stats` */
 export interface MyStats {
   /** The generator version the `daily` stats are for (the streak spans all). Servers that predate it only had 1. */
@@ -188,7 +196,10 @@ export interface MyStats {
   today: string;
   streak: Streak;
   daily: DailyStat[];
+  /** Standard endless puzzles (variant 0) of the generator's series. */
   endless: EndlessStat[];
+  /** The variants' endless puzzles of the generator's series (servers that predate variants send none). */
+  variants: VariantStats[];
 }
 
 /** How a result's replay checked out on submission (`none`: submitted before the server kept replays). */
@@ -239,10 +250,12 @@ export interface EndlessInfo {
 /**
  * One endless result: the body of `POST /api/v1/endless/results` and its response. `generator` is the series
  * (the generator version, 1 = Classic, 2 = Graded), `difficulty` the tier (1 = Easy .. 5 = Diabolical) and
- * `number` the puzzle's number within the series' tier. `replay` is only sent, never returned.
+ * `number` the puzzle's number within the series' tier. `replay` is only sent, never returned. `variant` is
+ * the variant (1 Diagonal, 2 Jigsaw, 3 Killer), absent for standard Sudoku (0), as the API leaves it out.
  */
 export interface EndlessResult {
   generator: number;
+  variant?: number;
   difficulty: number;
   number: number;
   elapsedMs: number;
@@ -259,6 +272,8 @@ export interface MyEndlessResults {
 export interface EndlessProgress {
   /** The series the numbers are for. */
   generator: number;
+  /** The variant, absent for standard Sudoku (0). */
+  variant?: number;
   difficulties: {
     difficulty: number;
     players: { rank: number; userId: string; displayName: string; completed: number; highest: number; suspicious: boolean }[];
@@ -268,6 +283,8 @@ export interface EndlessProgress {
 /** `GET /api/v1/endless/leaderboard/{difficulty}/{number}`: one endless puzzle's times. */
 export interface EndlessBoard {
   generator: number;
+  /** The variant, absent for standard Sudoku (0). */
+  variant?: number;
   difficulty: number;
   number: number;
   entries: { rank: number; userId: string; displayName: string; elapsedMs: number; suspicious: boolean }[];
@@ -276,6 +293,8 @@ export interface EndlessBoard {
 /** One endless result as admins see it: an {@link AdminResult} keyed by difficulty and number instead of a game of the day. */
 export interface AdminEndlessResult extends Omit<AdminResult, "level"> {
   generator: number;
+  /** The variant, absent for standard Sudoku (0). */
+  variant?: number;
   difficulty: number;
   number: number;
 }
@@ -290,6 +309,8 @@ export interface AdminEndlessResults {
 export interface EndlessReplayDetail extends AdminEndlessResult {
   givens: string;
   events: ReplayEvent[];
+  /** A variant's layout (its jigsaw regions or killer cages), absent for standard Sudoku. */
+  layout?: Layout;
 }
 
 /** `GET /api/v1/admin/generator`, and the answer to changing it: the generators players can play, ascending. */
@@ -309,6 +330,35 @@ export const decodeGeneratorVersion = (json: unknown): number => {
   if (!isGeneratorVersion(v)) throw new TypeError(`unsupported generator version: ${v}`);
   return v;
 };
+
+/** The variant of an endless result or board: absent (older servers, and standard Sudoku) is 0. */
+export const variantOf = (x: { variant?: number }): number => x.variant ?? VARIANT_STANDARD;
+
+/** A known variant (0..3). */
+const decodeVariant = (json: unknown): number => {
+  const v = num(json);
+  if (!isVariant(v)) throw new TypeError(`unknown variant: ${v}`);
+  return v;
+};
+
+/** An optional `variant` field: spread into a decoded object, it leaves standard Sudoku's (0, or none) out. */
+const variantField = (json: unknown): { variant?: number } => {
+  const v = optional(json, decodeVariant) ?? VARIANT_STANDARD;
+  return v === VARIANT_STANDARD ? {} : { variant: v };
+};
+
+/**
+ * A variant's layout from an admin replay: `{ regions: [81], diagonals, cages: [{ cells, sum }] }`. Diagonal needs
+ * nothing from it, Jigsaw takes the regions and Killer the cages.
+ */
+export function decodeLayout(variant: number, json: unknown): Layout {
+  switch (variant) {
+    case VARIANT_DIAGONAL: return Layout.DIAGONAL;
+    case VARIANT_JIGSAW: return Layout.jigsaw(list(obj(json).regions, num));
+    case VARIANT_KILLER: return Layout.killer(list(obj(json).cages, (c): Cage => ({ cells: list(obj(c).cells, num), sum: num(obj(c).sum) })));
+    default: return Layout.STANDARD;
+  }
+}
 
 /** A non-empty set of known generator versions, ascending and without duplicates. */
 const generatorSet = (json: unknown): number[] => enabledGenerators(list(json, num));
@@ -463,7 +513,9 @@ function decodeReplayGame(o: Record<string, unknown>): { givens: string; events:
 
 export function decodeAdminEndlessResult(json: unknown): AdminEndlessResult {
   const o = obj(json);
-  return { generator: decodeGenerator(o.generator), difficulty: num(o.difficulty), number: num(o.number), ...decodeAdminResultBase(json) };
+  return {
+    generator: decodeGenerator(o.generator), ...variantField(o.variant), difficulty: num(o.difficulty), number: num(o.number), ...decodeAdminResultBase(json),
+  };
 }
 
 export function decodeAdminEndlessResults(json: unknown): AdminEndlessResults {
@@ -472,7 +524,9 @@ export function decodeAdminEndlessResults(json: unknown): AdminEndlessResults {
 }
 
 export function decodeEndlessReplayDetail(json: unknown): EndlessReplayDetail {
-  return { ...decodeAdminEndlessResult(json), ...decodeReplayGame(obj(json)) };
+  const result = decodeAdminEndlessResult(json);
+  const variant = variantOf(result);
+  return { ...result, ...decodeReplayGame(obj(json)), ...(variant === VARIANT_STANDARD ? {} : { layout: decodeLayout(variant, obj(json).layout) }) };
 }
 
 export function decodeEndlessInfo(json: unknown): EndlessInfo {
@@ -488,8 +542,8 @@ export function decodeEndlessResult(json: unknown): EndlessResult {
   const o = obj(json);
   const replay = optional(o.replay, decodeReplay);
   return {
-    generator: decodeGenerator(o.generator), difficulty: num(o.difficulty), number: num(o.number), elapsedMs: num(o.elapsedMs),
-    completedAt: str(o.completedAt), ...(replay ? { replay } : {}),
+    generator: decodeGenerator(o.generator), ...variantField(o.variant), difficulty: num(o.difficulty), number: num(o.number),
+    elapsedMs: num(o.elapsedMs), completedAt: str(o.completedAt), ...(replay ? { replay } : {}),
   };
 }
 
@@ -508,6 +562,7 @@ const decodeTimeEntry = (e: unknown): EndlessBoard["entries"][number] => {
 export function decodeEndlessProgress(json: unknown): EndlessProgress {
   return {
     generator: decodeGenerator(obj(json).generator),
+    ...variantField(obj(json).variant),
     difficulties: list(obj(json).difficulties, (d) => {
       const b = obj(d);
       return {
@@ -526,7 +581,10 @@ export function decodeEndlessProgress(json: unknown): EndlessProgress {
 
 export function decodeEndlessBoard(json: unknown): EndlessBoard {
   const o = obj(json);
-  return { generator: decodeGenerator(o.generator), difficulty: num(o.difficulty), number: num(o.number), entries: list(o.entries, decodeTimeEntry) };
+  return {
+    generator: decodeGenerator(o.generator), ...variantField(o.variant), difficulty: num(o.difficulty), number: num(o.number),
+    entries: list(o.entries, decodeTimeEntry),
+  };
 }
 
 export function decodeDayResult(json: unknown): DayResult {
@@ -597,12 +655,15 @@ export function decodeMyStats(json: unknown): MyStats {
         }),
       };
     }),
-    endless: list(o.endless, (d) => {
-      const x = obj(d);
-      return {
-        difficulty: num(x.difficulty), completed: num(x.completed), highest: num(x.highest),
-        bestMs: optional(x.bestMs, num), averageMs: optional(x.averageMs, num),
-      };
-    }),
+    endless: list(o.endless, decodeEndlessStat),
+    variants: optional(o.variants, (v) => list(v, (e) => ({ variant: decodeVariant(obj(e).variant), endless: list(obj(e).endless, decodeEndlessStat) }))) ?? [],
+  };
+}
+
+function decodeEndlessStat(json: unknown): EndlessStat {
+  const x = obj(json);
+  return {
+    difficulty: num(x.difficulty), completed: num(x.completed), highest: num(x.highest),
+    bestMs: optional(x.bestMs, num), averageMs: optional(x.averageMs, num),
   };
 }

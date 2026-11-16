@@ -103,14 +103,14 @@ func TestUserEndlessStats(t *testing.T) {
 	s, _ := openTemp(t)
 	alice, _ := s.UpsertUser(ctx, "alice", "Alice")
 	bob, _ := s.UpsertUser(ctx, "bob", "Bob")
-	var putGen func(uid int64, generator, difficulty int, number, ms int64)
+	var putGen func(uid int64, generator, variant, difficulty int, number, ms int64)
 	put := func(uid int64, difficulty int, number, ms int64) {
 		t.Helper()
-		putGen(uid, 1, difficulty, number, ms)
+		putGen(uid, 1, 0, difficulty, number, ms)
 	}
-	putGen = func(uid int64, generator, difficulty int, number, ms int64) {
+	putGen = func(uid int64, generator, variant, difficulty int, number, ms int64) {
 		t.Helper()
-		r := EndlessResult{UserID: uid, Generator: generator, Difficulty: difficulty, Number: number, ElapsedMs: ms, CompletedAt: "x", ReplayStatus: "missing", AutoFlag: "No replay submitted"}
+		r := EndlessResult{UserID: uid, Generator: generator, Variant: variant, Difficulty: difficulty, Number: number, ElapsedMs: ms, CompletedAt: "x", ReplayStatus: "missing", AutoFlag: "No replay submitted"}
 		if _, _, err := s.InsertEndlessResult(ctx, r); err != nil {
 			t.Fatal(err)
 		}
@@ -119,14 +119,19 @@ func TestUserEndlessStats(t *testing.T) {
 	put(alice.ID, 1, 2, 5000)
 	put(alice.ID, 1, 9, 7000)
 	put(bob.ID, 1, 40, 1000)
-	putGen(alice.ID, 2, 1, 1, 4000)
-	putGen(alice.ID, 2, 1, 2, 6000)
+	putGen(alice.ID, 2, 0, 1, 1, 4000)
+	putGen(alice.ID, 2, 0, 1, 2, 6000)
+	// Variants come after the standard series, by variant then difficulty.
+	putGen(alice.ID, 1, 3, 2, 4, 8000)
+	putGen(alice.ID, 1, 1, 5, 6, 3000)
+	putGen(alice.ID, 1, 1, 2, 1, 2000)
 
 	got, err := s.UserEndlessStats(ctx, alice.ID, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []EndlessStat{{1, 2, 9, 5000, 12000}, {3, 1, 1, 9000, 9000}}
+	want := []EndlessStat{{0, 1, 2, 9, 5000, 12000}, {0, 3, 1, 1, 9000, 9000},
+		{1, 2, 1, 1, 2000, 2000}, {1, 5, 1, 6, 3000, 3000}, {3, 2, 1, 4, 8000, 8000}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("UserEndlessStats = %+v, want %+v", got, want)
 	}
@@ -135,7 +140,7 @@ func TestUserEndlessStats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []EndlessStat{{1, 2, 2, 4000, 10000}}; !reflect.DeepEqual(got, want) {
+	if want := []EndlessStat{{0, 1, 2, 2, 4000, 10000}}; !reflect.DeepEqual(got, want) {
 		t.Errorf("UserEndlessStats(2) = %+v, want %+v", got, want)
 	}
 }
@@ -171,8 +176,8 @@ func TestStatsQueriesFailOnUnscannableRows(t *testing.T) {
 		`INSERT INTO results VALUES (1, '2026-10-26', 'one', 1000, NULL, 0)`,
 		`INSERT INTO results VALUES ('someone', '2026-10-26', 1, 1000, NULL, 0)`,
 		`DROP TABLE endless_results`,
-		`CREATE TABLE endless_results (user_id, difficulty, number, elapsed_ms)`,
-		`INSERT INTO endless_results VALUES (1, 1, 1, 'fast')`,
+		`CREATE TABLE endless_results (user_id, generator, variant, difficulty, number, elapsed_ms)`,
+		`INSERT INTO endless_results VALUES (1, 1, 0, 1, 1, 'fast')`,
 	} {
 		if _, err := s.db.ExecContext(ctx, q); err != nil {
 			t.Fatalf("%s: %v", q, err)

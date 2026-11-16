@@ -32,13 +32,36 @@ func (s *Server) getEndless(w http.ResponseWriter, r *http.Request) {
 }
 
 // endlessPuzzleFor regenerates endless puzzle number of tier difficulty in
-// the series of generator version generator, all already validated.
-func (s *Server) endlessPuzzleFor(generator, difficulty int, number int64) puzzle.Puzzle {
+// the series of generator version generator and variant variant, all already
+// validated.
+func (s *Server) endlessPuzzleFor(generator, variant, difficulty int, number int64) puzzle.VariantPuzzle {
 	// ForEndless always yields 16 hex digits, which ParseWeekSeed accepts, and
 	// the arguments are in range, so generating cannot fail.
 	es, _ := puzzle.ParseWeekSeed(seed.ForEndless([]byte(s.deps.Config.ServerSecret)))
-	p, _ := puzzle.GenerateEndlessVersion(generator, es, difficulty, number)
+	p, _ := puzzle.GenerateEndlessVariant(generator, variant, es, difficulty, number)
 	return p
+}
+
+// variantMessage is the error for a variant out of range.
+var variantMessage = fmt.Sprintf("variant must be %d..%d", puzzle.VariantStandard, puzzle.Variants-1)
+
+func validVariant(v int) bool {
+	return v >= puzzle.VariantStandard && v < puzzle.Variants
+}
+
+// variantParam reads the optional ?variant= query parameter (0..3), 0 when
+// missing. On a bad value it writes a 400 and returns false.
+func variantParam(w http.ResponseWriter, r *http.Request) (int, bool) {
+	raw := r.URL.Query().Get("variant")
+	if raw == "" {
+		return puzzle.VariantStandard, true
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil || !validVariant(v) {
+		httpx.Error(w, http.StatusBadRequest, httpx.CodeBadRequest, variantMessage)
+		return 0, false
+	}
+	return v, true
 }
 
 // generatorParam reads the optional ?generator= query parameter (1 or 2). A
@@ -66,6 +89,7 @@ func (s *Server) generatorParam(w http.ResponseWriter, r *http.Request, def int)
 
 type endlessResultJSON struct {
 	Generator   int    `json:"generator"`
+	Variant     int    `json:"variant"`
 	Difficulty  int    `json:"difficulty"`
 	Number      int64  `json:"number"`
 	ElapsedMs   int64  `json:"elapsedMs"`
@@ -73,7 +97,7 @@ type endlessResultJSON struct {
 }
 
 func toEndlessResultJSON(r store.EndlessResult) endlessResultJSON {
-	return endlessResultJSON{Generator: r.Generator, Difficulty: r.Difficulty, Number: r.Number, ElapsedMs: r.ElapsedMs, CompletedAt: r.CompletedAt}
+	return endlessResultJSON{Generator: r.Generator, Variant: r.Variant, Difficulty: r.Difficulty, Number: r.Number, ElapsedMs: r.ElapsedMs, CompletedAt: r.CompletedAt}
 }
 
 type myEndlessResponse struct {
@@ -97,7 +121,9 @@ func (s *Server) getMyEndless(w http.ResponseWriter, r *http.Request) {
 // from zero.
 type endlessSubmitRequest struct {
 	// Generator is the series, 1 (Classic) when missing.
-	Generator   *int    `json:"generator"`
+	Generator *int `json:"generator"`
+	// Variant is the variant, 0 (standard) when missing.
+	Variant     *int    `json:"variant"`
 	Difficulty  *int    `json:"difficulty"`
 	Number      *int64  `json:"number"`
 	ElapsedMs   *int64  `json:"elapsedMs"`
@@ -138,9 +164,14 @@ func (s *Server) postEndlessResult(w http.ResponseWriter, r *http.Request) {
 	if req.Generator != nil {
 		gen = *req.Generator
 	}
+	variant := puzzle.VariantStandard
+	if req.Variant != nil {
+		variant = *req.Variant
+	}
 	result := store.EndlessResult{
 		UserID:      currentUser(r).ID,
 		Generator:   gen,
+		Variant:     variant,
 		Difficulty:  *req.Difficulty,
 		Number:      *req.Number,
 		ElapsedMs:   *req.ElapsedMs,
@@ -150,12 +181,12 @@ func (s *Server) postEndlessResult(w http.ResponseWriter, r *http.Request) {
 		result.ReplayStatus = replayMissing
 		result.AutoFlag = "No replay submitted"
 	} else {
-		p := s.endlessPuzzleFor(gen, *req.Difficulty, *req.Number)
+		p := s.endlessPuzzleFor(gen, variant, *req.Difficulty, *req.Number)
 		// Marshalling plain structs cannot fail. The result is never empty
 		// ("[]" at least), so the replay is stored even with no events.
 		events, _ := json.Marshal(append([]replay.Event{}, rep.Events...))
 		result.Events = string(events)
-		if err := replay.Check(rep, p.Givens, p.Solution, *req.ElapsedMs); err != nil {
+		if err := replay.CheckLayout(rep, p.Layout, p.Givens, p.Solution, *req.ElapsedMs); err != nil {
 			result.ReplayStatus = replayInvalid
 			result.ReplayError = err.Error()
 			result.AutoFlag = "Replay check failed: " + err.Error()
@@ -180,6 +211,9 @@ func validateEndlessResult(req endlessSubmitRequest) error {
 	if req.Generator != nil && !validGeneratorVersion(*req.Generator) {
 		return errors.New("generator must be 1 or 2")
 	}
+	if req.Variant != nil && !validVariant(*req.Variant) {
+		return errors.New(variantMessage)
+	}
 	if d := *req.Difficulty; d < minDifficulty || d > puzzle.Tiers {
 		return fmt.Errorf("difficulty must be %d..%d", minDifficulty, puzzle.Tiers)
 	}
@@ -199,6 +233,7 @@ func validateEndlessResult(req endlessSubmitRequest) error {
 
 type endlessLeaderboardResponse struct {
 	Generator    int               `json:"generator"`
+	Variant      int               `json:"variant"`
 	Difficulties []difficultyBoard `json:"difficulties"`
 }
 
@@ -221,22 +256,26 @@ func (s *Server) getEndlessLeaderboard(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := s.deps.Store.EndlessProgressAll(r.Context(), gen)
+	variant, ok := variantParam(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.deps.Store.EndlessProgressAll(r.Context(), gen, variant)
 	if err != nil {
 		httpx.Internal(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, buildEndlessLeaderboard(gen, rows))
+	httpx.WriteJSON(w, http.StatusOK, buildEndlessLeaderboard(gen, variant, rows))
 }
 
-// buildEndlessLeaderboard ranks each tier's players of one generator's series
-// by puzzles solved, most first.
-func buildEndlessLeaderboard(gen int, rows []store.EndlessProgress) endlessLeaderboardResponse {
+// buildEndlessLeaderboard ranks each tier's players of one generator and
+// variant's series by puzzles solved, most first.
+func buildEndlessLeaderboard(gen, variant int, rows []store.EndlessProgress) endlessLeaderboardResponse {
 	byTier := make([][]store.EndlessProgress, puzzle.Tiers+1)
 	for _, p := range rows {
 		byTier[p.Difficulty] = append(byTier[p.Difficulty], p)
 	}
-	out := endlessLeaderboardResponse{Generator: gen, Difficulties: make([]difficultyBoard, 0, puzzle.Tiers)}
+	out := endlessLeaderboardResponse{Generator: gen, Variant: variant, Difficulties: make([]difficultyBoard, 0, puzzle.Tiers)}
 	for d := minDifficulty; d <= puzzle.Tiers; d++ {
 		// rank orders by ascending score, so score by minus the count.
 		items := make([]scored, len(byTier[d]))
@@ -258,6 +297,7 @@ func buildEndlessLeaderboard(gen int, rows []store.EndlessProgress) endlessLeade
 
 type endlessPuzzleBoard struct {
 	Generator  int           `json:"generator"`
+	Variant    int           `json:"variant"`
 	Difficulty int           `json:"difficulty"`
 	Number     int64         `json:"number"`
 	Entries    []puzzleEntry `json:"entries"`
@@ -272,7 +312,11 @@ func (s *Server) getEndlessPuzzleLeaderboard(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	rows, err := s.deps.Store.EndlessPuzzleResults(r.Context(), gen, difficulty, number)
+	variant, ok := variantParam(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.deps.Store.EndlessPuzzleResults(r.Context(), gen, variant, difficulty, number)
 	if err != nil {
 		httpx.Internal(w, r, err)
 		return
@@ -282,7 +326,7 @@ func (s *Server) getEndlessPuzzleLeaderboard(w http.ResponseWriter, r *http.Requ
 		items[i] = scored{row.UserID, row.DisplayName, row.ElapsedMs, row.Flagged}
 	}
 	ranks := rank(items)
-	out := endlessPuzzleBoard{Generator: gen, Difficulty: difficulty, Number: number, Entries: make([]puzzleEntry, len(items))}
+	out := endlessPuzzleBoard{Generator: gen, Variant: variant, Difficulty: difficulty, Number: number, Entries: make([]puzzleEntry, len(items))}
 	for i, it := range items {
 		out.Entries[i] = puzzleEntry{Rank: ranks[i], UserID: userID(it.userID), DisplayName: it.name, ElapsedMs: it.ms, Suspicious: it.flagged}
 	}

@@ -1,12 +1,15 @@
-import { CELLS, colOf, peers, rowOf } from "../core/geometry.ts";
+import { CELLS, colOf, rowOf } from "../core/geometry.ts";
 import { COLOUR_NAMES } from "../game/colours.ts";
 import type { Game } from "../game/game.ts";
-import { cellLabel, cellView } from "./cell-view.ts";
+import { cellDecor, cellLabel, cellView, layoutClass } from "./cell-view.ts";
 import { type Child, Component, h } from "./dom.ts";
 
 /**
  * `<sudoku-board>`: the 9x9 grid for a {@link Game}, highlighting the selected
- * cell, its peers, cells with the same digit and conflicts. Set `game` and
+ * cell, its peers, cells with the same digit and conflicts. A variant's
+ * layout (the game's) is drawn too: shaded diagonals, jigsaw region borders,
+ * or killer cages with their sums (see {@link cellDecor}); peers and
+ * conflicts follow its units and cages. Set `game` and
  * `selected` (`-1` for none); clicking a cell fires `cell-select` with the
  * cell's index as `detail`.
  *
@@ -58,10 +61,11 @@ export class SudokuBoard extends Component {
   protected render(): Child {
     const game = this.#game;
     if (!game) return null;
-    const { board } = game;
+    const { board, layout } = game;
     const selected = this.#selected;
-    const conflicts = new Set(board.conflicts());
-    const selectedPeers = new Set(selected >= 0 ? peers[selected] : []);
+    const conflicts = new Set(board.conflicts(layout));
+    const wrongCages = new Set(board.wrongCages(layout));
+    const selectedPeers = new Set(selected >= 0 ? layout.peers[selected] : []);
     const selectedDigit = selected >= 0 ? board.get(selected) : 0;
     const cells: HTMLElement[] = [];
     for (let i = 0; i < CELLS; i++) {
@@ -70,9 +74,10 @@ export class SudokuBoard extends Component {
       const value = board.get(i);
       const view = cellView(game, i, this.#hideDigits);
       const colour = game.colours.get(i);
+      const decor = cellDecor(layout, i);
       cells.push(h("div", {
         class: [
-          "cell", `r${r}`, `c${c}`,
+          "cell", `r${r}`, `c${c}`, ...decor.classes,
           board.isGiven(i) && "given",
           selectedPeers.has(i) && "peer",
           selectedDigit !== 0 && value === selectedDigit && i !== selected && "same",
@@ -82,13 +87,14 @@ export class SudokuBoard extends Component {
           colour !== 0 && `colour-${colour}`,
         ],
         role: "gridcell",
-        "aria-label": `Row ${r + 1} column ${c + 1}, ${cellLabel(view)}${colour !== 0 ? `, ${COLOUR_NAMES[colour]}` : ""}`,
+        "aria-label": `Row ${r + 1} column ${c + 1}, ${decor.label ? `${decor.label}, ` : ""}${cellLabel(view)}${colour !== 0 ? `, ${COLOUR_NAMES[colour]}` : ""}`,
         "data-index": i,
       },
+      decor.sum !== null && h("span", { class: ["cage-sum", wrongCages.has(layout.cageOf[i]!) && "wrong"], "aria-hidden": "true" }, String(decor.sum)),
       view.kind === "notes" ? h("div", { class: "notes" }, view.marks.map((m) => h("span", null, m))) : view.text,
       ));
     }
-    return h("div", { class: ["board", game.isComplete && "solved"], role: "grid", "aria-label": "Sudoku board" }, cells);
+    return h("div", { class: ["board", layoutClass(layout), game.isComplete && "solved"], role: "grid", "aria-label": "Sudoku board" }, cells);
   }
 }
 

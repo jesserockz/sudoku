@@ -3,6 +3,7 @@ import {
   decodeDayResult, decodeEndlessInfo, decodeGeneratorVersion, decodeEndlessResult, decodeGameResult, decodeMe, decodeOidcConfig, decodeStreak, decodeWeek,
 } from "../api/models.ts";
 import type { SavedGame } from "../game/game.ts";
+import { VARIANT_DIAGONAL, VARIANT_STANDARD, isVariant } from "../core/layout.ts";
 import { decodeReplayEvent } from "../game/replay.ts";
 import { GENERATOR_CLASSIC } from "../generator/versions.ts";
 import { type KeyValueStore, StoredValue, bool, list, num, obj, optional, record, str } from "./store.ts";
@@ -49,27 +50,38 @@ export const gameKey = (generator: number, date: string, level: number): string 
 /** The date of a {@link gameKey}. */
 export const gameKeyDate = (key: string): string => key.split("/").at(-2)!;
 /**
- * Where an endless game is kept: its generator's series, difficulty and number. Classic (generator 1) keeps
- * the plain `difficulty/number` it always had, so games and queued results from before the series existed
- * still match; other series are prefixed `g<generator>/`.
+ * Where an endless game is kept: its generator's series, difficulty and number, and its variant. Classic
+ * (generator 1) keeps the plain `difficulty/number` it always had, so games and queued results from before the
+ * series existed still match; other series are prefixed `g<generator>/`. Standard Sudoku (variant 0) keeps
+ * those keys as they are; the variants prefix them with `v<variant>/` (`v3/2/5` is Classic Killer Medium #5,
+ * `v3/g2/2/5` the Graded one).
  */
-export const endlessGameKey = (generator: number, difficulty: number, number: number): string =>
-  generator === GENERATOR_CLASSIC ? `${difficulty}/${number}` : `g${generator}/${difficulty}/${number}`;
+export const endlessGameKey = (generator: number, difficulty: number, number: number, variant: number = VARIANT_STANDARD): string =>
+  (variant === VARIANT_STANDARD ? "" : `v${variant}/`) +
+  (generator === GENERATOR_CLASSIC ? `${difficulty}/${number}` : `g${generator}/${difficulty}/${number}`);
 
 /** The inverse of {@link endlessGameKey}. */
-export function parseEndlessGameKey(key: string): { generator: number; difficulty: number; number: number } {
+export function parseEndlessGameKey(key: string): { generator: number; variant: number; difficulty: number; number: number } {
   const parts = key.split("/");
+  const variant = parts[0]!.startsWith("v") ? Number(parts.shift()!.slice(1)) : VARIANT_STANDARD;
   const generator = parts.length === 3 ? Number(parts.shift()!.slice(1)) : GENERATOR_CLASSIC;
   const [difficulty, number] = parts.map(Number) as [number, number];
-  return { generator, difficulty, number };
+  return { generator, variant, difficulty, number };
 }
 
 /** The home page's tabs. */
-export type HomeTab = "daily" | "endless";
+export type HomeTab = "daily" | "endless" | "variants";
 
 const decodeHomeTab = (json: unknown): HomeTab => {
-  if (json !== "daily" && json !== "endless") throw new TypeError(`unknown tab: ${String(json)}`);
+  if (json !== "daily" && json !== "endless" && json !== "variants") throw new TypeError(`unknown tab: ${String(json)}`);
   return json;
+};
+
+/** A variant the Variants tab can show: Diagonal, Jigsaw or Killer (not standard Sudoku, which is the Endless tab's). */
+export const decodeVariantPick = (json: unknown): number => {
+  const v = num(json);
+  if (!isVariant(v) || v < VARIANT_DIAGONAL) throw new TypeError(`not a variant: ${v}`);
+  return v;
 };
 
 export function decodeSavedGame(json: unknown): SavedGame {
@@ -141,6 +153,10 @@ export class AppStorage {
    * device, with a server or a seed. Only used while that generator is enabled.
    */
   readonly generator: StoredValue<number>;
+  /** The variant the player last picked on the Variants tab, on this device, with a server or a seed. */
+  readonly variant: StoredValue<number>;
+  /** Set once the variants explainer has popped up on this device, so it only does so once. */
+  readonly variantsHelpSeen: StoredValue<boolean>;
 
   constructor(store: KeyValueStore) {
     this.settings = new StoredValue(store, "settings", decodeSettings);
@@ -159,6 +175,8 @@ export class AppStorage {
     this.homeTab = new StoredValue(store, "home-tab", decodeHomeTab);
     this.endlessHelpSeen = new StoredValue(store, "endless-help-seen", bool);
     this.generator = new StoredValue(store, "generator", decodeGeneratorVersion);
+    this.variant = new StoredValue(store, "variant", decodeVariantPick);
+    this.variantsHelpSeen = new StoredValue(store, "variants-help-seen", bool);
   }
 
   /** Forgets everything tied to the signed-in user, keeping the server URL. */

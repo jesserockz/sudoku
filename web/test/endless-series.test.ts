@@ -46,8 +46,8 @@ function solveGame(p: { givens: string; solution: string }, ms = 60_000): Game {
 test("Classic keeps its old game key; other series are prefixed, and both parse back", () => {
   assert.equal(endlessGameKey(C, 2, 7), "2/7");
   assert.equal(endlessGameKey(G, 2, 7), "g2/2/7");
-  assert.deepEqual(parseEndlessGameKey("2/7"), { generator: C, difficulty: 2, number: 7 });
-  assert.deepEqual(parseEndlessGameKey("g2/2/7"), { generator: G, difficulty: 2, number: 7 });
+  assert.deepEqual(parseEndlessGameKey("2/7"), { generator: C, variant: 0, difficulty: 2, number: 7 });
+  assert.deepEqual(parseEndlessGameKey("g2/2/7"), { generator: G, variant: 0, difficulty: 2, number: 7 });
   assert.equal(endlessKey({ generator: G, difficulty: 4, number: 12, elapsedMs: 1, completedAt: "x" }), "g2/4/12");
   assert.equal(endlessKey({ generator: C, difficulty: 4, number: 12, elapsedMs: 1, completedAt: "x" }), "4/12");
 });
@@ -312,7 +312,7 @@ test("the Endless tab plays the series of the enabled generator, and follows the
 
   // Resuming it works, and it is still a Graded game.
   c.openEndless(ref(G, 1, 2));
-  assert.deepEqual(c.screen, { kind: "endless-play", generator: G, difficulty: 1, number: 2 });
+  assert.deepEqual(c.screen, { kind: "endless-play", generator: G, variant: 0, difficulty: 1, number: 2 });
   assert.ok(c.gameOf(ref(G, 1, 2)));
   assert.equal(c.puzzleOf(ref(G, 1, 2))!.givens, generateEndlessV2(seed, 1, 2).puzzle.givens);
 
@@ -362,11 +362,11 @@ test("the leaderboards are per series: the current one by default, any with an e
   });
   const { c, server } = e;
   c.openEndlessScores(1);
-  assert.deepEqual(c.screen, { kind: "endless-scores", generator: G, difficulty: 1, number: null });
+  assert.deepEqual(c.screen, { kind: "endless-scores", generator: G, variant: 0, difficulty: 1, number: null });
   await until(() => c.endlessProgress !== null);
   assert.equal(c.endlessProgress!.generator, G);
   c.openEndlessScores(1, 3, C);
-  assert.deepEqual(c.screen, { kind: "endless-scores", generator: C, difficulty: 1, number: 3 });
+  assert.deepEqual(c.screen, { kind: "endless-scores", generator: C, variant: 0, difficulty: 1, number: 3 });
   await until(() => c.endlessBoard !== null);
   assert.equal(c.endlessBoard!.generator, C);
   assert.deepEqual(c.endlessBoard!.entries.map((x) => x.elapsedMs), [6000]);
@@ -376,7 +376,7 @@ test("the leaderboards are per series: the current one by default, any with an e
 
   // "See scores" after solving goes to the puzzle's own series, whatever the tab plays now.
   c.openScoresFor(ref(C, 2, 4));
-  assert.deepEqual(c.screen, { kind: "endless-scores", generator: C, difficulty: 2, number: 4 });
+  assert.deepEqual(c.screen, { kind: "endless-scores", generator: C, variant: 0, difficulty: 2, number: 4 });
   // A failed leaderboard is retried by the next sync, in its own series.
   server.endlessBoardStatus = 500;
   c.openEndlessScores(2, 4, C);
@@ -390,7 +390,7 @@ test("the leaderboards are per series: the current one by default, any with an e
   // Opening a puzzle the server already has for this series shows its scores in that series.
   await syncNow(c);
   c.openEndless(ref(G, 1, 3));
-  assert.deepEqual(c.screen, { kind: "endless-scores", generator: G, difficulty: 1, number: 3 });
+  assert.deepEqual(c.screen, { kind: "endless-scores", generator: G, variant: 0, difficulty: 1, number: 3 });
 });
 
 test("without a week the tab plays Classic", async () => {

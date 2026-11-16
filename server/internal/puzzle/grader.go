@@ -8,7 +8,8 @@ import (
 
 // A deterministic, human-style technique grader: a line-for-line port of the
 // web client's web/src/generator/grader.ts (see there for the full
-// description). The shared fixture testdata/generator-v2.json pins both.
+// description). The shared fixtures testdata/generator-v2.json and
+// testdata/variants.json pin both.
 //
 // It solves a puzzle one step at a time. Candidates are 9-bit masks per cell
 // (bit d-1 set when digit d is still possible). Each step tries the
@@ -20,6 +21,11 @@ import (
 // cells of a unit and the peers of a cell ascend by cell index; digits are
 // scanned 1..9 (bit 0..8) and cells 0..80; choosing k of a list enumerates
 // combinations in lexicographic order of list position.
+//
+// The grid's rules come from a Layout (standard for GradeCells): its units
+// are the houses, its peers (unit and cage mates) are the cells a cell sees.
+// Diagonals and jigsaw regions are houses like boxes; fish stay row and
+// column based. Killer layouts add the cage techniques (KillerTechniques).
 //
 // The grid must be a valid puzzle (a solution exists).
 
@@ -51,6 +57,54 @@ var Techniques = [...]Technique{
 	{"xyChain", 6},
 }
 
+// CageTechniques are the killer techniques: cage combination (2), the 45 rule
+// over one house (3), cage pointing (5) and the 45 rule over 2 or 3 adjacent
+// rows or columns (6). Their ids follow Techniques' (16..19).
+var CageTechniques = [...]Technique{
+	{"cageCombination", 2},
+	{"rule45", 3},
+	{"cagePointing", 5},
+	{"rule45Lines", 6},
+}
+
+// killerOrder is the technique ids a killer grid tries, in order.
+var killerOrder = []int{0, 1, 16, 2, 3, 17, 18, 4, 5, 6, 7, 8, 9, 19, 10, 11, 12, 13, 14, 15}
+
+var standardOrder = func() []int {
+	o := make([]int, len(Techniques))
+	for i := range o {
+		o[i] = i
+	}
+	return o
+}()
+
+// KillerTechniques are the techniques of a killer grid in the order they are
+// tried: hidden single, naked single, cage combination, pointing, claiming,
+// 45 rule, cage pointing, the subsets, the 45 rule over lines, then the rest
+// of Techniques in order. A killer grid's LayoutGrade.Counts is indexed by
+// it.
+var KillerTechniques = func() []Technique {
+	all := append(Techniques[:], CageTechniques[:]...)
+	t := make([]Technique, len(killerOrder))
+	for i, id := range killerOrder {
+		t[i] = all[id]
+	}
+	return t
+}()
+
+// TechniquesFor is the techniques of a layout in the order they are tried:
+// KillerTechniques with cages, else Techniques.
+func TechniquesFor(l *Layout) []Technique {
+	if len(l.Cages) > 0 {
+		return KillerTechniques
+	}
+	return Techniques[:]
+}
+
+// MaxRule45Cells is the most empty cells in a set of innies or outies the 45
+// rule works on.
+const MaxRule45Cells = 4
+
 // StuckLevel is the level reported for a puzzle the grader cannot finish.
 const StuckLevel = 7
 
@@ -69,32 +123,101 @@ type Grade struct {
 	Counts [len(Techniques)]int
 }
 
-var (
-	units  [27][9]int
-	member [27][cells]bool
-	sees   [cells][cells]bool
-)
+// maxLinks is the most units a cell is in (a diagonal's centre).
+const maxLinks = 5
 
-func init() {
-	for i := range 9 {
-		for k := range 9 {
-			units[i][k] = i*9 + k
-			units[9+i][k] = k*9 + i
-			units[18+i][k] = (i/3*3+k/3)*9 + i%3*3 + k%3
+// sumSet is a cell set of the 45 rule with a known sum: innies or outies.
+type sumSet struct {
+	cells []int
+	sum   int
+}
+
+// tables are a layout's lookup tables for the grader.
+type tables struct {
+	member [][cells]bool
+	sees   *[cells][cells]bool
+	// overlaps lists, for each unit from 18 on, the other units from 18 on
+	// that share at least two cells with it, ascending.
+	overlaps [][]int
+	// rule45 holds, for each of units 0..26 of a killer layout, its innies
+	// then its outies; rule45Lines the same for 2 then 3 adjacent rows (from
+	// the top), then 2 then 3 adjacent columns.
+	rule45, rule45Lines [][]sumSet
+	order               []int
+}
+
+func buildTables(l *Layout, sees *[cells][cells]bool) *tables {
+	t := &tables{sees: sees, member: make([][cells]bool, len(l.units)), overlaps: make([][]int, len(l.units))}
+	for u := range l.units {
+		for _, c := range l.units[u] {
+			t.member[u][c] = true
 		}
 	}
-	for u := range units {
-		for _, c := range units[u] {
-			member[u][c] = true
+	for u := 18; u < len(l.units); u++ {
+		for v := 18; v < len(l.units); v++ {
+			n := 0
+			for _, c := range l.units[u] {
+				if t.member[v][c] {
+					n++
+				}
+			}
+			if v != u && n >= 2 {
+				t.overlaps[u] = append(t.overlaps[u], v)
+			}
 		}
 	}
-	// Not built from peers: init order across files is by file name, so peers
-	// (solver.go) is not ready yet.
-	for a := range cells {
-		for b := range cells {
-			sees[a][b] = a != b && (rowOf(a) == rowOf(b) || colOf(a) == colOf(b) || boxOf(a) == boxOf(b))
+	t.order = standardOrder
+	if len(l.Cages) == 0 {
+		return t
+	}
+	t.order = killerOrder
+	sets := func(units [][9]int, total int) []sumSet {
+		var inside [cells]bool
+		for _, u := range units {
+			for _, c := range u {
+				inside[c] = true
+			}
+		}
+		whole, partial := 0, 0
+		var innies, outies []int
+		for _, cage := range l.Cages {
+			n := 0
+			for _, c := range cage.Cells {
+				if inside[c] {
+					n++
+				}
+			}
+			if n == len(cage.Cells) {
+				whole += cage.Sum
+			} else if n > 0 {
+				partial += cage.Sum
+				for _, c := range cage.Cells {
+					if inside[c] {
+						innies = append(innies, c)
+					} else {
+						outies = append(outies, c)
+					}
+				}
+			}
+		}
+		if len(innies) == 0 {
+			return nil
+		}
+		slices.Sort(innies)
+		slices.Sort(outies)
+		return []sumSet{{innies, total - whole}, {outies, whole + partial - total}}
+	}
+	for u := range 27 {
+		t.rule45 = append(t.rule45, sets(l.units[u:u+1], 45))
+	}
+	for _, first := range []int{0, 9} {
+		for span := 2; span <= 3; span++ {
+			for u := first; u+span <= first+9; u++ {
+				t.rule45Lines = append(t.rule45Lines, sets(l.units[u:u+span], 45*span))
+			}
 		}
 	}
+	return t
 }
 
 func popcount(x int) int { return bits.OnesCount(uint(x)) }
@@ -107,7 +230,11 @@ func one(x int) bool { return x != 0 && x&(x-1) == 0 }
 
 // grader steps through the grading of one grid; GradeCells runs it to the end.
 type grader struct {
-	grid [cells]int
+	l     *Layout
+	t     *tables
+	units [][9]int
+	sees  *[cells][cells]bool
+	grid  [cells]int
 	// cand holds candidate masks; 0 for a filled cell.
 	cand [cells]int
 	// placed is how many cells are filled.
@@ -115,20 +242,23 @@ type grader struct {
 
 	list, pick []int
 	pos        [9]int
-	links      [cells * 3]int
+	links      [cells * maxLinks]int
 	linkCount  [cells]int
 	colour     [cells]int
 	stamp      [cells]int
 	queue      [cells]int
 	visited    [cells]bool
+
+	sumList       []int
+	found, assign [cells]int
+	lo, hi        [cells + 1]int
 }
 
-func newGrader(grid []int) (*grader, error) {
+func newGrader(grid []int, l *Layout) (*grader, error) {
 	if len(grid) != cells {
 		return nil, fmt.Errorf("expected %d cells, got %d", cells, len(grid))
 	}
-	g := &grader{}
-	var used [27]int
+	g := &grader{l: l, t: l.t, units: l.units, sees: l.t.sees}
 	for i, d := range grid {
 		if d < 0 || d > 9 {
 			return nil, fmt.Errorf("cell value out of range at %d: %d", i, d)
@@ -138,24 +268,27 @@ func newGrader(grid []int) (*grader, error) {
 		}
 		g.grid[i] = d
 		g.placed++
-		bit := 1 << (d - 1)
-		used[rowOf(i)] |= bit
-		used[9+colOf(i)] |= bit
-		used[18+boxOf(i)] |= bit
 	}
 	for i := range cells {
-		if g.grid[i] == 0 {
-			g.cand[i] = all &^ (used[rowOf(i)] | used[9+colOf(i)] | used[18+boxOf(i)])
+		if g.grid[i] != 0 {
+			continue
 		}
+		used := 0
+		for _, p := range l.peers[i] {
+			if g.grid[p] != 0 {
+				used |= 1 << (g.grid[p] - 1)
+			}
+		}
+		g.cand[i] = all &^ used
 	}
 	return g, nil
 }
 
-// step applies the first available step; it returns the technique's index, or
-// -1 when none applies.
+// step applies the first available step; it returns the technique's index
+// in TechniquesFor the layout, or -1 when none applies.
 func (g *grader) step() int {
-	for t := range Techniques {
-		if g.run(t) {
+	for t, id := range g.t.order {
+		if g.run(id) {
 			return t
 		}
 	}
@@ -194,8 +327,16 @@ func (g *grader) run(t int) bool {
 		return g.xyzWing()
 	case 14:
 		return g.simpleColouring()
-	default:
+	case 15:
 		return g.xyChain()
+	case 16:
+		return g.cageCombination()
+	case 17:
+		return g.rule45(g.t.rule45)
+	case 18:
+		return g.cagePointing()
+	default:
+		return g.rule45(g.t.rule45Lines)
 	}
 }
 
@@ -203,7 +344,7 @@ func (g *grader) place(i, bit int) {
 	g.grid[i] = lowBit(bit) + 1
 	g.cand[i] = 0
 	g.placed++
-	for _, j := range peers[i] {
+	for _, j := range g.l.peers[i] {
 		g.cand[j] &^= bit
 	}
 }
@@ -221,22 +362,22 @@ func (g *grader) elim(i, mask int) bool {
 // unit except; true if any went.
 func (g *grader) elimOutside(from, except, bit int) bool {
 	changed := false
-	for _, c := range units[from] {
-		if !member[except][c] && g.elim(c, bit) {
+	for _, c := range g.units[from] {
+		if !g.t.member[except][c] && g.elim(c, bit) {
 			changed = true
 		}
 	}
 	return changed
 }
 
-// hiddenSingle: units 0..26, digits 1..9; a digit with exactly one place in a
-// unit goes there.
+// hiddenSingle: every unit in order, digits 1..9; a digit with exactly one
+// place in a unit goes there.
 func (g *grader) hiddenSingle() bool {
-	for u := range units {
+	for u := range g.units {
 		for d := range 9 {
 			bit := 1 << d
 			at, n := -1, 0
-			for _, c := range units[u] {
+			for _, c := range g.units[u] {
 				if g.cand[c]&bit != 0 {
 					at = c
 					n++
@@ -262,24 +403,41 @@ func (g *grader) nakedSingle() bool {
 	return false
 }
 
-// pointing: boxes 0..8, digits 1..9; when a digit's places in a box share a
-// row (tried first) or a column, it goes from the rest of that line.
+// pointing: units from 18 on (regions, then diagonals), digits 1..9; when a
+// digit's places in the unit share a row (tried first) or a column, it goes
+// from the rest of that line. Then, in ascending order, any other unit from
+// 18 on that overlaps this one in two or more cells and holds all those places
+// loses the digit outside this unit.
 func (g *grader) pointing() bool {
-	for b := range 9 {
+	for u := 18; u < len(g.units); u++ {
 		for d := range 9 {
 			bit := 1 << d
 			rowMask, colMask := 0, 0
-			for _, c := range units[18+b] {
+			for _, c := range g.units[u] {
 				if g.cand[c]&bit != 0 {
 					rowMask |= 1 << rowOf(c)
 					colMask |= 1 << colOf(c)
 				}
 			}
-			if one(rowMask) && g.elimOutside(lowBit(rowMask), 18+b, bit) {
+			if one(rowMask) && g.elimOutside(lowBit(rowMask), u, bit) {
 				return true
 			}
-			if one(colMask) && g.elimOutside(9+lowBit(colMask), 18+b, bit) {
+			if one(colMask) && g.elimOutside(9+lowBit(colMask), u, bit) {
 				return true
+			}
+			if rowMask == 0 {
+				continue
+			}
+			for _, v := range g.t.overlaps[u] {
+				inside := true
+				for _, c := range g.units[u] {
+					if g.cand[c]&bit != 0 && !g.t.member[v][c] {
+						inside = false
+					}
+				}
+				if inside && g.elimOutside(v, u, bit) {
+					return true
+				}
 			}
 		}
 	}
@@ -287,16 +445,16 @@ func (g *grader) pointing() bool {
 }
 
 // claiming (box-line reduction): rows 0..8 then columns 0..8, digits 1..9;
-// when a digit's places in a line share a box, it goes from the rest of that
-// box.
+// when a digit's places in a line share a region (box or jigsaw region), it
+// goes from the rest of that region.
 func (g *grader) claiming() bool {
 	for u := range 18 {
 		for d := range 9 {
 			bit := 1 << d
 			boxMask := 0
-			for _, c := range units[u] {
+			for _, c := range g.units[u] {
 				if g.cand[c]&bit != 0 {
-					boxMask |= 1 << boxOf(c)
+					boxMask |= 1 << g.l.Regions[c]
 				}
 			}
 			if one(boxMask) && g.elimOutside(18+lowBit(boxMask), u, bit) {
@@ -307,14 +465,14 @@ func (g *grader) claiming() bool {
 	return false
 }
 
-// nakedSubset of size k (pair, triple, quad): units 0..26; among the cells
+// nakedSubset of size k (pair, triple, quad): every unit; among the cells
 // with 2..k candidates, the first combination of k cells whose candidates
 // together are exactly k digits removes those digits from the unit's other
 // cells.
 func (g *grader) nakedSubset(k int) bool {
-	for u := range units {
+	for u := range g.units {
 		g.list = g.list[:0]
-		for _, c := range units[u] {
+		for _, c := range g.units[u] {
 			if n := popcount(g.cand[c]); n >= 2 && n <= k {
 				g.list = append(g.list, c)
 			}
@@ -332,7 +490,7 @@ func (g *grader) chooseNaked(u, k, start, depth, union int) bool {
 	}
 	if depth == k {
 		changed := false
-		for _, c := range units[u] {
+		for _, c := range g.units[u] {
 			if !slices.Contains(g.pick, c) && g.elim(c, union) {
 				changed = true
 			}
@@ -349,13 +507,13 @@ func (g *grader) chooseNaked(u, k, start, depth, union int) bool {
 	return false
 }
 
-// hiddenSubset of size k: units 0..26; among the digits with 2..k places in
+// hiddenSubset of size k: every unit; among the digits with 2..k places in
 // the unit, the first combination of k digits whose places together are
 // exactly k cells strips every other candidate from those cells.
 func (g *grader) hiddenSubset(k int) bool {
-	for u := range units {
+	for u := range g.units {
 		g.pos = [9]int{}
-		for p, c := range units[u] {
+		for p, c := range g.units[u] {
 			for m := g.cand[c]; m != 0; m &= m - 1 {
 				g.pos[lowBit(m)] |= 1 << p
 			}
@@ -380,7 +538,7 @@ func (g *grader) chooseHidden(u, k, start, depth, union, digits int) bool {
 	if depth == k {
 		changed := false
 		for p := range 9 {
-			if union&(1<<p) != 0 && g.elim(units[u][p], all&^digits) {
+			if union&(1<<p) != 0 && g.elim(g.units[u][p], all&^digits) {
 				changed = true
 			}
 		}
@@ -407,7 +565,7 @@ func (g *grader) fish(n int) bool {
 			g.list = g.list[:0]
 			for b := range 9 {
 				m := 0
-				for p, c := range units[o*9+b] {
+				for p, c := range g.units[o*9+b] {
 					if g.cand[c]&bit != 0 {
 						m |= 1 << p
 					}
@@ -435,7 +593,7 @@ func (g *grader) chooseFish(o, bit, n, start, depth, union, bases int) bool {
 			if union&(1<<p) == 0 {
 				continue
 			}
-			for _, c := range units[(1-o)*9+p] {
+			for _, c := range g.units[(1-o)*9+p] {
 				base := colOf(c)
 				if o == 0 {
 					base = rowOf(c)
@@ -466,14 +624,14 @@ func (g *grader) xyWing() bool {
 		if popcount(pivot) != 2 {
 			continue
 		}
-		for _, w1 := range peers[p] {
+		for _, w1 := range g.l.peers[p] {
 			c1 := g.cand[w1]
 			if popcount(c1) != 2 || !one(c1&pivot) {
 				continue
 			}
 			z := c1 &^ pivot
 			want := pivot&^c1 | z
-			for _, w2 := range peers[p] {
+			for _, w2 := range g.l.peers[p] {
 				if g.cand[w2] != want {
 					continue
 				}
@@ -491,7 +649,7 @@ func (g *grader) xyWing() bool {
 func (g *grader) elimSeeing(a, b, bit int) bool {
 	changed := false
 	for t := range cells {
-		if sees[a][t] && sees[b][t] && g.elim(t, bit) {
+		if g.sees[a][t] && g.sees[b][t] && g.elim(t, bit) {
 			changed = true
 		}
 	}
@@ -507,12 +665,12 @@ func (g *grader) xyzWing() bool {
 		if popcount(pivot) != 3 {
 			continue
 		}
-		for _, w1 := range peers[p] {
+		for _, w1 := range g.l.peers[p] {
 			c1 := g.cand[w1]
 			if popcount(c1) != 2 || c1&^pivot != 0 {
 				continue
 			}
-			for _, w2 := range peers[p] {
+			for _, w2 := range g.l.peers[p] {
 				c2 := g.cand[w2]
 				if w2 <= w1 || popcount(c2) != 2 || c2&^pivot != 0 || c2 == c1 {
 					continue
@@ -520,7 +678,7 @@ func (g *grader) xyzWing() bool {
 				z := c1 & c2
 				changed := false
 				for t := range cells {
-					if sees[p][t] && sees[w1][t] && sees[w2][t] && g.elim(t, z) {
+					if g.sees[p][t] && g.sees[w1][t] && g.sees[w2][t] && g.elim(t, z) {
 						changed = true
 					}
 				}
@@ -548,9 +706,9 @@ func (g *grader) simpleColouring() bool {
 			g.colour[i] = -1
 		}
 		g.stamp = [cells]int{}
-		for u := range units {
+		for u := range g.units {
 			a, b, n := -1, -1, 0
-			for _, c := range units[u] {
+			for _, c := range g.units[u] {
 				if g.cand[c]&bit == 0 {
 					continue
 				}
@@ -585,11 +743,11 @@ func (g *grader) simpleColouring() bool {
 func (g *grader) link(a, b int) {
 	n := g.linkCount[a]
 	for i := range n {
-		if g.links[a*3+i] == b {
+		if g.links[a*maxLinks+i] == b {
 			return
 		}
 	}
-	g.links[a*3+n] = b
+	g.links[a*maxLinks+n] = b
 	g.linkCount[a] = n + 1
 }
 
@@ -605,7 +763,7 @@ func (g *grader) colourGroup(s int) int {
 		v := g.queue[head]
 		head++
 		for i := range g.linkCount[v] {
-			w := g.links[v*3+i]
+			w := g.links[v*maxLinks+i]
 			if g.colour[w] != -1 {
 				continue
 			}
@@ -640,7 +798,7 @@ func (g *grader) wrap(size, bit int) bool {
 func (g *grader) seesItself(size, colour int) bool {
 	for i := range size {
 		for j := i + 1; j < size; j++ {
-			if g.colour[g.queue[i]] == colour && g.colour[g.queue[j]] == colour && sees[g.queue[i]][g.queue[j]] {
+			if g.colour[g.queue[i]] == colour && g.colour[g.queue[j]] == colour && g.sees[g.queue[i]][g.queue[j]] {
 				return true
 			}
 		}
@@ -657,7 +815,7 @@ func (g *grader) trap(s, size, bit int) bool {
 		}
 		seen := 0
 		for i := range size {
-			if sees[t][g.queue[i]] {
+			if g.sees[t][g.queue[i]] {
 				seen |= 1 << g.colour[g.queue[i]]
 			}
 		}
@@ -694,7 +852,7 @@ func (g *grader) xyChain() bool {
 }
 
 func (g *grader) extend(start, x, cur, carry, length int) bool {
-	for _, next := range peers[cur] {
+	for _, next := range g.l.peers[cur] {
 		cn := g.cand[next]
 		if g.visited[next] || popcount(cn) != 2 || cn&carry == 0 {
 			continue
@@ -715,15 +873,190 @@ func (g *grader) extend(start, x, cur, carry, length int) bool {
 	return false
 }
 
-// GradeCells grades a grid (81 values, 0 = empty): it solves it with the
-// grader until done or stuck. It errors on a grid of the wrong size or with
-// values outside 0..9.
-func GradeCells(grid []int) (Grade, error) {
-	g, err := newGrader(grid)
-	if err != nil {
-		return Grade{}, err
+// cageCombination: cages in order (by lowest cell). The cage's empty cells
+// keep only the digits that appear in some way of filling them: one candidate
+// per cell, no repeat between cells that see each other, adding up to the
+// cage's sum less its filled digits. The first cage that loses a candidate is
+// the step.
+func (g *grader) cageCombination() bool {
+	for _, cage := range g.l.Cages {
+		if g.restrictSum(cage.Cells, cage.Sum, cells) {
+			return true
+		}
 	}
-	var res Grade
+	return false
+}
+
+// rule45 tries the 45 rule on groups (innies then outies of each group of
+// houses), each restricted like a cage (repeats allowed only between cells
+// that do not see each other) when 1 to MaxRule45Cells of its cells are
+// empty. The first set that loses a candidate is the step.
+func (g *grader) rule45(groups [][]sumSet) bool {
+	for _, sets := range groups {
+		for _, set := range sets {
+			if g.restrictSum(set.cells, set.sum, MaxRule45Cells) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// cagePointing: cages in order, digits 1..9. A digit every filling of the
+// cage must use (no set of distinct digits without it, drawn from the empty
+// cells' candidates, adds up to the rest of the sum) whose places in the cage
+// share a row, column or box (tried in that order) goes from the rest of that
+// unit.
+func (g *grader) cagePointing() bool {
+	for k, cage := range g.l.Cages {
+		rest, used, avail, n := cage.Sum, 0, 0, 0
+		for _, c := range cage.Cells {
+			if g.grid[c] != 0 {
+				rest -= g.grid[c]
+				used |= 1 << (g.grid[c] - 1)
+			} else {
+				n++
+				avail |= g.cand[c]
+			}
+		}
+		avail &^= used
+		for m := avail; m != 0; m &= m - 1 {
+			bit := m & -m
+			if combos[(n*46+rest)*512+avail&^bit] != 0 {
+				continue
+			}
+			rowMask, colMask, boxMask := 0, 0, 0
+			for _, c := range cage.Cells {
+				if g.cand[c]&bit == 0 {
+					continue
+				}
+				rowMask |= 1 << rowOf(c)
+				colMask |= 1 << colOf(c)
+				boxMask |= 1 << g.l.Regions[c]
+			}
+			if one(rowMask) && g.elimOutsideCage(lowBit(rowMask), k, bit) {
+				return true
+			}
+			if one(colMask) && g.elimOutsideCage(9+lowBit(colMask), k, bit) {
+				return true
+			}
+			if one(boxMask) && g.elimOutsideCage(18+lowBit(boxMask), k, bit) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// elimOutsideCage removes digit bit from the cells of unit u outside cage k;
+// true if any went.
+func (g *grader) elimOutsideCage(u, k, bit int) bool {
+	changed := false
+	for _, c := range g.units[u] {
+		if g.l.cageOf[c] != k && g.elim(c, bit) {
+			changed = true
+		}
+	}
+	return changed
+}
+
+// restrictSum restricts the empty cells among cs to the digits of some
+// filling that adds up to sum less the filled cells' digits. It does nothing
+// when no cell, or more than maxEmpty, is empty; true if a candidate went.
+func (g *grader) restrictSum(cs []int, sum, maxEmpty int) bool {
+	g.sumList = g.sumList[:0]
+	rest := sum
+	for _, c := range cs {
+		if g.grid[c] != 0 {
+			rest -= g.grid[c]
+		} else {
+			g.sumList = append(g.sumList, c)
+		}
+	}
+	n := len(g.sumList)
+	if n == 0 || n > maxEmpty {
+		return false
+	}
+	// Suffix bounds for pruning: the least and most the cells from k on can
+	// add up to.
+	g.lo[n], g.hi[n] = 0, 0
+	for k := n - 1; k >= 0; k-- {
+		m := g.cand[g.sumList[k]]
+		g.lo[k] = g.lo[k+1] + lowBit(m) + 1
+		g.hi[k] = g.hi[k+1] + bits.Len(uint(m))
+		g.found[k] = 0
+	}
+	g.fill(0, rest)
+	changed := false
+	for k := range n {
+		if g.elim(g.sumList[k], all&^g.found[k]) {
+			changed = true
+		}
+	}
+	return changed
+}
+
+// fill walks the fillings of sumList depth first from position k with rest
+// left to add; true once every candidate is known to be used.
+func (g *grader) fill(k, rest int) bool {
+	n := len(g.sumList)
+	if k == n {
+		done := true
+		for j := range n {
+			g.found[j] |= 1 << (g.assign[j] - 1)
+			if g.found[j] != g.cand[g.sumList[j]] {
+				done = false
+			}
+		}
+		return done
+	}
+	c := g.sumList[k]
+	for m := g.cand[c]; m != 0; m &= m - 1 {
+		d := lowBit(m) + 1
+		left := rest - d
+		if left < g.lo[k+1] || left > g.hi[k+1] {
+			continue
+		}
+		clash := false
+		for j := range k {
+			if g.assign[j] == d && g.sees[g.sumList[j]][c] {
+				clash = true
+			}
+		}
+		if clash {
+			continue
+		}
+		g.assign[k] = d
+		if g.fill(k+1, left) {
+			return true
+		}
+	}
+	return false
+}
+
+// LayoutGrade is the result of grading a grid under a layout: Grade with
+// Counts indexed by TechniquesFor the layout.
+type LayoutGrade struct {
+	Solved bool
+	// Level is the hardest level used; StuckLevel if not solved, 0 if the grid
+	// was already complete.
+	Level int
+	// Steps is the number of steps (placements or eliminations) taken.
+	Steps int
+	// Counts is the steps taken per technique, indexed like TechniquesFor.
+	Counts []int
+}
+
+// GradeLayout grades a grid (81 values, 0 = empty) under layout l: it solves
+// it with the grader until done or stuck. It errors on a grid of the wrong
+// size or with values outside 0..9.
+func GradeLayout(grid []int, l *Layout) (LayoutGrade, error) {
+	g, err := newGrader(grid, l)
+	if err != nil {
+		return LayoutGrade{}, err
+	}
+	techniques := TechniquesFor(l)
+	res := LayoutGrade{Counts: make([]int, len(techniques))}
 	for g.placed < cells {
 		t := g.step()
 		if t < 0 {
@@ -732,8 +1065,21 @@ func GradeCells(grid []int) (Grade, error) {
 		}
 		res.Counts[t]++
 		res.Steps++
-		res.Level = max(res.Level, Techniques[t].Level)
+		res.Level = max(res.Level, techniques[t].Level)
 	}
 	res.Solved = true
+	return res, nil
+}
+
+// GradeCells grades a grid (81 values, 0 = empty) under the standard layout:
+// it solves it with the grader until done or stuck. It errors on a grid of
+// the wrong size or with values outside 0..9.
+func GradeCells(grid []int) (Grade, error) {
+	lg, err := GradeLayout(grid, standardLayout)
+	if err != nil {
+		return Grade{}, err
+	}
+	res := Grade{Solved: lg.Solved, Level: lg.Level, Steps: lg.Steps}
+	copy(res.Counts[:], lg.Counts)
 	return res, nil
 }
