@@ -182,7 +182,7 @@ Tapping one opens its replay:
 
 - The board as it was after each action, with the cell the last action changed
   highlighted. It is the game's own board, read-only, so digits and notes look
-  the same as in the game.
+  the same as in the game, colour pens included.
   **Digits are hidden by default**: an entered digit shows as `•`, a cell's
   pencil marks as one `•` each in its first note slots (a mark's own slot would
   give its digit away), and action descriptions say "Placed a digit in
@@ -566,8 +566,10 @@ In dev auth mode the app instead asks for a user id and display name and sends
   don't rely on hue, and a coloured cell reads as "colour A" or "colour B" to
   a screen reader. Colours are only the player's aid: they're saved with the
   game in progress in `localStorage` (so they survive a reload on this
-  device, in Daily, Endless and seed play) but are not in the replay, the
-  timer or the result, nothing is sent to the server, and they're dropped when
+  device, in Daily, Endless and seed play) and not part of the timer or the
+  result, but every change is logged in the replay (`colour` with the cell's
+  new pen, `clearColours`) so the admin replay viewer shows them in step with
+  the moves; the server ignores them for its checks. They're dropped when
   the game is solved or the board is cleared (`Game.colours`, `SavedGame.colours`,
   absent in older saves). The timer runs only while the puzzle is on screen
   and the tab is visible; switching away pauses it behind a "Paused" cover.
@@ -576,12 +578,17 @@ In dev auth mode the app instead asks for a user id and display name and sends
   Games are saved on every move, so a reload or a closed tab resumes where you
   left off.
 - **Replays**: every game records each action (placing, erasing, notes, undo,
-  clear, notes mode, pause and resume, the app hidden or shown, reloads, start
+  clear, colour pens, notes mode, pause and resume, the app hidden or shown, reloads, start
   and finish) with both the game timer and the wall clock, saved with the game
   and sent with its result (see [Replays](API.md#replays)). The controller
   records them (`AppController.update` with the action, `log` for actions that
   don't change the board); `Game` only keeps the list. A replay over the
-  server's 10000-event cap is left out, and the result is then flagged.
+  server's 10000-event cap is left out, and the result is then flagged; the
+  colour pen events are dropped first, so painting alone never costs a game its
+  replay. A server from before colour pens refuses a replay holding them
+  (`invalid_result`), so the client sends the result once more without them
+  (`SudokuApi`, `withoutColourEvents`). This can happen when an admin
+  downgrades the server while a newer client is cached or has results queued.
 - **Endless** (the home page's second tab, next to **Daily**; with a server or
   a seed): see [Endless puzzles](#endless-puzzles).
 - **Variants** (the third tab: Diagonal, Jigsaw and Killer; with a server or a

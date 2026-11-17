@@ -22,6 +22,8 @@ const (
 	// only lengthens the claimed time, so it gives a cheater nothing.
 	resumeSlackMs = 1000
 	cells         = 81
+	// maxPen is the highest colour pen number; 0 is no colour.
+	maxPen = 2
 )
 
 // Action names.
@@ -40,6 +42,10 @@ const (
 	ActVisible    = "visible"
 	ActRestore    = "restore"
 	ActFinish     = "finish"
+	// Colour pens are the player's own visual aid: validated for shape, then
+	// ignored by every check.
+	ActColour       = "colour"
+	ActClearColours = "clearColours"
 )
 
 // Replay is a game's full record.
@@ -49,7 +55,7 @@ type Replay struct {
 }
 
 // Event is one recorded action. T is the game timer and W the wall clock, both
-// in milliseconds; C, D and On are set only for the actions that use them.
+// in milliseconds; C, D, On and P are set only for the actions that use them.
 type Event struct {
 	T  int64  `json:"t"`
 	W  int64  `json:"w"`
@@ -57,26 +63,29 @@ type Event struct {
 	C  *int   `json:"c,omitempty"`
 	D  *int   `json:"d,omitempty"`
 	On *bool  `json:"on,omitempty"`
+	P  *int   `json:"p,omitempty"`
 }
 
-// fields says which of c, d and on an action carries.
-type fields struct{ c, d, on bool }
+// fields says which of c, d, on and p an action carries.
+type fields struct{ c, d, on, p bool }
 
 var actionFields = map[string]fields{
-	ActStart:      {},
-	ActPlace:      {c: true, d: true},
-	ActErase:      {c: true},
-	ActNoteAdd:    {c: true, d: true},
-	ActNoteRemove: {c: true, d: true},
-	ActUndo:       {},
-	ActClear:      {},
-	ActNotes:      {on: true},
-	ActPause:      {},
-	ActResume:     {},
-	ActHidden:     {},
-	ActVisible:    {},
-	ActRestore:    {},
-	ActFinish:     {},
+	ActStart:        {},
+	ActPlace:        {c: true, d: true},
+	ActErase:        {c: true},
+	ActNoteAdd:      {c: true, d: true},
+	ActNoteRemove:   {c: true, d: true},
+	ActUndo:         {},
+	ActClear:        {},
+	ActNotes:        {on: true},
+	ActPause:        {},
+	ActResume:       {},
+	ActHidden:       {},
+	ActVisible:      {},
+	ActRestore:      {},
+	ActFinish:       {},
+	ActColour:       {c: true, p: true},
+	ActClearColours: {},
 }
 
 // Wellformed checks the shape of r without looking at the puzzle: the
@@ -104,7 +113,7 @@ func wellformedEvent(e Event) error {
 	if e.T < 0 || e.W < 0 {
 		return errors.New("t and w must not be negative")
 	}
-	if f.c != (e.C != nil) || f.d != (e.D != nil) || f.on != (e.On != nil) {
+	if f.c != (e.C != nil) || f.d != (e.D != nil) || f.on != (e.On != nil) || f.p != (e.P != nil) {
 		return fmt.Errorf("wrong fields for action %q", e.A)
 	}
 	if e.C != nil && (*e.C < 0 || *e.C >= cells) {
@@ -112,6 +121,9 @@ func wellformedEvent(e Event) error {
 	}
 	if e.D != nil && (*e.D < 1 || *e.D > 9) {
 		return errors.New("d must be 1..9")
+	}
+	if e.P != nil && (*e.P < 0 || *e.P > maxPen) {
+		return errors.New("p must be 0..2")
 	}
 	return nil
 }
@@ -226,7 +238,10 @@ func checkMoves(ev []Event, l *puzzle.Layout, givensStr, solutionStr string) (wa
 			return 0, fmt.Errorf("event %d (%s): %s", i, e.A, why)
 		}
 		switch e.A {
-		case ActNotes, ActHidden, ActVisible:
+		case ActNotes, ActHidden, ActVisible, ActColour, ActClearColours:
+			// Not moves: they change nothing the checks look at, so they are
+			// legal whatever the timer is doing (it holds still while stopped,
+			// which checkTimer already enforces).
 			continue
 		case ActResume:
 			if running {

@@ -4,6 +4,7 @@
 import type { EndlessReplayDetail, ReplayDetail } from "../api/models.ts";
 import { Layout } from "../core/layout.ts";
 import { colOf, rowOf } from "../core/geometry.ts";
+import { COLOUR_NAMES } from "../game/colours.ts";
 import { Game } from "../game/game.ts";
 import type { ReplayEvent } from "../game/replay.ts";
 
@@ -142,6 +143,8 @@ export function applyEvent(game: Game, e: ReplayEvent): Game {
     case "noteRemove": return valid && digit && game.notes.has(c, digit) ? game.toggleNote(c, digit) : game;
     case "undo": return game.undo();
     case "clear": return game.clearAll();
+    case "colour": return valid && e.p !== undefined ? game.setColour(c, e.p) : game;
+    case "clearColours": return game.clearColours();
     // A reload loses the undo history.
     case "restore": return Game.restore(game.save(0), game.layout);
     default: return game;
@@ -289,6 +292,8 @@ export class ReplayViewer extends EventTarget {
       case "noteRemove": return `Removed note${d || ""} in ${at}`;
       case "undo": return "Undo";
       case "clear": return "Cleared the board";
+      case "colour": return e.p ? `Coloured ${at} ${COLOUR_NAMES[e.p] ?? "a colour"}` : `Removed the colour from ${at}`;
+      case "clearColours": return "Cleared the colours";
       case "notes": return e.on ? "Notes mode on" : "Notes mode off";
       case "pause": return "Timer stopped";
       case "resume": return "Timer started";

@@ -120,3 +120,70 @@ test("a replay with more than the maximum events is left out, but the maximum it
   assert.ok(!("replay" in over));
   assert.ok(!("replay" in r.pending().find((p) => p.level === 2)!));
 });
+
+// Colour pen events
+
+const painted: ReplayEvent[] = [
+  { a: "start", t: 0, w: 1 }, { a: "colour", t: 0, w: 2, c: 2, p: 1 }, { a: "clearColours", t: 0, w: 3 }, { a: "finish", t: 90_000, w: 91_000 },
+];
+
+test("a server from before colour pens refuses their events as invalid_result, and the result is sent again without them", async () => {
+  const server = new FakeServer(() => NOW);
+  server.rejectColours = true;
+  const c = api(server);
+  const result = { generator: 2, date: "2026-10-27", level: 1, elapsedMs: 5, completedAt: "2026-10-27T14:00:00+13:00", replay: { version: 1, events: painted } };
+  const posted = await c.submitResult(result);
+  assert.equal(posted.kind, "created");
+  assert.equal(server.requests.filter((q) => q.url.pathname === "/api/v1/results").length, 2);
+  assert.deepEqual(server.stored[0]!.replay!.events, [painted[0], painted[3]]);
+  assert.deepEqual(result.replay.events, painted); // the caller's result is untouched
+
+  const endless = { generator: 1, difficulty: 2, number: 3, elapsedMs: 9, completedAt: "2026-10-27T14:00:00+13:00", replay: { version: 1, events: painted } };
+  assert.equal((await c.submitEndlessResult(endless)).kind, "created");
+  assert.deepEqual(server.storedEndless[0]!.replay!.events, [painted[0], painted[3]]);
+});
+
+test("a result is not retried when it was refused for another reason, or has no colour events to take out", async () => {
+  const server = new FakeServer(() => NOW);
+  const c = api(server);
+  const posts = () => server.requests.filter((q) => q.url.pathname === "/api/v1/results").length;
+  const base = { generator: 2, date: "2026-10-27", level: 1, elapsedMs: 5, completedAt: "2026-10-27T14:00:00+13:00" };
+  server.rejectAll = true;
+  // Refused with colour events present, but not because of them: the server still says invalid_result, so one retry happens and is refused too.
+  assert.equal((await c.submitResult({ ...base, replay: { version: 1, events: painted } })).kind, "rejected");
+  assert.equal(posts(), 2);
+  // No colour events: nothing to take out, so no retry.
+  assert.equal((await c.submitResult({ ...base, replay: { version: 1, events: [painted[0]!, painted[3]!] } })).kind, "rejected");
+  assert.equal(posts(), 3);
+  assert.equal((await c.submitResult(base)).kind, "rejected");
+  assert.equal(posts(), 4);
+});
+
+test("a rejection with another error code is final even with colour events", async () => {
+  let posts = 0;
+  const fetcher = async (): Promise<Response> => {
+    posts++;
+    return new Response(JSON.stringify({ error: { code: "bad_request", message: "nope" } }), { status: 400 });
+  };
+  const c = new SudokuApi("https://sudoku.test", async () => "dev:alice:Alice", fetcher);
+  const result = { generator: 2, date: "2026-10-27", level: 1, elapsedMs: 5, completedAt: "2026-10-27T14:00:00+13:00", replay: { version: 1, events: painted } };
+  const out = await c.submitResult(result);
+  assert.equal(out.kind === "rejected" && out.error?.code, "bad_request");
+  assert.equal(posts, 1);
+  // A rejection that carries no error body at all is final too.
+  const bare = new SudokuApi("https://sudoku.test", async () => "dev:alice:Alice", async () => new Response("nope", { status: 400 }));
+  const out2 = await bare.submitResult(result);
+  assert.equal(out2.kind === "rejected" && out2.error, null);
+});
+
+test("complete leaves the colour events out of a replay that only they push over the maximum", async () => {
+  const { r } = await signedIn();
+  const hidden = (i: number): ReplayEvent => ({ a: "hidden", t: 0, w: i });
+  const moves = Array.from({ length: MAX_REPLAY_EVENTS - 1 }, (_, i) => hidden(i));
+  const colours: ReplayEvent[] = [{ a: "colour", t: 0, w: 1, c: 2, p: 1 }, { a: "clearColours", t: 0, w: 2 }];
+  const kept = await r.complete(1, r.today(), 1, solvedWith(r, [...moves, ...colours]));
+  assert.deepEqual(kept.replay?.events, moves);
+  // Within the maximum, they are sent.
+  const small = await r.complete(1, r.today(), 2, solvedWith(r, [hidden(0), ...colours]));
+  assert.equal(small.replay?.events.length, 3);
+});

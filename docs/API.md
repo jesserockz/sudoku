@@ -496,26 +496,30 @@ A replay records every action of a game, so the server can check a result and an
 }
 ```
 
-Every event has `t`, the game timer in integer milliseconds (the in-game clock, which stops while paused), `w`, the wall clock in integer epoch milliseconds, and `a`, the action. `c` is a cell index `0..80` (row-major) and `d` a digit `1..9`.
+Every event has `t`, the game timer in integer milliseconds (the in-game clock, which stops while paused), `w`, the wall clock in integer epoch milliseconds, and `a`, the action. `c` is a cell index `0..80` (row-major), `d` a digit `1..9`, `on` a boolean and `p` a colour pen `0..2`.
 
-| `a`          | Fields   | Meaning                                                                                               |
-| ------------ | -------- | ----------------------------------------------------------------------------------------------------- |
-| `start`      |          | The puzzle was opened for the first time (always the first event, `t` = 0)                            |
-| `place`      | `c`, `d` | Digit `d` placed in `c` (replacing any other digit; clears `c`'s notes and `d` from its peers' notes) |
+| `a`            | Fields   | Meaning                                                                                               |
+| -------------- | -------- | ----------------------------------------------------------------------------------------------------- |
+| `start`        |          | The puzzle was opened for the first time (always the first event, `t` = 0)                            |
+| `place`        | `c`, `d` | Digit `d` placed in `c` (replacing any other digit; clears `c`'s notes and `d` from its peers' notes) |
 
 A cell's peers are those of the puzzle's [layout](#layouts): for a variant they include the diagonals, the jigsaw region and the killer cage, so a `place` clears the digit from those notes too.
-| `erase`      | `c`      | Cleared `c`: its digit if it has one, else its notes                                                  |
-| `noteAdd`    | `c`, `d` | Pencil mark `d` added to the empty cell `c`                                                           |
-| `noteRemove` | `c`, `d` | Pencil mark `d` removed from `c`                                                                      |
-| `undo`       |          | Reverted the last `place`, `erase`, `noteAdd`, `noteRemove` or `clear`                                |
-| `clear`      |          | Cleared every entered digit and note                                                                  |
-| `notes`      | `on`     | Notes mode switched on (`true`) or off (`false`); changes nothing on the board                        |
-| `pause`      |          | The timer stopped (Pause, the app hidden, or the puzzle closed)                                       |
-| `resume`     |          | The timer started again                                                                               |
-| `hidden`     |          | The app was hidden (`visibilitychange`)                                                               |
-| `visible`    |          | The app became visible again                                                                          |
-| `restore`    |          | The game was reloaded from storage: the timer is stopped and the undo history is gone                 |
-| `finish`     |          | The puzzle was solved (always the last event, right after the solving `place`)                        |
+| `erase`        | `c`      | Cleared `c`: its digit if it has one, else its notes                                                  |
+| `noteAdd`      | `c`, `d` | Pencil mark `d` added to the empty cell `c`                                                           |
+| `noteRemove`   | `c`, `d` | Pencil mark `d` removed from `c`                                                                      |
+| `undo`         |          | Reverted the last `place`, `erase`, `noteAdd`, `noteRemove` or `clear`                                |
+| `clear`        |          | Cleared every entered digit and note                                                                  |
+| `notes`        | `on`     | Notes mode switched on (`true`) or off (`false`); changes nothing on the board                        |
+| `colour`       | `c`, `p` | Cell `c` left with colour pen `p`: `0` none, `1` colour A, `2` colour B (see below)                   |
+| `clearColours` |          | Every colour pen mark removed (see below)                                                             |
+| `pause`        |          | The timer stopped (Pause, the app hidden, or the puzzle closed)                                       |
+| `resume`       |          | The timer started again                                                                               |
+| `hidden`       |          | The app was hidden (`visibilitychange`)                                                               |
+| `visible`      |          | The app became visible again                                                                          |
+| `restore`      |          | The game was reloaded from storage: the timer is stopped and the undo history is gone                 |
+| `finish`       |          | The puzzle was solved (always the last event, right after the solving `place`)                        |
+
+Colour pens are the player's own visual aid for tracing chains. `colour` records the pen a tapped cell ends up with (the client cycles none, A, B, none, so each tap is one event, never `p` equal to the cell's current pen), and `clearColours` the Clear button in colour mode. Playing a replay back, `clear` and solving the puzzle also drop every colour, and `undo` does not undo colours, exactly as in the game. The server checks that these events are well-formed (`c` in `0..80`, `p` in `0..2`, no other fields) and otherwise ignores them: they change nothing the [replay checks](#replay-checks) look at, so a replay is valid or invalid exactly as it would be without them. They are not checked against the timer state (the timer holds still while stopped, which check 2 already enforces), though like every event they cannot come after the solving `place`. Replays from clients that predate colour pens have none, and stay valid. A server that predates them refuses a replay holding them as `400 invalid_result`; the web client then sends the result again without them. They count toward the 10000-event cap, so a client over the cap drops them before dropping the replay.
 
 Only actions that change something are recorded: a `place` of the digit already there, or an `undo` with nothing to undo, never appears.
 
@@ -525,7 +529,7 @@ The server replays the events on the puzzle (a daily regenerated from the week s
 
 1. **Shape**: `start` is first with `t` = 0, `finish` is last, and neither appears anywhere else.
 2. **Timer**: `t` never decreases, and it stays the same while the timer is stopped (after `pause` or `restore`, until `resume`), except that `restore` itself may move it forward (the time banked by the last save before the app was closed) and `resume` may be up to **1 second** later than the event before it (older clients stamped it a few milliseconds late).
-3. **Moves**: every `place`, `erase`, `noteAdd`, `noteRemove`, `undo` and `clear` happens while the timer runs and is legal on the board at that point (no changing a given, no `noteAdd` of a mark already there, and so on), and `pause`/`resume` alternate.
+3. **Moves**: every `place`, `erase`, `noteAdd`, `noteRemove`, `undo` and `clear` (not `colour` and `clearColours`, which are ignored) happens while the timer runs and is legal on the board at that point (no changing a given, no `noteAdd` of a mark already there, and so on), and `pause`/`resume` alternate.
 4. **Solved**: the board after the last move is the puzzle's solution, the solving `place` is followed directly by `finish`, and the `finish` event's `t` equals the submitted `elapsedMs`.
 5. **Wall clock**: the wall-clock time spent with the timer running (the sum of `w` gaps between consecutive events while it runs; a gap where `w` goes backwards, e.g. a clock change, counts as 0) is at least `elapsedMs` minus **2 seconds**. Equivalently, the replay's wall-clock span minus the time spent paused can't be shorter than the time claimed.
 

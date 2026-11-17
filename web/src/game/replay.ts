@@ -7,17 +7,18 @@ export const MAX_REPLAY_EVENTS = 10_000;
 
 export const REPLAY_ACTIONS = [
   "start", "place", "erase", "noteAdd", "noteRemove", "undo", "clear", "notes",
-  "pause", "resume", "hidden", "visible", "restore", "finish",
+  "pause", "resume", "hidden", "visible", "restore", "finish", "colour", "clearColours",
 ] as const;
 
 export type ReplayAction = (typeof REPLAY_ACTIONS)[number];
 
-/** What happened, without the timestamps. `c` is a cell `0..80`, `d` a digit `1..9`, `on` the new notes mode. */
+/** What happened, without the timestamps. `c` is a cell `0..80`, `d` a digit `1..9`, `on` the new notes mode, `p` the colour pen a `colour` event leaves the cell with (0 none, 1 A, 2 B). */
 export interface ReplayInput {
   a: ReplayAction;
   c?: number;
   d?: number;
   on?: boolean;
+  p?: number;
 }
 
 /** One recorded action: `t` is the game timer in ms (stops while paused), `w` the wall clock in epoch ms. */
@@ -39,10 +40,29 @@ export function decodeReplayEvent(json: unknown): ReplayEvent {
   const c = optional(o.c, num);
   const d = optional(o.d, num);
   const on = optional(o.on, bool);
-  return { t: num(o.t), w: num(o.w), a: a as ReplayAction, ...(c === null ? {} : { c }), ...(d === null ? {} : { d }), ...(on === null ? {} : { on }) };
+  const p = optional(o.p, num);
+  return { t: num(o.t), w: num(o.w), a: a as ReplayAction, ...(c === null ? {} : { c }), ...(d === null ? {} : { d }), ...(on === null ? {} : { on }), ...(p === null ? {} : { p }) };
 }
 
 export function decodeReplay(json: unknown): Replay {
   const o = obj(json);
   return { version: num(o.version), events: list(o.events, decodeReplayEvent) };
+}
+
+/** Whether `e` is a colour pen event: the player's own aid, which the server ignores. */
+export const isColourEvent = (e: ReplayEvent): boolean => e.a === "colour" || e.a === "clearColours";
+
+/**
+ * The events to send with a result: all of them, or without the colour pen events when they alone push the replay
+ * past {@link MAX_REPLAY_EVENTS}, so painting never costs a game its replay. `null` when it is too long even then.
+ */
+export function replayToSend(events: readonly ReplayEvent[]): Replay | null {
+  const fit = events.length <= MAX_REPLAY_EVENTS ? events : events.filter((e) => !isColourEvent(e));
+  return fit.length <= MAX_REPLAY_EVENTS ? { version: REPLAY_VERSION, events: fit.slice() } : null;
+}
+
+/** `result` with the colour pen events taken out of its replay (the same object when it has none). */
+export function withoutColourEvents<T extends { replay?: Replay }>(result: T): T {
+  if (!result.replay?.events.some(isColourEvent)) return result;
+  return { ...result, replay: { ...result.replay, events: result.replay.events.filter((e) => !isColourEvent(e)) } };
 }
