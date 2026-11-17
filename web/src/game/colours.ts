@@ -6,10 +6,13 @@ export const COLOUR_COUNT = 2;
 /** The pens' names, as a screen reader says them (index 0 is "no colour"). */
 export const COLOUR_NAMES = ["", "colour A", "colour B"] as const;
 
+/** The pen a cell moves on to when tapped: none, colour A, colour B, none. */
+export const nextColour = (colour: number): number => (colour + 1) % (COLOUR_COUNT + 1);
+
 /**
  * Colour pens: for each cell, no colour (0) or one of {@link COLOUR_COUNT}
  * colours (1, 2), painted by hand for the "simple colouring" technique. Purely
- * a visual aid for the player: not part of undo, the replay or the result.
+ * a visual aid for the player: not part of undo or the result, but logged in the replay.
  * Immutable.
  */
 export class Colours {
@@ -35,10 +38,11 @@ export class Colours {
     return this.#values.every((v) => v === 0);
   }
 
-  /** Cell `i` moved on one step: none, colour A, colour B, none. */
-  cycled(i: number): Colours {
+  /** Cell `i` set to `colour` (0 for none, else 1 or 2); the same object when it already has it. */
+  with(i: number, colour: number): Colours {
+    if (this.#values[i] === colour) return this;
     const next = this.#values.slice();
-    next[i] = (next[i]! + 1) % (COLOUR_COUNT + 1);
+    next[i] = colour;
     return new Colours(next);
   }
 

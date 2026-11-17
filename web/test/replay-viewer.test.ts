@@ -617,3 +617,80 @@ test("tick fires change when playback stops even if nothing else moved", () => {
   assert.ok(!v.playing);
   assert.equal(changes, 1);
 });
+
+// Colour pens
+
+test("applyEvent paints cells with the pen the event names, and clearColours wipes them", () => {
+  const painted = applyEvent(fresh(), ev("colour", 0, 0, { c: 2, p: 2 }));
+  assert.equal(painted.colours.get(2), 2);
+  assert.equal(applyEvent(painted, ev("colour", 0, 0, { c: 2, p: 0 })).colours.get(2), 0);
+  assert.equal(applyEvent(painted, ev("colour", 0, 0, { c: 3, p: 1 })).colours.get(3), 1);
+  const cleared = applyEvent(painted, ev("clearColours", 0, 0));
+  assert.ok(!cleared.hasColours);
+  assert.equal(applyEvent(fresh(), ev("clearColours", 0, 0)).hasColours, false);
+
+  // Events that don't fit change nothing: no cell, a bad cell, a given, no pen, a bad pen.
+  const unchanged = (e: ReplayEvent) => assert.equal(applyEvent(painted, e), painted, JSON.stringify(e));
+  unchanged(ev("colour", 0, 0, { p: 1 }));
+  unchanged(ev("colour", 0, 0, { c: 81, p: 1 }));
+  unchanged(ev("colour", 0, 0, { c: -1, p: 1 }));
+  unchanged(ev("colour", 0, 0, { c: 0, p: 1 }));
+  unchanged(ev("colour", 0, 0, { c: 3 }));
+  unchanged(ev("colour", 0, 0, { c: 3, p: 3 }));
+  unchanged(ev("colour", 0, 0, { c: 2, p: 2 })); // already that pen
+});
+
+test("colours follow the live game's rules: undo and a reload keep them, clearing the board and solving drop them", () => {
+  let g = fresh();
+  g = applyEvent(g, ev("colour", 0, 0, { c: 2, p: 1 }));
+  g = applyEvent(g, ev("place", 0, 0, { c: 3, d: 6 }));
+  g = applyEvent(g, ev("colour", 0, 0, { c: 3, p: 2 }));
+  assert.equal(applyEvent(g, ev("undo", 0, 0)).board.get(3), 0);
+  assert.equal(applyEvent(g, ev("undo", 0, 0)).colours.get(3), 2); // undo doesn't undo colours
+  assert.equal(applyEvent(g, ev("restore", 0, 0)).colours.get(2), 1);
+  assert.equal(applyEvent(g, ev("clear", 0, 0)).hasColours, false);
+
+  const cells = empties;
+  let nearly = applyEvent(fresh(), ev("colour", 0, 0, { c: cells[0]!, p: 1 }));
+  for (const i of cells.slice(0, -1)) nearly = applyEvent(nearly, ev("place", 100, 0, { c: i, d: digit(i) }));
+  assert.ok(nearly.hasColours);
+  const done = applyEvent(nearly, ev("place", 200, 0, { c: cells.at(-1)!, d: digit(cells.at(-1)!) }));
+  assert.ok(done.isComplete && !done.hasColours);
+  assert.equal(applyEvent(done, ev("colour", 300, 0, { c: cells[0]!, p: 2 })), done);
+});
+
+test("a viewer shows the colours at each step of the replay, and describes the events", () => {
+  const v = new ReplayViewer(detail([
+    ev("start", 0, 0), ev("resume", 0, 0),
+    ev("colour", 100, 100, { c: 2, p: 1 }), // 2
+    ev("colour", 200, 200, { c: 2, p: 2 }), // 3
+    ev("colour", 300, 300, { c: 2, p: 0 }), // 4
+    ev("colour", 400, 400, { c: 5, p: 1 }), // 5
+    ev("place", 500, 500, { c: 3, d: 6 }), // 6
+    ev("clear", 600, 600), // 7: the board and the colours
+    ev("colour", 700, 700, { c: 5, p: 2 }), // 8
+    ev("clearColours", 800, 800), // 9
+    ev("finish", 900, 900),
+  ]));
+  const at = (k: number, cell: number) => { v.goTo(k); return v.game.colours.get(cell); };
+  assert.deepEqual([0, 2, 3, 4, 5, 6].map((k) => at(k, 2)), [0, 0, 1, 2, 0, 0]);
+  assert.deepEqual([5, 6, 7, 8, 9, 10, 11].map((k) => at(k, 5)), [0, 1, 1, 0, 2, 0, 0]);
+  v.goTo(11);
+  assert.equal(v.changedCell, -1); // the finish event
+  v.goTo(4);
+  assert.equal(v.changedCell, 2);
+  assert.equal(v.describe(2), "Coloured R1C3 colour A");
+  assert.equal(v.describe(3), "Coloured R1C3 colour B");
+  assert.equal(v.describe(4), "Removed the colour from R1C3");
+  assert.equal(v.describe(9), "Cleared the colours");
+  // An out of range pen from a damaged replay still reads as a line.
+  const odd = new ReplayViewer(detail([ev("colour", 0, 0, { c: 1, p: 9 })]));
+  assert.equal(odd.describe(0), "Coloured R1C2 a colour");
+  assert.ok(!odd.game.hasColours);
+});
+
+test("colour events are not moves for the gap and pace analysis", () => {
+  assert.ok(!isMove(ev("colour", 0, 0, { c: 1, p: 1 })) && !isMove(ev("clearColours", 0, 0)));
+  const a = analyse([ev("start", 0, 0), ev("resume", 0, 0), ev("place", 1000, 1000, { c: 2, d: 4 }), ev("colour", 1500, 1500, { c: 2, p: 1 }), ev("place", 3000, 3000, { c: 3, d: 6 })]);
+  assert.deepEqual(a.gaps, [0, 0, 1000, 500, 2000]);
+});

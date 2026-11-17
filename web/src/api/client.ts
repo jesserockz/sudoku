@@ -7,6 +7,7 @@ import {
   decodeGeneratorSettings, decodeLeaderboard, decodeMaintenanceSettings, decodeMe, decodeMyEndlessResults, decodeMyResults, decodeMyStats, decodeReleaseList, decodeReplayDetail, decodeUpdateStatus,
   decodeWeek,
 } from "./models.ts";
+import { type Replay, withoutColourEvents } from "../game/replay.ts";
 
 /** What players see when signing in can't happen right now. It doesn't say why, on purpose. */
 export const SIGN_IN_UNAVAILABLE = "Sign-in isn't available right now. Please try again later, and contact the admin if it still isn't working.";
@@ -117,7 +118,7 @@ export class SudokuApi {
   }
 
   submitResult(result: GameResult): Promise<SubmitOutcome> {
-    return this.#submit("results", result, decodeGameResult);
+    return this.#submitCompat("results", result, decodeGameResult);
   }
 
   /** The seed every endless puzzle comes from. */
@@ -131,7 +132,7 @@ export class SudokuApi {
   }
 
   submitEndlessResult(result: EndlessResult): Promise<SubmitOutcome<EndlessResult>> {
-    return this.#submit("endless/results", result, decodeEndlessResult);
+    return this.#submitCompat("endless/results", result, decodeEndlessResult);
   }
 
   /** How many endless puzzles of each difficulty everyone has solved in `generator`'s series of `variant` (0: standard Sudoku). */
@@ -142,6 +143,18 @@ export class SudokuApi {
   /** One endless puzzle's leaderboard, in `generator`'s series of `variant` (0: standard Sudoku). */
   async endlessBoard(generator: number, difficulty: number, number: number, variant = 0): Promise<EndlessBoard> {
     return decodeEndlessBoard(await this.#get(`endless/leaderboard/${difficulty}/${number}?${seriesQuery(generator, variant)}`));
+  }
+
+  /**
+   * {@link #submit}, with one retry for a server older than the colour pen events: it refuses a replay with an
+   * action it doesn't know as `invalid_result`, so the result is sent again without those events (the pens
+   * are only the player's aid, and every check ignores them).
+   */
+  async #submitCompat<T extends { replay?: Replay }>(path: string, result: T, decode: (json: unknown) => T): Promise<SubmitOutcome<T>> {
+    const outcome = await this.#submit(path, result, decode);
+    if (outcome.kind !== "rejected" || outcome.error?.code !== "invalid_result") return outcome;
+    const plain = withoutColourEvents(result);
+    return plain === result ? outcome : this.#submit(path, plain, decode);
   }
 
   async #submit<T>(path: string, result: T, decode: (json: unknown) => T): Promise<SubmitOutcome<T>> {

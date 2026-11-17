@@ -173,6 +173,34 @@ func TestPostResultWithValidReplay(t *testing.T) {
 	}
 }
 
+func TestPostResultWithColourEvents(t *testing.T) {
+	e := newReplayEnv(t, 1)
+	rep, elapsed := solveReplay(testPuzzle(t, 1, 1))
+	cell, pen := 7, 2
+	// Colours go between the resume and the first place, and after it.
+	ev := append([]replay.Event{}, rep.Events[:2]...)
+	ev = append(ev, replay.Event{T: 0, W: rep.Events[1].W, A: replay.ActColour, C: &cell, P: &pen})
+	ev = append(ev, rep.Events[2], replay.Event{T: rep.Events[2].T, W: rep.Events[2].W, A: replay.ActClearColours})
+	ev = append(ev, rep.Events[3:]...)
+	e.post(t, alice, resultBody(1, elapsed, replay.Replay{Version: 1, Events: ev}), http.StatusCreated)
+
+	if r := e.list(t).Results[0]; r.Replay != "valid" || r.Flag != nil {
+		t.Errorf("result = %+v / %+v", r, r.Flag)
+	}
+	d := e.replayDetail(t, e.userID(t, alice))
+	if len(d.Events) != len(ev) {
+		t.Fatalf("%d events", len(d.Events))
+	}
+	if got := string(d.Events[2]); !strings.Contains(got, `"p":2`) || !strings.Contains(got, `"c":7`) || !strings.Contains(string(d.Events[4]), `"a":"clearColours"`) {
+		t.Errorf("events = %s / %s", got, d.Events[4])
+	}
+
+	// A pen out of range is refused like any malformed event.
+	bad := 3
+	ev[2].P = &bad
+	e.postErr(t, bobToken, resultBody(1, elapsed, replay.Replay{Version: 1, Events: ev}), http.StatusBadRequest, "invalid_result")
+}
+
 func TestPostResultWithoutReplayIsFlagged(t *testing.T) {
 	e := newReplayEnv(t, 1)
 	e.post(t, alice, resultBody(1, 40000, nil), http.StatusCreated)

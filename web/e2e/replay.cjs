@@ -4,11 +4,11 @@
 //   SUDOKU_ADMIN_CLAIM=sub SUDOKU_ADMIN_VALUES=ann ... server/sudoku-server &
 //   node web/e2e/replay.cjs [http://localhost:8080] [screenshot dir]
 //
-// Ann plays the Easy puzzle in the browser (notes, a wrong digit and undo, a pause, a reload), which
+// Ann plays the Easy puzzle in the browser (notes, a wrong digit and undo, colour pens, a pause, a reload), which
 // records a replay the server accepts. "Speedy" submits a suspiciously steady replay through the API and
 // "Nora" a result with no replay, which the server flags by itself (admin-only). Ann then opens the replays
 // as admin (digits hidden until revealed), flags Speedy's result and confirms Nora's, and the leaderboard
-// shows both markers.
+// shows both markers. The colour pen events must reach the server, be accepted, and show on the admin replay board in step.
 const { chromium } = require("playwright");
 
 const base = process.argv[2] || "http://localhost:8080";
@@ -82,6 +82,14 @@ async function shot(page, name) {
   await page.keyboard.press("n");
   await page.keyboard.press(String((solution[empties[0]] % 9) + 1));
   await page.keyboard.press("Control+z");
+  // Colour pens: e1 goes A then B, e2 and e3 go A, Clear colours, then e2 goes A again. The server must accept these
+  // events, and the admin replay must show the colours in step.
+  const [e1, e2, e3] = [empties[1], empties[2], empties[3]];
+  await page.keyboard.press("c");
+  for (const i of [e1, e1, e2, e3]) await cells.nth(i).click();
+  await page.getByRole("button", { name: "Clear colours" }).click();
+  await cells.nth(e2).click();
+  await page.keyboard.press("c");
   await page.getByRole("button", { name: "Pause" }).click();
   await page.waitForTimeout(1500);
   await page.getByRole("button", { name: "Resume" }).click();
@@ -106,6 +114,8 @@ async function shot(page, name) {
   const replay = Object.values(saved)[0].replay;
   const actions = replay.map((e) => e.a);
   check(actions[0] === "start" && actions[actions.length - 1] === "finish", "the replay runs from start to finish");
+  const colourLog = replay.filter((e) => e.a === "colour" || e.a === "clearColours").map((e) => (e.a === "colour" ? `${e.c}:${e.p}` : "clear"));
+  check(colourLog.join() === [`${e1}:1`, `${e1}:2`, `${e2}:1`, `${e3}:1`, "clear", `${e2}:1`].join(), "the replay logs each colour change with its pen: " + colourLog.join(" "));
   for (const a of ["noteAdd", "notes", "undo", "pause", "resume", "restore", "place"]) check(actions.includes(a), `the replay has a ${a} event`);
   await page.waitForFunction(() => localStorage.getItem("sudoku.pending") == null, null, { timeout: 15000 });
 
@@ -169,7 +179,8 @@ async function shot(page, name) {
   await page.getByText("Ann").first().click();
   await page.getByText("Reveal digits (shows the solution)").waitFor();
   check(!(await page.locator(".reveal input").isChecked()), "the next replay opens with the digits hidden again");
-  check(await page.getByText("Replay OK").count() >= 1, "Ann's browser replay passed the server's checks");
+  check(await page.getByText("Replay OK").count() >= 1, "Ann's browser replay passed the server's checks, colours and all");
+
 
   // Ann's first note shows in the game's 3x3 note grid: a dot while hidden, in its digit's slot once revealed.
   for (let k = 0; k < 10 && await page.locator(".replay-board .notes").count() === 0; k++) {
@@ -183,6 +194,38 @@ async function shot(page, name) {
   check(shownMarks.length === 9 && shownMarks.join("") === String(solution[empties[0]]) && shownMarks[solution[empties[0]] - 1] !== "",
     "a revealed note sits in its digit's slot, as in the game");
   await shot(page, "replay-notes");
+
+  // The server stored the colour events as sent.
+  const adminList = await (await api(ann, `admin/results?date=${date}`)).json();
+  const annResult = adminList.results.find((r) => r.displayName === "Ann");
+  check(annResult.replay === "valid", "the server's verdict on Ann's replay with colours is valid");
+  const stored = await (await api(ann, `admin/results/${date}/1/${annResult.userId}/replay?generator=${annResult.generator}`)).json();
+  const storedColours = stored.events.filter((e) => e.a === "colour" || e.a === "clearColours").map((e) => (e.a === "colour" ? `${e.c}:${e.p}` : "clear"));
+  check(storedColours.join() === colourLog.join(), "the server kept the colour events");
+
+  // The admin viewer shows the colours in step: step to each colour event and read the board.
+  const rboard = page.locator(".replay-board .cell");
+  const colourAt = async (i) => ((await rboard.nth(i).getAttribute("class")).match(/colour-(\d)/) || [])[1] ?? "0";
+  const coloured = page.locator(".replay-board .cell.colour-1, .replay-board .cell.colour-2");
+  const step = async (n) => { for (let k = 0; k < n; k++) await page.getByRole("button", { name: "Next action" }).click(); };
+  const firstColour = stored.events.findIndex((e) => e.a === "colour");
+  // Ann's replay is at its first note (the loop above), so step on to just before the first colour event.
+  const firstNote = stored.events.findIndex((e) => e.a === "noteAdd");
+  await step(firstColour - (firstNote + 1));
+  check(await coloured.count() === 0, "no colours before the first colour event");
+  await step(1);
+  check(await colourAt(e1) === "1", "after the first colour event the cell is colour A");
+  await step(1);
+  check(await colourAt(e1) === "2", "after the second it is colour B");
+  check((await rboard.nth(e1).getAttribute("aria-label")).endsWith(", colour B"), "a screen reader hears the colour in the replay too");
+  await step(2);
+  check(await colourAt(e2) === "1" && await colourAt(e3) === "1" && await colourAt(e1) === "2", "three cells are coloured");
+  await step(1);
+  check(await coloured.count() === 0, "Clear colours empties the replay board");
+  await step(1);
+  check(await colourAt(e2) === "1" && await coloured.count() === 1, "the last colour event leaves one cell coloured");
+  check(await page.getByText("Coloured R", { exact: false }).count() > 0 && await page.getByText("Cleared the colours").count() === 1, "the action list describes the colour events");
+  await shot(page, "replay-colours");
 
   // Everyone sees the markers on the leaderboard.
   res = await api(nora, `leaderboard?date=${date}`);

@@ -1,4 +1,5 @@
 import { colOf, index, rowOf } from "../core/geometry.ts";
+import { nextColour } from "../game/colours.ts";
 import { formatDuration } from "../game/timer.ts";
 import { variantName } from "../core/layout.ts";
 import { generatorName } from "../generator/versions.ts";
@@ -18,8 +19,9 @@ import { ScreenWakeLock } from "./wake-lock.ts";
  *
  * Colour mode (see `Game.cycleColour`): tapping a cell cycles its colour
  * instead of selecting it, and digits and Erase are off, so a tap can never
- * place a digit or note. Colours are the player's own aid: they're not logged
- * in the replay. Notes and Colours are exclusive toggles: turning one on turns
+ * place a digit or note. Colours are the player's own aid, but each change is
+ * logged in the replay (`colour` with the cell's new pen, `clearColours`) so an
+ * admin sees them in step with the moves. Notes and Colours are exclusive toggles: turning one on turns
  * the other off.
  */
 export class PlayScreen extends Component {
@@ -74,7 +76,13 @@ export class PlayScreen extends Component {
   /** A tap on a cell: paints it in colour mode, else selects it. */
   #tap(i: number): void {
     if (!this.#colourMode) this.#select(i);
-    else if (!this.#paused) this.app.update(this.ref, (g) => g.cycleColour(i));
+    else if (!this.#paused) this.#paint(i);
+  }
+
+  /** Cycles cell `i`'s colour, logging the pen it ends up with. */
+  #paint(i: number): void {
+    const g = this.#game;
+    if (g) this.app.update(this.ref, (game) => game.cycleColour(i), { a: "colour", c: i, p: nextColour(g.colours.get(i)) });
   }
 
   #pause(): void {
@@ -195,7 +203,7 @@ export class PlayScreen extends Component {
           this.#colourMode
             ? h("button", {
               disabled: !game.hasColours || paused, "aria-label": "Clear colours",
-              onclick: () => app.update(this.ref, (g) => g.clearColours()),
+              onclick: () => app.update(this.ref, (g) => g.clearColours(), { a: "clearColours" }),
             }, "Clear")
             : h("button", {
               disabled: !game.canClearAll || paused, "aria-label": "Clear board",

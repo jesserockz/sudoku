@@ -6,7 +6,7 @@ import {
 import { OidcClient, OidcException, TokenSession, type TokenResponse, createPkce } from "../api/oidc.ts";
 import { formatTimestamp, inWeek, today } from "../game/calendar.ts";
 import { Game } from "../game/game.ts";
-import { MAX_REPLAY_EVENTS, REPLAY_VERSION } from "../game/replay.ts";
+import { replayToSend } from "../game/replay.ts";
 import { type Puzzle } from "../generator/generator.ts";
 import type { VariantPuzzle } from "../generator/variants.ts";
 import { GENERATOR_CLASSIC } from "../generator/versions.ts";
@@ -369,7 +369,8 @@ export class SudokuRepository implements EndlessSource {
     const result: EndlessResult = {
       generator, ...(variant === 0 ? {} : { variant }), difficulty, number, elapsedMs: game.completedElapsedMs, completedAt: formatTimestamp(this.#now()),
     };
-    if (game.replay.length <= MAX_REPLAY_EVENTS) result.replay = { version: REPLAY_VERSION, events: game.replay.slice() };
+    const replay = replayToSend(game.replay);
+    if (replay) result.replay = replay;
     await this.endlessSync.enqueue(result);
     return result;
   }
@@ -423,8 +424,10 @@ export class SudokuRepository implements EndlessSource {
   async complete(generator: number, date: string, level: number, game: Game): Promise<GameResult> {
     if (game.completedElapsedMs === null) throw new Error("game isn't complete");
     const result: GameResult = { generator, date, level, elapsedMs: game.completedElapsedMs, completedAt: formatTimestamp(this.#now()) };
-    // A replay the server would refuse is left out: the result still counts, flagged as having none.
-    if (game.replay.length <= MAX_REPLAY_EVENTS) result.replay = { version: REPLAY_VERSION, events: game.replay.slice() };
+    // A replay the server would refuse is left out (after dropping colour pen events, which it ignores anyway): the
+    // result still counts, flagged as having none.
+    const replay = replayToSend(game.replay);
+    if (replay) result.replay = replay;
     await this.sync.enqueue(result);
     return result;
   }

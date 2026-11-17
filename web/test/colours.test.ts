@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { AppStorage, decodeSavedGame } from "../src/data/app-storage.ts";
 import { SudokuRepository } from "../src/data/repository.ts";
 import { MemoryStore } from "../src/data/store.ts";
-import { COLOUR_NAMES, Colours } from "../src/game/colours.ts";
+import { COLOUR_NAMES, Colours, nextColour } from "../src/game/colours.ts";
 import { Game } from "../src/game/game.ts";
 import { seedSettings as s } from "../src/serverless/seed.ts";
 import { SeedRepository } from "../src/serverless/seed-repository.ts";
@@ -14,16 +14,17 @@ const solution = "53467891267219534819834256785976142342685379171392485696153728
 const digit = (i: number) => Number(solution[i]);
 const empties = () => [...puzzle].flatMap((c, i) => (c === "0" ? [i] : []));
 
-test("Colours cycle none, A, B, none and round trip through text", () => {
+test("Colours set cells and round trip through text", () => {
   const none = Colours.EMPTY;
   assert.ok(none.isBlank);
-  const a = none.cycled(5);
-  const b = a.cycled(5);
-  assert.deepEqual([none.get(5), a.get(5), b.get(5), b.cycled(5).get(5)], [0, 1, 2, 0]);
-  assert.ok(!a.isBlank && b.cycled(5).isBlank);
+  const a = none.with(5, 1);
+  const b = a.with(5, 2);
+  assert.deepEqual([none.get(5), a.get(5), b.get(5), b.with(5, 0).get(5)], [0, 1, 2, 0]);
+  assert.ok(!a.isBlank && b.with(5, 0).isBlank);
+  assert.equal(a.with(5, 1), a);
   assert.equal(a.get(6), 0);
   assert.equal(none.get(5), 0);
-  const text = a.cycled(80).cycled(80).toString();
+  const text = a.with(80, 2).toString();
   assert.equal(text.length, 81);
   assert.equal(text[5], "1");
   assert.equal(text[80], "2");
@@ -159,7 +160,7 @@ async function seedController(store: MemoryStore): Promise<AppController> {
   return c;
 }
 
-test("through the controller, colours are saved with Daily and Endless seed games and are not logged", async () => {
+test("through the controller, colours are saved with Daily and Endless seed games and are only logged when the caller says so", async () => {
   const store = new MemoryStore();
   const c = await seedController(store);
   c.openPuzzle(1);
@@ -183,4 +184,27 @@ test("through the controller, colours are saved with Daily and Endless seed game
   assert.equal(again.gameOf(REF)!.colours.get(ecell), 1);
   again.update(1, (g) => g.clearColours());
   assert.ok(!again.games.get(1)!.hasColours);
+});
+
+test("nextColour cycles none, A, B, none", () => {
+  assert.deepEqual([0, 1, 2].map(nextColour), [1, 2, 0]);
+});
+
+test("setColour sets exact pens, ignores bad ones, givens and finished games", () => {
+  const g = Game.create(puzzle).resume(0);
+  const [e1, e2] = empties() as [number, number];
+  assert.equal(g.setColour(e1, 2).colours.get(e1), 2);
+  assert.equal(g.setColour(e1, 0), g); // already none
+  assert.equal(g.setColour(0, 1), g); // a given
+  for (const bad of [3, -1, 1.5, NaN]) assert.equal(g.setColour(e1, bad), g, String(bad));
+  const painted = g.setColour(e1, 1).setColour(e2, 2);
+  assert.equal(painted.setColour(e1, 1), painted);
+  assert.equal(painted.setColour(e1, 0).colours.get(e1), 0);
+  assert.equal(painted.cycleColour(e2).colours.get(e2), 0);
+
+  const cells = empties();
+  let nearly = g;
+  for (const i of cells.slice(0, -1)) nearly = nearly.place(i, digit(i), 0);
+  const done = nearly.place(cells.at(-1)!, digit(cells.at(-1)!), 0);
+  assert.equal(done.setColour(cells[0]!, 1), done);
 });

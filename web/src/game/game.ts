@@ -1,7 +1,7 @@
 import { Board, EMPTY } from "../core/board.ts";
 import { CELLS } from "../core/geometry.ts";
 import { Layout } from "../core/layout.ts";
-import { Colours } from "./colours.ts";
+import { COLOUR_COUNT, Colours, nextColour } from "./colours.ts";
 import { Notes } from "./notes.ts";
 import type { ReplayEvent } from "./replay.ts";
 import { ElapsedTimer } from "./timer.ts";
@@ -46,7 +46,7 @@ interface Snapshot {
 export class Game {
   readonly board: Board;
   readonly notes: Notes;
-  /** Colour pen marks: a player's aid, kept with the game in progress but not undoable, replayed or submitted. */
+  /** Colour pen marks: a player's aid, kept with the game in progress but not undoable or submitted as a result; it is logged in the replay. */
   readonly colours: Colours;
   readonly timer: ElapsedTimer;
   /** Solve time once complete, else `null`. */
@@ -139,8 +139,14 @@ export class Game {
 
   /** Cycles a cell's colour: none, colour A, colour B, none. Givens and a finished game can't be coloured. Not an undoable step. */
   cycleColour(i: number): Game {
-    if (this.isComplete || this.board.isGiven(i)) return this;
-    return this.#withColours(this.colours.cycled(i));
+    return this.setColour(i, nextColour(this.colours.get(i)));
+  }
+
+  /** Sets a cell's colour (0 for none, else 1 or 2, as a replay's `colour` event says). Givens and a finished game can't be coloured. */
+  setColour(i: number, colour: number): Game {
+    if (this.isComplete || this.board.isGiven(i) || !Number.isInteger(colour) || colour < 0 || colour > COLOUR_COUNT) return this;
+    const colours = this.colours.with(i, colour);
+    return colours === this.colours ? this : this.#withColours(colours);
   }
 
   /** Removes every colour. */

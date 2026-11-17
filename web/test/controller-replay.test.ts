@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { AppStorage } from "../src/data/app-storage.ts";
 import { SudokuRepository } from "../src/data/repository.ts";
 import { MemoryStore } from "../src/data/store.ts";
+import { nextColour } from "../src/game/colours.ts";
 import type { Game } from "../src/game/game.ts";
 import type { ReplayEvent } from "../src/game/replay.ts";
 import type { Puzzle } from "../src/generator/generator.ts";
@@ -351,4 +352,18 @@ test("opening the results screen again from elsewhere starts a fresh model", asy
   assert.ok(c.adminResults);
   assert.deepEqual(c.screen, { kind: "admin-results" });
   await settled();
+});
+
+test("colour pen changes are recorded when they change something", async () => {
+  const { c, clock } = await env(false);
+  c.openPuzzle(1);
+  const cell = emptyCells(puzzleOf(c))[0]!;
+  clock.wall = WALL + 10;
+  c.update(1, (g) => g.cycleColour(cell), { a: "colour", c: cell, p: nextColour(0) });
+  c.update(1, (g) => g.cycleColour(cell), { a: "colour", c: cell, p: nextColour(1) });
+  c.update(1, (g) => g.cycleColour(0), { a: "colour", c: 0, p: 1 }); // a given: nothing changes, nothing is recorded
+  c.update(1, (g) => g.clearColours(), { a: "clearColours" });
+  c.update(1, (g) => g.clearColours(), { a: "clearColours" }); // nothing left to clear
+  assert.deepEqual(replayOf(c).slice(1).map((e) => [e.a, e.c, e.p]), [["colour", cell, 1], ["colour", cell, 2], ["clearColours", undefined, undefined]]);
+  assert.ok(replayOf(c).every((e) => e.w >= WALL));
 });

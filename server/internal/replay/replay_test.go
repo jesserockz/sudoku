@@ -364,7 +364,8 @@ func TestCheckRestoreWhileStopped(t *testing.T) {
 
 func TestWellformed(t *testing.T) {
 	ok := Replay{Version: 1, Events: []Event{
-		{A: ActStart}, {A: ActNotes, On: ptr(false)}, {A: ActPlace, C: ptr(80), D: ptr(9)}, {A: ActErase, C: ptr(0)}, {A: ActFinish},
+		{A: ActStart}, {A: ActColour, C: ptr(0), P: ptr(0)}, {A: ActColour, C: ptr(80), P: ptr(2)}, {A: ActClearColours},
+		{A: ActNotes, On: ptr(false)}, {A: ActPlace, C: ptr(80), D: ptr(9)}, {A: ActErase, C: ptr(0)}, {A: ActFinish},
 	}}
 	if err := Wellformed(ok); err != nil {
 		t.Fatal(err)
@@ -400,6 +401,13 @@ func TestWellformed(t *testing.T) {
 		{"cell too high", Replay{Version: 1, Events: []Event{{A: ActErase, C: ptr(81)}}}, "c must be"},
 		{"cell negative", Replay{Version: 1, Events: []Event{{A: ActErase, C: ptr(-1)}}}, "c must be"},
 		{"digit 0", Replay{Version: 1, Events: []Event{{A: ActPlace, C: ptr(1), D: ptr(0)}}}, "d must be"},
+		{"colour without cell", Replay{Version: 1, Events: []Event{{A: ActColour, P: ptr(1)}}}, "wrong fields"},
+		{"colour without pen", Replay{Version: 1, Events: []Event{{A: ActColour, C: ptr(1)}}}, "wrong fields"},
+		{"clearColours with pen", Replay{Version: 1, Events: []Event{{A: ActClearColours, P: ptr(1)}}}, "wrong fields"},
+		{"place with pen", Replay{Version: 1, Events: []Event{{A: ActPlace, C: ptr(1), D: ptr(1), P: ptr(1)}}}, "wrong fields"},
+		{"colour cell too high", Replay{Version: 1, Events: []Event{{A: ActColour, C: ptr(81), P: ptr(1)}}}, "c must be"},
+		{"pen 3", Replay{Version: 1, Events: []Event{{A: ActColour, C: ptr(1), P: ptr(3)}}}, "p must be"},
+		{"pen negative", Replay{Version: 1, Events: []Event{{A: ActColour, C: ptr(1), P: ptr(-1)}}}, "p must be"},
 		{"digit 10", Replay{Version: 1, Events: []Event{{A: ActNoteAdd, C: ptr(1), D: ptr(10)}}}, "d must be"},
 	}
 	for _, tt := range tests {
@@ -470,5 +478,81 @@ func TestCheckLayoutClearsVariantPeers(t *testing.T) {
 	}
 	if err := Check(r, p.Givens, p.Solution, rec.t); err == nil || !strings.Contains(err.Error(), "that note is already there") {
 		t.Errorf("under the standard layout: %v", err)
+	}
+}
+
+// withColours inserts colour events into the fixture's replay after the events
+// at the given indices (indices are into the original replay), each stamped
+// like the event it follows, which is how the client stamps them.
+func withColours(f fixture, after map[int]Event) Replay {
+	var ev []Event
+	for i, e := range f.r.Events {
+		ev = append(ev, e)
+		if c, ok := after[i]; ok {
+			c.T, c.W = e.T, e.W
+			ev = append(ev, c)
+		}
+	}
+	return Replay{Version: 1, Events: ev}
+}
+
+func TestCheckIgnoresColours(t *testing.T) {
+	f := validFixture(t)
+	paint := Event{A: ActColour, C: ptr(5), P: ptr(1)}
+	clear := Event{A: ActClearColours}
+	// While the timer runs, while it is stopped (after the pause and the
+	// restore) and right after the solving move's predecessor.
+	r := withColours(f, map[int]Event{
+		f.index(t, ActResume, 0):  paint,
+		f.index(t, ActPause, 0):   paint,
+		f.index(t, ActRestore, 0): clear,
+		f.index(t, ActClear, 0):   clear,
+		f.index(t, ActUndo, 0):    paint,
+	})
+	if err := Wellformed(r); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Events) != len(f.r.Events)+5 {
+		t.Fatalf("inserted %d events", len(r.Events)-len(f.r.Events))
+	}
+	if err := Check(r, f.givens, f.solution, f.elapsed); err != nil {
+		t.Errorf("colours changed the verdict: %v", err)
+	}
+}
+
+func TestCheckColoursDoNotHideProblems(t *testing.T) {
+	f := validFixture(t)
+	paint := Event{A: ActColour, C: ptr(5), P: ptr(2)}
+
+	// A bad move is still bad with colours around it.
+	bad := slices.Clone(f.r.Events)
+	i := f.index(t, ActUndo, 0)
+	bad = slices.Delete(bad, i, i+1)
+	bad = slices.Insert(bad, i, paint)
+	if err := Check(Replay{Version: 1, Events: bad}, f.givens, f.solution, f.elapsed); err == nil {
+		t.Error("a replay with its undo swapped for a colour passed")
+	}
+
+	// Like any event, a colour after the solving place is refused.
+	fin := f.index(t, ActFinish, 0)
+	late := slices.Insert(slices.Clone(f.r.Events), fin, Event{T: f.elapsed, W: f.r.Events[fin].W, A: ActColour, C: ptr(5), P: ptr(1)})
+	err := Check(Replay{Version: 1, Events: late}, f.givens, f.solution, f.elapsed)
+	if err == nil || !strings.Contains(err.Error(), "after the puzzle was solved") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestJSONRoundTripColours(t *testing.T) {
+	in := `{"version":1,"events":[{"t":0,"w":5,"a":"start"},{"t":1,"w":6,"a":"colour","c":4,"p":2},{"t":2,"w":7,"a":"clearColours"}]}`
+	var r Replay
+	if err := json.Unmarshal([]byte(in), &r); err != nil {
+		t.Fatal(err)
+	}
+	out, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != in {
+		t.Errorf("round trip = %s", out)
 	}
 }

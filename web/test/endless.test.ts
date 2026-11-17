@@ -311,9 +311,16 @@ test("completeEndless queues the result with its replay, and refuses an unfinish
   let long = done(repo, { generator: 1, difficulty: 1, number: 2 });
   for (let i = 0; i <= MAX_REPLAY_EVENTS; i++) long = long.record({ t: i, w: i, a: "hidden" });
   const noReplay = await repo.completeEndless(1, 1, 2, long);
+  // Colour pen events alone over the maximum are dropped rather than the whole replay.
+  let painted = done(repo, { generator: 1, difficulty: 1, number: 3 });
+  for (let i = 0; i < MAX_REPLAY_EVENTS - 1; i++) painted = painted.record({ t: i, w: i, a: "hidden" });
+  painted = painted.record({ t: 0, w: 0, a: "colour", c: 2, p: 1 }).record({ t: 0, w: 1, a: "clearColours" });
+  const sent = (await repo.completeEndless(1, 1, 3, painted)).replay!.events;
+  assert.equal(sent.length, painted.replay.length - 2);
+  assert.ok(sent.length <= MAX_REPLAY_EVENTS && sent.every((e) => e.a !== "colour" && e.a !== "clearColours"));
   assert.equal(noReplay.replay, undefined);
   await repo.refresh();
-  assert.equal(server.storedEndless.length, 2);
+  assert.equal(server.storedEndless.length, 3);
 });
 
 test("endlessProgress and endlessBoard fetch the leaderboards", async () => {

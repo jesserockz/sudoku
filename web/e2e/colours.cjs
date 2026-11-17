@@ -11,7 +11,7 @@
 // colour mode, givens refusing a colour, the tints showing together with the
 // selection, notes and digits, Clear colours, undo and Clear board, the dark
 // theme tokens, colours surviving a reload in Daily and Endless, the colours
-// being left out of the replay and results, and being dropped on solving.
+// being logged in the replay (and not in the result), and being dropped on solving.
 const { chromium } = require("playwright");
 
 const base = new URL(process.argv[2] || "http://localhost:8090/").href;
@@ -238,13 +238,25 @@ async function newPage(browser) {
   check(saved.includes('"colours"'), "the colours are in the locally saved game");
   check(await colourButton(page, false).count() === 1, "colour mode itself starts off again");
 
-  // Not in the replay: the saved replay holds no colour action.
-  const replayActions = await page.evaluate(() => {
+  // In the replay: the saved replay logs every colour change, and playing it back lands on the colours on screen.
+  const replayEvents = await page.evaluate(() => {
     const out = [];
-    for (const [k, v] of Object.entries(localStorage)) if (k.includes("games")) for (const g of Object.values(JSON.parse(v))) for (const e of g.replay ?? []) out.push(e.a);
+    for (const [k, v] of Object.entries(localStorage)) if (k.includes("games") && !k.includes("endless")) for (const g of Object.values(JSON.parse(v))) out.push(...(g.replay ?? []));
     return out;
   });
-  check(replayActions.length > 0 && replayActions.every((a) => /^(start|resume|pause|restore|place|erase|noteAdd|noteRemove|undo|clear|notes|hidden|visible)$/.test(a)), "the replay holds only the usual actions: " + [...new Set(replayActions)].join(", "));
+  const colourEvents = replayEvents.filter((e) => e.a === "colour" || e.a === "clearColours");
+  check(colourEvents.some((e) => e.a === "colour") && replayEvents.every((e) => /^(start|resume|pause|restore|place|erase|noteAdd|noteRemove|undo|clear|notes|hidden|visible|colour|clearColours)$/.test(e.a)),
+    "the replay holds colour events among the usual actions: " + [...new Set(replayEvents.map((e) => e.a))].join(", "));
+  check(colourEvents.filter((e) => e.a === "colour").every((e) => Number.isInteger(e.c) && e.c >= 0 && e.c < 81 && [0, 1, 2].includes(e.p) && Object.keys(e).sort().join() === "a,c,p,t,w"),
+    "each colour event has a cell and a pen 0..2 and nothing else");
+  const played = new Array(81).fill(0);
+  for (const e of replayEvents) {
+    if (e.a === "colour") played[e.c] = e.p;
+    else if (e.a === "clearColours" || e.a === "clear") played.fill(0);
+  }
+  const onScreen = [];
+  for (let k = 0; k < 81; k++) onScreen.push(await colourOf(page, k) === "A" ? 1 : await colourOf(page, k) === "B" ? 2 : 0);
+  check(played.join("") === onScreen.join("") && played[e1] === 1 && played[e2] === 2, "playing the replay's colour events back gives the colours on the board");
 
   // Clear board drops colours too.
   await cells.nth(e3).click();

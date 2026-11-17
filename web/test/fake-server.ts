@@ -12,6 +12,8 @@ export const ENDLESS_SEED = "3242a2d84b0602b6";
 export class FakeServer {
   online = true;
   rejectAll = false;
+  /** Acts like a server from before colour pen events: a replay holding one is `invalid_result`. */
+  rejectColours = false;
   /** When set, result uploads (daily and endless) answer this status instead of storing. */
   resultsStatus: number | null = null;
   /** When set, only endless result uploads answer this status. */
@@ -250,6 +252,7 @@ export class FakeServer {
       case "/api/v1/results": {
         if (this.resultsStatus !== null) return json({ error: { code: "boom", message: "" } }, this.resultsStatus);
         if (this.rejectAll) return json({ error: { code: "invalid_result", message: "nope" } }, 400);
+        if (this.rejectColours && /"a":"(colour|clearColours)"/.test(r.body)) return json({ error: { code: "invalid_result", message: "unknown action" } }, 400);
         const sent = JSON.parse(r.body) as GameResult;
         if (sent.generator !== undefined && sent.generator !== 1 && sent.generator !== 2) {
           return json({ error: { code: "invalid_result", message: "unknown generator" } }, 400);
@@ -270,6 +273,7 @@ export class FakeServer {
           return json({ error: { code: "boom", message: "" } }, this.endlessResultsStatus ?? this.resultsStatus!);
         }
         if (this.rejectAll) return json({ error: { code: "invalid_result", message: "nope" } }, 400);
+        if (this.rejectColours && /"a":"(colour|clearColours)"/.test(r.body)) return json({ error: { code: "invalid_result", message: "unknown action" } }, 400);
         const result = JSON.parse(r.body) as EndlessResult;
         if (result.variant !== undefined && ![0, 1, 2, 3].includes(result.variant)) {
           return json({ error: { code: "invalid_result", message: "unknown variant" } }, 400);

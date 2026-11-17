@@ -5,7 +5,9 @@ import {
 } from "../src/api/models.ts";
 import { decodeSavedGame } from "../src/data/app-storage.ts";
 import { Game } from "../src/game/game.ts";
-import { decodeReplay, decodeReplayEvent, type ReplayEvent } from "../src/game/replay.ts";
+import {
+  MAX_REPLAY_EVENTS, REPLAY_VERSION, decodeReplay, decodeReplayEvent, isColourEvent, replayToSend, withoutColourEvents, type ReplayEvent,
+} from "../src/game/replay.ts";
 
 const puzzle = "530070000600195000098000060800060003400803001700020006060000280000419005000080079";
 const solution = "534678912672195348198342567859761423426853791713924856961537284287419635345286179";
@@ -177,4 +179,48 @@ test("a replay detail decodes the result, the givens and the events", () => {
   assert.deepEqual(decodeReplayDetail(noEvents).events, []);
   assert.throws(() => decodeReplayDetail({ ...detail, givens: "123" }), /81 digits/);
   assert.throws(() => decodeReplayDetail({ ...detail, givens: puzzle.replace(/0/g, ".") }), /81 digits/);
+});
+
+// Colour pen events
+
+test("colour events decode with their pen, and clearColours without fields", () => {
+  assert.deepEqual(decodeReplayEvent({ t: 1, w: 2, a: "colour", c: 4, p: 2 }), ev("colour", 1, 2, { c: 4, p: 2 }));
+  assert.deepEqual(decodeReplayEvent({ t: 1, w: 2, a: "colour", c: 4, p: 0 }), ev("colour", 1, 2, { c: 4, p: 0 }));
+  assert.deepEqual(decodeReplayEvent({ t: 1, w: 2, a: "clearColours" }), ev("clearColours", 1, 2));
+  assert.throws(() => decodeReplayEvent({ t: 1, w: 2, a: "colour", c: 4, p: "A" }));
+  assert.deepEqual(decodeReplay({ version: 1, events: [{ t: 0, w: 1, a: "start" }, { t: 1, w: 2, a: "colour", c: 4, p: 1 }] }).events[1], ev("colour", 1, 2, { c: 4, p: 1 }));
+});
+
+test("isColourEvent picks out exactly the colour pen events", () => {
+  assert.ok(isColourEvent(ev("colour", 0, 0, { c: 1, p: 1 })) && isColourEvent(ev("clearColours", 0, 0)));
+  assert.ok(!isColourEvent(ev("clear", 0, 0)) && !isColourEvent(ev("place", 0, 0, { c: 1, d: 1 })));
+});
+
+test("replayToSend keeps every event up to the maximum, colours included", () => {
+  const events = [ev("start", 0, 0), ev("colour", 1, 1, { c: 1, p: 1 }), ev("clearColours", 2, 2), ev("finish", 3, 3)];
+  const sent = replayToSend(events)!;
+  assert.deepEqual(sent, { version: REPLAY_VERSION, events });
+  assert.notEqual(sent.events, events);
+  const atMax = [...events, ...Array.from({ length: MAX_REPLAY_EVENTS - events.length }, (_, i) => ev("hidden", 3, i))];
+  assert.equal(replayToSend(atMax)!.events.length, MAX_REPLAY_EVENTS);
+});
+
+test("replayToSend drops the colour events, and only them, when they push the replay over the maximum", () => {
+  const moves = Array.from({ length: MAX_REPLAY_EVENTS - 2 }, (_, i) => ev("hidden", 0, i));
+  const painted = [...moves, ev("colour", 1, 1, { c: 1, p: 1 }), ev("clearColours", 1, 2), ev("colour", 1, 3, { c: 2, p: 2 })];
+  assert.equal(painted.length, MAX_REPLAY_EVENTS + 1);
+  assert.deepEqual(replayToSend(painted)!.events, moves);
+  // Still too long without them: no replay at all.
+  assert.equal(replayToSend([...painted, ev("hidden", 2, 2)].concat(ev("hidden", 2, 3), ev("hidden", 2, 4))), null);
+  assert.equal(replayToSend([...moves, ev("hidden", 0, 0), ev("hidden", 0, 1), ev("hidden", 0, 2)]), null);
+});
+
+test("withoutColourEvents leaves a result with no colour events as it is, and strips the others", () => {
+  const plain = { replay: { version: 1, events: [ev("start", 0, 0), ev("place", 1, 1, { c: 1, d: 2 })] } };
+  assert.equal(withoutColourEvents(plain), plain);
+  const noReplay: { elapsedMs: number; replay?: undefined } = { elapsedMs: 5 };
+  assert.equal(withoutColourEvents(noReplay), noReplay);
+  const painted = { elapsedMs: 5, replay: { version: 1, events: [ev("start", 0, 0), ev("colour", 1, 1, { c: 1, p: 2 }), ev("clearColours", 2, 2), ev("finish", 3, 3)] } };
+  assert.deepEqual(withoutColourEvents(painted), { elapsedMs: 5, replay: { version: 1, events: [ev("start", 0, 0), ev("finish", 3, 3)] } });
+  assert.equal(painted.replay.events.length, 4);
 });
