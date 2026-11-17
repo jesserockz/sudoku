@@ -43,10 +43,19 @@ async function signIn(page, sub, name) {
   await page.getByText("Easy", { exact: true }).waitFor();
 }
 
+/** The smallest gap in pixels between a row of actions on the screen (not one inside a card) and the block after it (Infinity with none). */
+const actionsGap = (page) => page.evaluate(() => Math.min(...[...document.querySelectorAll(".actions")]
+  .filter((row) => row.nextElementSibling && !row.closest(".card"))
+  .map((row) => row.nextElementSibling.getBoundingClientRect().top - row.getBoundingClientRect().bottom)));
+
 async function openAdmin(page) {
   await page.getByRole("button", { name: "About", exact: true }).click();
-  await page.getByRole("button", { name: "Admin", exact: true }).click();
+  const admin = page.getByRole("button", { name: "Admin", exact: true });
+  await admin.waitFor();
+  check((await actionsGap(page)) >= 8, "About's rows of buttons, Admin's among them, keep a gap from the next row");
+  await admin.click();
   await page.locator(".generator-admin .generator-choices").waitFor();
+  check((await actionsGap(page)) >= 12, "Results and replays keeps a gap from the card under it");
 }
 
 /** Backtracking solver over 81 digits (0 = empty). */

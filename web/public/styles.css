@@ -188,6 +188,9 @@ form.login button { margin-top: 16px; width: 100%; }
 .puzzles .status.done { color: var(--done); }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
 .actions a { color: var(--accent); padding: 8px; }
+/* A row of actions keeps its distance from what follows: another row as far as its own buttons are apart, a card or notice as far as cards are. */
+.actions + .actions { margin-top: 8px; }
+.actions + .card, .actions + .notice { margin-top: 12px; }
 
 /* Play */
 .timer { font-variant-numeric: tabular-nums; font-size: 1.2rem; font-weight: 600; }
