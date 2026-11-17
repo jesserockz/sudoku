@@ -110,9 +110,23 @@ async function newPage(browser) {
   // The labels stay put; the on state is the highlight (and aria-pressed).
   const notes = page.locator(".controls button", { hasText: /^Notes$/ });
   check(await notes.getAttribute("aria-pressed") === "false" && !(await notes.getAttribute("class") ?? "").includes("active"), "Notes reads just Notes and starts unhighlighted");
+  const pressed = async () => [await notes.getAttribute("aria-pressed"), await page.locator(".controls button", { hasText: /^Colours$/ }).getAttribute("aria-pressed")].join(" ");
+  // Notes and Colours are exclusive: turning one on turns the other off, by key or button.
   await page.keyboard.press("n");
   check(await notes.innerText() === "Notes" && await notes.getAttribute("aria-pressed") === "true" && (await notes.getAttribute("class")).includes("active"), "Notes on keeps its label and is highlighted");
+  check(await pressed() === "true false", "N turns colour mode off");
+  await page.keyboard.press("c");
+  check(await pressed() === "false true" && !(await notes.getAttribute("class") ?? "").includes("active"), "C turns notes mode off");
+  await notes.click();
+  check(await pressed() === "true false", "the Notes button turns colour mode off");
+  await colourButton(page, false).click();
+  check(await pressed() === "false true", "the Colours button turns notes mode off");
+  await page.keyboard.press("c");
+  check(await pressed() === "false false", "turning colour off leaves notes off");
   await page.keyboard.press("n");
+  await page.keyboard.press("n");
+  check(await pressed() === "false false", "turning notes off leaves colour off");
+  await page.keyboard.press("c");
   check(await colourButton(page, true).innerText() === "Colours" && (await colourButton(page, true).getAttribute("class")).includes("active"), "Colours keeps its label and is highlighted when on");
   check(await page.getByRole("button", { name: "Clear colours" }).isDisabled(), "Clear colours is shown but disabled while nothing is coloured");
 
