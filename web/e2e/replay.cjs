@@ -196,6 +196,11 @@ async function shot(page, name) {
   await page.getByText("‹ Back").click();
   await page.getByText("Nora").first().click();
   await page.getByRole("button", { name: "Confirm flag" }).waitFor();
+  const flagGaps = await page.evaluate(() => {
+    const [text, confirm, remove] = [".flag p", ".flag button.danger", ".flag button:not(.danger)"].map((s) => document.querySelector(s).getBoundingClientRect());
+    return [confirm.top - text.bottom, remove.left - confirm.right];
+  });
+  check(flagGaps.every((gap) => gap >= 8), "the flag's buttons keep a gap from the text above and from each other");
   await shot(page, "replay-auto-flag");
   await page.getByRole("button", { name: "Confirm flag" }).click();
   await page.getByText("Flagged by Ann", { exact: false }).waitFor();
