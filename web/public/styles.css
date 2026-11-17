@@ -188,9 +188,10 @@ form.login button { margin-top: 16px; width: 100%; }
 .puzzles .status.done { color: var(--done); }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
 .actions a { color: var(--accent); padding: 8px; }
-/* A row of actions keeps its distance from what follows: another row as far as its own buttons are apart, a card or notice as far as cards are. */
+/* A row of actions keeps its distance from what follows: another row or a paragraph as far as its own buttons are apart, a card or notice as far as cards are. */
 .actions + .actions { margin-top: 8px; }
 .actions + .card, .actions + .notice { margin-top: 12px; }
+.actions + p, .card .actions + p.small { margin-top: 8px; }
 
 /* Play */
 .timer { font-variant-numeric: tabular-nums; font-size: 1.2rem; font-weight: 600; }
@@ -424,6 +425,9 @@ table.board-table tr.warn td { color: var(--conflict); }
   border: 1px solid var(--line); background: var(--bg); color: var(--text);
 }
 .card .flag button { flex: none; }
+/* A flagged result: who flagged it on its own line, then the buttons spaced like any row of them. */
+.card .flag:not(.inline) { display: flex; flex-wrap: wrap; gap: 8px; }
+.card .flag:not(.inline) p { flex-basis: 100%; margin: 0; }
 button.danger { color: var(--conflict); border-color: var(--conflict); }
 .replay-player label.reveal { font-weight: 600; }
 /* The game's board, read-only, sized like the game's from its own width. */
