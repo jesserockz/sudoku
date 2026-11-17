@@ -5,6 +5,7 @@ import { generatorName } from "../generator/versions.ts";
 import { SudokuBoard, SudokuKeypad } from "./board.ts";
 import { ENDLESS_LABEL, type AppController, type PuzzleRef } from "./controller.ts";
 import { type Child, Component, h, topBar } from "./dom.ts";
+import { type InputMode, toggleMode } from "./input-mode.ts";
 import { shareResultsButton } from "./share.ts";
 import { seriesName } from "./variants.ts";
 import { ScreenWakeLock } from "./wake-lock.ts";
@@ -18,15 +19,15 @@ import { ScreenWakeLock } from "./wake-lock.ts";
  * Colour mode (see `Game.cycleColour`): tapping a cell cycles its colour
  * instead of selecting it, and digits and Erase are off, so a tap can never
  * place a digit or note. Colours are the player's own aid: they're not logged
- * in the replay.
+ * in the replay. Notes and Colours are exclusive toggles: turning one on turns
+ * the other off.
  */
 export class PlayScreen extends Component {
   app!: AppController;
   /** Today's game number, or the endless puzzle. */
   ref: PuzzleRef = 0;
   #selected = -1;
-  #notesMode = false;
-  #colourMode = false;
+  #mode: InputMode = "digits";
   #paused = false;
   readonly #board = document.createElement("sudoku-board") as SudokuBoard;
   readonly #keypad = document.createElement("sudoku-keypad") as SudokuKeypad;
@@ -106,14 +107,19 @@ export class PlayScreen extends Component {
     if (!this.#paused) this.app.update(this.ref, (g) => g.undo(), { a: "undo" });
   }
 
-  #toggleNotes(): void {
-    this.#notesMode = !this.#notesMode;
-    this.app.log(this.ref, { a: "notes", on: this.#notesMode });
-    this.update();
+  get #notesMode(): boolean {
+    return this.#mode === "notes";
   }
 
-  #toggleColour(): void {
-    this.#colourMode = !this.#colourMode;
+  get #colourMode(): boolean {
+    return this.#mode === "colour";
+  }
+
+  /** Presses the Notes or Colours toggle. The replay logs notes mode going on or off, also when Colours turns it off. */
+  #toggle(target: "notes" | "colour"): void {
+    const wasNotes = this.#notesMode;
+    this.#mode = toggleMode(this.#mode, target);
+    if (this.#notesMode !== wasNotes) this.app.log(this.ref, { a: "notes", on: this.#notesMode });
     this.update();
   }
 
@@ -141,8 +147,8 @@ export class PlayScreen extends Component {
     else if (e.key === "ArrowDown") this.#move(1, 0);
     else if (e.key === "ArrowLeft") this.#move(0, -1);
     else if (e.key === "ArrowRight") this.#move(0, 1);
-    else if (e.key === "n" || e.key === "N") this.#toggleNotes();
-    else if (e.key === "c" || e.key === "C") this.#toggleColour();
+    else if (e.key === "n" || e.key === "N") this.#toggle("notes");
+    else if (e.key === "c" || e.key === "C") this.#toggle("colour");
     else if (e.key === "Escape") this.#select(-1);
     else return;
     e.preventDefault();
@@ -197,11 +203,11 @@ export class PlayScreen extends Component {
             }, "Clear"),
           h("button", {
             class: this.#notesMode && "active", "aria-pressed": String(this.#notesMode),
-            onclick: () => this.#toggleNotes(),
+            onclick: () => this.#toggle("notes"),
           }, "Notes"),
           h("button", {
             class: this.#colourMode && "active", "aria-pressed": String(this.#colourMode),
-            onclick: () => this.#toggleColour(),
+            onclick: () => this.#toggle("colour"),
           }, "Colours"),
         ),
       );
