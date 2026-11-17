@@ -1,6 +1,7 @@
 import { AppStorage } from "./data/app-storage.ts";
 import { SudokuRepository } from "./data/repository.ts";
 import { WebStorageStore } from "./data/store.ts";
+import { LearnProgress } from "./learn/progress.ts";
 import { SeedRepository } from "./serverless/seed-repository.ts";
 import "./ui/app.ts";
 import type { SudokuApp } from "./ui/app.ts";
@@ -21,6 +22,7 @@ const app = new AppController(
     wallMs: () => Date.now(),
     reloadPage: () => location.reload(),
   },
+  new LearnProgress(store),
 );
 
 // A new build installs and takes over in the background; the page keeps running the old code until reloaded.

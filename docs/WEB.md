@@ -13,6 +13,7 @@ installed, on phones (including iPhone, from the Home Screen) and desktops.
 | `src/api/`           | v1 API client and models, OIDC (Authorization Code + PKCE)         |
 | `src/data/`          | `localStorage` documents, the offline result queue, the repository |
 | `src/serverless/`    | Seed play: week-seed KDF, share links, local history               |
+| `src/learn/`         | Learn: technique finders, lessons, practice positions, progress    |
 | `src/ui/`            | App controller and the custom elements (`<sudoku-board>`, screens) |
 | `public/`            | `index.html`, `styles.css`, `sw.js`, the manifest and icons        |
 | `test/`              | Unit tests (Node's test runner)                                    |
@@ -585,6 +586,8 @@ In dev auth mode the app instead asks for a user id and display name and sends
   a seed): see [Endless puzzles](#endless-puzzles).
 - **Variants** (the third tab: Diagonal, Jigsaw and Killer; with a server or a
   seed): see [Variants](#variants).
+- **Learn** (the home page's fourth tab): lessons on solving without
+  guessing, see [Learn](#learn).
 - **Leaderboard**: total and per-puzzle boards with shared ranks, plus each
   player's progress (e.g. 3/5), for today and the previous 8 days. Online
   only; offline it says so, and it loads once the connection is back. Results
@@ -622,12 +625,138 @@ In dev auth mode the app instead asks for a user id and display name and sends
   `variants` in `GET /api/v1/me/stats` (left out when an older server sends
   none).
 
+## Learn
+
+The home page's fourth tab (after Daily, Endless and Variants) teaches the
+solving techniques, from the rules to chains and then the variants, so that
+no puzzle needs a guess. It needs no server and no sign-in: it
+works with a server, with a seed and offline, and nothing it does is sent
+anywhere.
+
+There are 33 lessons in six levels: five named after the Graded difficulties
+that need them, then one for the [Variants](#variants):
+
+| Level      | Lessons                                                                                                      |
+| ---------- | ------------------------------------------------------------------------------------------------------------ |
+| Easy       | The rules and the last square, cross-hatching, hidden singles in rows and columns                            |
+| Medium     | Notes and candidates, naked singles                                                                          |
+| Hard       | Pointing, claiming, naked and hidden pairs, triples and quads                                                |
+| Expert     | X-Wing, Swordfish, Jellyfish, Skyscraper, 2-String Kite, Empty Rectangle, XY-Wing, XYZ-Wing, W-Wing          |
+| Diabolical | Unique Rectangle, simple colouring, X-Chains, XY-Chains                                                      |
+| Variants   | Diagonal: the extra units, locked candidates. Jigsaw: regions, the law of leftovers. Killer: see below       |
+
+The Variants lessons are taught on boards of their own variant, drawn like the
+game's (shaded diagonals, bold region borders, dashed cages with their sums):
+
+- **Diagonal**: the two diagonals as extra units (a digit with one place left
+  on a diagonal), and locked candidates between a box and a diagonal.
+- **Jigsaw**: the irregular regions (a digit with one place left in a region),
+  and the law of leftovers: the first one to four rows or columns from an edge
+  against the regions lying mostly inside them, whose leftover squares on each
+  side hold the same digits (drawn in two colours).
+- **Killer**: cage sums and the combinations that make them, the 45 rule
+  (innies and outies: the one square left over when a row, column or box is
+  compared with the cages covering it), and cage pointing (a digit a cage must
+  hold, lined up in a row, column or box, leaves the rest of it).
+
+Each lesson has up to three parts, shown as tabs:
+
+- **Learn**: what the technique is, how to spot it, and a worked example on a
+  real position that steps through the pattern (Back, Next, Play, or the left
+  and right arrow keys), highlighting the squares and candidates involved and
+  then the digit placed or the candidates struck out.
+- **Practice**: three or four positions where the technique is the easiest
+  step open. The player picks a square and then the digit it takes, or, for a
+  technique that only removes candidates, a candidate the pattern rules out.
+  Every answer gets feedback at once: a right one explains why, a wrong one
+  says what is wrong with it (a digit that breaks the rules, a true digit that
+  this technique doesn't give, a candidate that is still possible) and counts
+  as a mistake. **Hint** points at the pattern first and gives the answer the
+  second time. The notes lesson asks for every candidate of a few squares
+  instead.
+- **Full puzzle** (every lesson but the first and the notes one, variants
+  included): a whole
+  puzzle whose hardest step is that technique. Digits are checked against the
+  solution as they go in, **Remove** switches to striking out candidates
+  (only ones a technique really rules out are accepted), **Notes** shows the
+  candidates, and **Hint** shows the easiest step open, whatever technique it
+  is.
+
+Keys on a lesson: arrows move the selection (or step the worked example),
+`1` to `9` answer, `H` or `?` hints, `N` switches Remove, `C` shows
+candidates, `Escape` deselects.
+
+Progress is kept per lesson in `localStorage` only (`learn`,
+`src/learn/progress.ts`): opened, the positions finished, the ones finished
+unaided (the answer never shown and at most two mistakes) and whether the full
+puzzle was solved. A lesson reads New, Started, "Practised 2 of 4" or
+Mastered (every position unaided) in the list, and the tab's first card counts
+the lessons mastered. The Graded explainer links each level to its first
+lesson ("Learn these"), and About has "Learn the techniques".
+
+How it is built:
+
+- `src/learn/state.ts` is a position with its candidates, and a `Step` (what
+  a technique found: the pattern's cells and digits, a placement or
+  eliminations, and the explanation). `src/learn/finders/` has one finder per
+  technique, and `techniques.ts` lists them easiest first, with `nextStep`
+  and `solveByLogic` (which solve by technique alone, never by search).
+- These are separate from the generator's grader (`src/generator/grader.ts`),
+  which is untouched: Learn teaches a few techniques the grader doesn't use
+  (Jellyfish, Skyscraper, 2-String Kite, Empty Rectangle, W-Wing, Unique
+  Rectangle, X-Chains), and those lessons say so.
+- A position carries its `Layout` (`src/core/layout.ts`), standard unless the
+  data says otherwise. The singles finders, the drill's feedback and the board
+  follow it; `finders/variants.ts` has the seven variant techniques, and
+  `techniquesFor(layout)` in `techniques.ts` is the order tried on each
+  layout. A Jigsaw uses only singles and leftovers (the other finders assume
+  3x3 boxes), and Diagonal and Killer leave out Unique Rectangle, whose
+  argument fails with extra constraints. The law of leftovers is the one
+  variant technique the grader has no equivalent of.
+- `src/learn/positions.ts` holds the practice positions and puzzles. It is
+  generated: `node scripts/learn-mine.ts <first seed> <puzzles> <out.json>`
+  generates puzzles, solves them with the Learn techniques and records every
+  position where a technique is the easiest step open, and
+  `node scripts/learn-fixture.ts <mined.json>...` picks from one or more runs
+  and writes the file. Don't edit it by hand.
+- `src/learn/variant-positions.ts` is the same for the Variants lessons, each
+  entry with its own layout (`diagonal`, 81 region digits, or cages as
+  `sum:cell.cell ...`), so it doesn't depend on what the generator produces
+  later. `node scripts/learn-mine.ts --variant <1|2|3> <first seed> <puzzles>
+  <out.json>` mines Diagonal, Jigsaw or Killer puzzles (skipping Killer
+  layouts with a one-square cage) and `node scripts/learn-fixture.ts
+  --variants <mined.json>...` writes that file only. Killer needs several
+  thousand puzzles to find cage pointing positions the grader agrees with.
+- `test/learn-positions.test.ts` and `test/learn-lessons.test.ts` check every
+  position: the solution is the only one, the lesson's technique applies and
+  nothing easier does, the step it finds agrees with the solution, and each
+  full puzzle solves with techniques up to its lesson's. Variant positions
+  are checked under their own layout with the variant solver
+  (`hasUniqueSolutionIn`) and, where the grader has the technique, against the
+  grader's next step; `test/learn-variants.test.ts` also runs the Learn
+  solver over generated puzzles of each variant and checks no step ever
+  contradicts the solution.
+- `src/learn/drill.ts` is one exercise (checking answers, feedback, hints);
+  `src/ui/learn-session.ts` is a visit to a lesson and `src/ui/learn-view.ts`
+  what the board and list draw. All three are DOM-free and unit-tested;
+  `src/ui/learn.ts` (`<sudoku-learn>` and the lesson list) only draws them.
+
+`web/e2e/learn.cjs <url> [screenshot dir]` checks it in a browser against the
+static build (no server needed, like `serverless.cjs` below): it opens the
+Learn tab, steps a worked example, gives a wrong and then a right answer,
+finishes a lesson's positions (one of them by keyboard only), checks the
+progress survives a reload, solves a full puzzle, finishes a candidate lesson
+with hints, follows the Graded explainer's link, and checks phone width and
+dark mode. It also checks the four home tabs fit on one row at 320 and 375
+pixels, opens a lesson of each variant and checks its board's drawing, and
+answers a Diagonal and a Killer position wrong and then right.
+
 ## Endless puzzles
 
-The home page has three tabs, **Daily** (the day's games, as
-above), **Endless** and **Variants** (see [Variants](#variants)); the one last
-shown is remembered on the device (`home-tab` in `localStorage`: `daily`,
-`endless` or `variants`). The tabs' names are `ENDLESS_LABEL` and
+The home page has four tabs, **Daily** (the day's games, as
+above), **Endless**, **Variants** (see [Variants](#variants)) and **Learn**
+(see [Learn](#learn)); the one last shown is remembered on the device
+(`home-tab` in `localStorage`: `daily`, `endless`, `variants` or `learn`). The tabs' names are `ENDLESS_LABEL` and
 `VARIANTS_LABEL` in `src/ui/controller.ts`.
 
 Endless puzzles are numbered from 1 within each of the five difficulty tiers,

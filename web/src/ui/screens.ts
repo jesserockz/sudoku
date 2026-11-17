@@ -11,6 +11,7 @@ import { WEB_VERSION } from "../version.ts";
 import { type AdminModel, actionLabel, flavourOf, formatBytes, progressFraction } from "./admin.ts";
 import { type AppController, ENDLESS_LABEL, type Phase, type ServerInfo, VARIANTS_LABEL } from "./controller.ts";
 import { type Child, Component, h, topBar } from "./dom.ts";
+import { lessonList } from "./learn.ts";
 import { GENERATOR_CHOICES, generatorsSummary, sameGenerators } from "./generator.ts";
 import { fromLocalInput, maintenanceError, PLAYER_TRY_LATER, toLocalInput } from "./maintenance.ts";
 import { sparklinePoints, streakMarker, streakSummary } from "./stats.ts";
@@ -174,13 +175,14 @@ export class TodayScreen extends Screen {
 
   protected render(): Child {
     const app = this.app;
-    const labels = { daily: "Daily", endless: ENDLESS_LABEL, variants: VARIANTS_LABEL } as const;
+    const labels = { daily: "Daily", endless: ENDLESS_LABEL, variants: VARIANTS_LABEL, learn: "Learn" } as const;
     const tabs = app.hasEndless && h("div", { class: "tabs home-tabs", role: "tablist" },
-      (["daily", "endless", "variants"] as const).map((tab) => h("button", {
+      (["daily", "endless", "variants", "learn"] as const).map((tab) => h("button", {
         role: "tab", class: app.homeTab === tab && "active", "aria-selected": String(app.homeTab === tab),
         onclick: () => app.showHomeTab(tab),
       }, labels[tab])));
     const [header, body] = this.#daily();
+    if (app.hasEndless && app.homeTab === "learn") return [header, tabs, lessonList(app)];
     let content: Child = body;
     if (app.hasEndless && app.homeTab === "endless") content = this.#endless(VARIANT_STANDARD);
     else if (app.hasEndless && app.homeTab === "variants") content = [variantSwitch(app.variant, (v) => app.chooseVariant(v)), this.#endless(app.variant)];
@@ -696,6 +698,7 @@ export class AboutScreen extends Screen {
         h("button", { onclick: () => app.openHelp("daily") }, "How Daily works"),
         app.hasEndless && h("button", { onclick: () => app.openHelp("endless") }, `How ${ENDLESS_LABEL} works`),
         app.hasEndless && h("button", { onclick: () => app.openHelp("variants") }, `How ${VARIANTS_LABEL} works`),
+        h("button", { onclick: () => app.openLearn() }, "Learn the techniques"),
         h("button", { onclick: () => app.openHelp("generators") }, "Classic and Graded"),
       ),
       app.me?.admin && !app.seed && h("div", { class: "actions" },

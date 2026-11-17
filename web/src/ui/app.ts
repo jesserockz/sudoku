@@ -2,13 +2,14 @@ import type { AppController, PuzzleRef } from "./controller.ts";
 import { DIFFICULTIES } from "../generator/generator.ts";
 import { h } from "./dom.ts";
 import { helpDialog } from "./help.ts";
+import "./learn.ts";
 import { ADMIN_BANNER, ADMIN_BANNER_COMPACT, PLAYER_BANNER, PLAYER_BANNER_COMPACT } from "./maintenance.ts";
 import "./play.ts";
 import "./replay-screens.ts";
 import "./screens.ts";
 import { seriesName } from "./variants.ts";
 
-type ScreenElement = HTMLElement & { app: AppController; ref?: PuzzleRef; update(): void };
+type ScreenElement = HTMLElement & { app: AppController; ref?: PuzzleRef; lesson?: string; update(): void };
 
 /**
  * `<sudoku-app>`: shows the screen for the app's phase and screen, and updates
@@ -46,7 +47,9 @@ export class SudokuApp extends HTMLElement {
         ? ["sudoku-play", `play-${screen.generator}-${screen.level}`]
         : screen.kind === "endless-play"
           ? ["sudoku-play", `endless-play-${screen.generator}-${screen.variant}-${screen.difficulty}-${screen.number}`]
-          : [`sudoku-${screen.kind}`, screen.kind];
+          : screen.kind === "learn"
+            ? ["sudoku-learn", `learn-${screen.lesson}`]
+            : [`sudoku-${screen.kind}`, screen.kind];
     if (key === this.#key && this.#screen) {
       this.#screen.update();
       return;
@@ -54,6 +57,7 @@ export class SudokuApp extends HTMLElement {
     const next = document.createElement(tag) as ScreenElement;
     next.app = app;
     if (screen.kind === "play") next.ref = screen.level;
+    else if (screen.kind === "learn") next.lesson = screen.lesson;
     else if (screen.kind === "endless-play") next.ref = { generator: screen.generator, variant: screen.variant, difficulty: screen.difficulty, number: screen.number };
     // Set before swapping: the old screen may change the app as it leaves (e.g. pausing its game).
     this.#key = key;
