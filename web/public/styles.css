@@ -194,6 +194,8 @@ form.login button { margin-top: 16px; width: 100%; }
 .actions + p, .card .actions + p.small { margin-top: 8px; }
 
 /* Play */
+/* While a game is on screen (`src/ui/zoom-lock.ts`): no pinch or double-tap zoom, though the page still pans, and no text selection or long-press callout. */
+:root.playing { touch-action: pan-x pan-y; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .timer { font-variant-numeric: tabular-nums; font-size: 1.2rem; font-weight: 600; }
 sudoku-play header.bar > div { display: flex; align-items: center; gap: 4px; }
 

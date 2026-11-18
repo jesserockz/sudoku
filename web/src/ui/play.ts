@@ -10,6 +10,7 @@ import { type InputMode, toggleMode } from "./input-mode.ts";
 import { shareResultsButton } from "./share.ts";
 import { seriesName } from "./variants.ts";
 import { ScreenWakeLock } from "./wake-lock.ts";
+import { lockZoom } from "./zoom-lock.ts";
 
 /**
  * `<sudoku-play>`: one puzzle being played. The timer runs only while this
@@ -36,6 +37,8 @@ export class PlayScreen extends Component {
   readonly #timer = h("span", { class: "timer" });
   #tick = 0;
   readonly #wakeLock = new ScreenWakeLock();
+  /** Lets the page zoom and its text be selected again, once the game is off screen. */
+  #unlockZoom: () => void = () => {};
 
   constructor() {
     super();
@@ -47,6 +50,7 @@ export class PlayScreen extends Component {
     this.app.update(this.ref, (g) => g.resume(this.app.nowMs()), { a: "resume" });
     document.addEventListener("visibilitychange", this.#onVisibility);
     window.addEventListener("keydown", this.#onKey);
+    this.#unlockZoom = lockZoom(document);
     this.#tick = window.setInterval(() => this.#showTime(), 250);
     super.connectedCallback();
   }
@@ -54,6 +58,7 @@ export class PlayScreen extends Component {
   disconnectedCallback(): void {
     document.removeEventListener("visibilitychange", this.#onVisibility);
     window.removeEventListener("keydown", this.#onKey);
+    this.#unlockZoom();
     clearInterval(this.#tick);
     this.#wakeLock.set(false);
     this.app.update(this.ref, (g) => g.pause(this.app.nowMs()), { a: "pause" });
