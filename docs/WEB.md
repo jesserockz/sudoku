@@ -575,6 +575,16 @@ In dev auth mode the app instead asks for a user id and display name and sends
   and the tab is visible; switching away pauses it behind a "Paused" cover.
   While a puzzle is being played (not paused or solved) the app holds a
   screen wake lock, where supported, so the phone does not go to sleep.
+  While the play screen is up (paused and solved included) the page can't be
+  pinch or double-tap zoomed and its text can't be selected, so fast taps
+  never move or highlight the page: `src/ui/zoom-lock.ts` sets `playing` on
+  the root element, whose CSS allows panning only (`touch-action: pan-x
+  pan-y`) and turns off selection and the long-press callout, and cancels
+  Safari's `gesturestart`, since Safari ignores `user-scalable=no`. Every
+  other screen zooms and selects as usual, and zooming from the browser's own
+  menu or keyboard is left alone. `web/e2e/zoom-lock.cjs <url>` checks it
+  against the static build with real two-finger pinches, double clicks and a
+  long press, and that taps, the number pad and the keyboard still play.
   Games are saved on every move, so a reload or a closed tab resumes where you
   left off.
 - **Replays**: every game records each action (placing, erasing, notes, undo,
