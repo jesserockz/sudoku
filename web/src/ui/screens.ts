@@ -8,7 +8,7 @@ import { GENERATOR_VERSIONS, generatorName } from "../generator/versions.ts";
 import { generateSeed, normalizeSeed, seedSettings, type SeedSettings } from "../serverless/seed.ts";
 import { parseShareLink } from "../serverless/share-link.ts";
 import { WEB_VERSION } from "../version.ts";
-import { type AdminModel, actionLabel, flavourOf, formatBytes, progressFraction } from "./admin.ts";
+import { type AdminModel, CLOSE_HINT, actionLabel, flavourOf, formatBytes, progressFraction } from "./admin.ts";
 import { type AppController, ENDLESS_LABEL, type Phase, type ServerInfo, VARIANTS_LABEL } from "./controller.ts";
 import { type Child, Component, h, topBar } from "./dom.ts";
 import { lessonList } from "./learn.ts";
@@ -887,13 +887,14 @@ export class AdminScreen extends Screen {
           h("p", null, p.status.message || p.status.state),
           h("progress", { max: 1, ...(fraction === null ? {} : { value: fraction }) }),
           p.status.bytesTotal > 0 && h("p", { class: "muted small" }, `${formatBytes(p.status.bytesDone)} of ${formatBytes(p.status.bytesTotal)}`),
+          h("p", { class: "muted small" }, CLOSE_HINT),
         );
       }
       case "restarting":
         return h("div", { class: "card" },
           h("p", null, `Restarting the server${p.target ? ` on ${p.target}` : ""}…`),
           h("progress", { max: 1 }),
-          h("p", { class: "muted small" }, "This can take a minute. Don't close this page."),
+          h("p", { class: "muted small" }, `This can take a minute. ${CLOSE_HINT}`),
         );
       case "done": return h("div", { class: "card" }, h("p", null, p.message));
       case "failed": return h("div", { class: "notice" }, p.message);
