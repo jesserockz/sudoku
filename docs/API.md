@@ -170,6 +170,27 @@ Attempts are capped at 200 for Diagonal and Jigsaw and 30 for Killer (whose atte
 | Cage pointing      | 5     | A digit every filling of a cage must use, whose places in the cage share a row, column or box, goes from the rest of that unit                                                                                      |
 | 45 rule over lines | 6     | The 45 rule on 2 and 3 adjacent rows, then columns (90 and 135)                                                                                                                                                     |
 
+## Variant of the day
+
+Besides the classic daily games there is one extra daily puzzle, the **variant of the day**: a Diagonal, Jigsaw or Killer puzzle with its own results and leaderboard. It is a pure function of the week seed and the ISO day of week (`1` Monday to `7` Sunday), the same inputs as the daily games, bit-identical in TypeScript (`generateDailyVariant`, `dailyVariantOf`) and Go (`puzzle.GenerateDailyVariant`, `puzzle.DailyVariantOf`), pinned by the `daily` section of `testdata/variants.json`.
+
+- It always uses the **Graded** generator (version 2), whatever the admin's [enabled generators](#enabled-generators) are, so it does not depend on the Classic / Graded switch.
+- Its difficulty is Expert (tier 4) or Diabolical (tier 5), chosen per day. Clients never show the generator or the difficulty, only the variant (for example "Killer of the day").
+- The variant is drawn pseudo-randomly per day (a variant can repeat on consecutive days), not from a fixed cycle.
+
+```
+DAILY_VARIANT_DOMAIN = 0x76646179          // "vday" in ASCII
+h = mix(DAILY_VARIANT_DOMAIN)
+h = mix(h ^ weekSeed)
+h = mix(h + dayOfWeek)
+variant = 1 + mix(h + 1) mod 3             // 1 Diagonal, 2 Jigsaw, 3 Killer
+tier    = 4 + mix(h + 2) mod 2             // 4 Expert, 5 Diabolical
+seed    = mix(h + 3)                       // the puzzle seed
+puzzle  = buildGradedVariant(seed, variant, tier, MaxAttemptsVariantGraded[variant])
+```
+
+`mix` is SplitMix64's output function and `buildGradedVariant` the [Graded variant build](#difficulty). A player has at most one result per date. Finishing it counts towards the [daily streak](#get-apiv1mestats) exactly like a classic daily result (a date with a result that no admin has flagged counts), and the streak stays one number. Its leaderboard is separate from the classic boards and is never part of the Total.
+
 ## Endpoints
 
 ### `GET /healthz`
@@ -258,6 +279,18 @@ The caller's results for a day (defaults to today). Lets a fresh device know whi
 
 Results of every generator, ordered by `generator` then `level`; each carries the `generator` it was played with.
 
+`variantDaily` is the caller's [variant of the day](#variant-of-the-day) result for the date, or `null`:
+
+```json
+{
+  "date": "2026-10-26",
+  "results": [],
+  "variantDaily": { "date": "2026-10-26", "variant": 3, "elapsedMs": 421000, "completedAt": "2026-10-26T09:45:00+13:00" }
+}
+```
+
+Older servers don't send it; clients treat a missing value as `null`.
+
 ### `POST /api/v1/results`
 
 Submit one completed puzzle.
@@ -328,6 +361,46 @@ The board of one generator's results for a day. `date` defaults to today. The op
 - Each `players` item has `"streak": n`: the player's [daily streak](#get-apiv1mestats) as of the board's date, i.e. the number of consecutive days, ending on `date`, on which they had a counting result of any generator. It is 0 when none of their results on `date` counts (for instance, an admin flagged them all), and on today's board it equals their current streak. Older servers don't send it; clients treat a missing value as 0.
 - Every puzzle and total entry also has `"suspicious": true|false`: `true` when an admin flagged that result (the server's own automatic flags don't count until an admin confirms one), or for a total entry, any of the player's results that day. Flagged results stay listed and ranked like any other; clients show a visible marker on them. Who flagged a result and why is only shown to admins.
 
+### `POST /api/v1/variant-daily/results`
+
+Submits a finished [variant of the day](#variant-of-the-day). Body:
+
+```json
+{
+  "date": "2026-10-26",
+  "elapsedMs": 421000,
+  "completedAt": "2026-10-26T09:45:00+13:00",
+  "replay": { "version": 1, "events": [] }
+}
+```
+
+- `date`, `elapsedMs` and `completedAt` are required; `replay` is optional. They follow the same rules as [`POST /api/v1/results`](#post-apiv1results): `date` is `YYYY-MM-DD`, not in the future and at most 8 days ago, `elapsedMs` is between 5 000 and 86 400 000, `completedAt` is RFC 3339. `400 bad_request` / `400 invalid_result` / `413 too_large` as there.
+- The server works out the day's variant from `date` (there is no `variant` or `level` field), regenerates the puzzle and checks the replay against it and its layout, with the same [replay checks](#replay-checks) as every other result (colour pen events are allowed). A failed or missing replay never rejects the result: it is stored with its `replay` status and flagged by the server (see [Replays](#replays)).
+- Idempotent per `(user, date)`: `201` with the stored result when new; `200` with the existing (first) result otherwise, leaving its replay and flag alone.
+
+```json
+{ "date": "2026-10-26", "variant": 3, "elapsedMs": 421000, "completedAt": "2026-10-26T09:45:00+13:00" }
+```
+
+### `GET /api/v1/variant-daily/leaderboard?date=YYYY-MM-DD`
+
+The variant of the day's board for a date (defaults to today, `400 bad_request` for a bad date). It is the same for every generator, and separate from the classic [leaderboard](#get-apiv1leaderboarddateyyyy-mm-ddgenerator12).
+
+```json
+{
+  "date": "2026-10-26",
+  "variant": 3,
+  "entries": [
+    { "rank": 1, "userId": "bob", "displayName": "Bob", "elapsedMs": 400000, "suspicious": false, "streak": 4 },
+    { "rank": 2, "userId": "alice", "displayName": "Alice", "elapsedMs": 421000, "suspicious": false, "streak": 1 }
+  ]
+}
+```
+
+- `variant` is the day's variant (`1` Diagonal, `2` Jigsaw, `3` Killer), also when nobody has finished it (`entries` is then `[]`).
+- Entries are sorted by time ascending, with the same tie rules as the classic boards (standard competition ranking, ties ordered by `displayName` for display only), and `suspicious` as there.
+- `streak` is the player's [daily streak](#get-apiv1mestats) as of `date`, as on the classic boards' `players`.
+
 ### `GET /api/v1/endless`
 
 The [endless seed](#endless-seed).
@@ -383,7 +456,7 @@ The caller's streak and personal statistics, for the Stats screen.
 
 - `today` is today's game date in the server's timezone, as in `GET /api/v1/week`.
 - `generator` echoes the [generator version](#generator-versions) the `daily` numbers are for. The optional query parameter `generator` (`1` or `2`, else `400 bad_request`) picks it; it defaults to the default generator (the first enabled). Only results played with that generator are counted in `daily`, so a player keeps a separate record per generator. `streak` does not depend on it: the streak is a daily habit across generators, not a per-generator record. The `endless` numbers do: each series is its own record. Clients treat a missing `generator` (older servers) as `1`.
-- **Streak**, across all difficulties and generators. A day counts when the caller has at least one daily result on that game date (any level, any generator) that is not flagged by an admin. The server's own automatic flags don't stop a day counting, since they are admin-only until confirmed and can be false positives; an admin flag, including a confirmed automatic one, does. Days are the stored game dates, so day boundaries match the daily puzzle, and consecutive means consecutive calendar days.
+- **Streak**, across all difficulties and generators. A day counts when the caller has at least one daily result on that game date (any level, any generator) or a [variant of the day](#variant-of-the-day) result that is not flagged by an admin. The server's own automatic flags don't stop a day counting, since they are admin-only until confirmed and can be false positives; an admin flag, including a confirmed automatic one, does. Days are the stored game dates, so day boundaries match the daily puzzle, and consecutive means consecutive calendar days.
   - `current` is the number of consecutive counting days ending today, or ending yesterday when today has no counting result yet (today isn't over). Otherwise it is 0.
   - `best` is the longest run of consecutive counting days ever, and is never less than `current`.
   - `lastDate` is the latest counting date, or `null` when there is none.
@@ -525,7 +598,7 @@ Only actions that change something are recorded: a `place` of the digit already 
 
 ### Replay checks
 
-The server replays the events on the puzzle (a daily regenerated from the week seed, an endless one from the endless seed in its generator and variant, under that variant's layout) and checks, in order:
+The server replays the events on the puzzle (a daily, or the variant of the day, regenerated from the week seed, an endless one from the endless seed in its generator and variant, under that variant's layout) and checks, in order:
 
 1. **Shape**: `start` is first with `t` = 0, `finish` is last, and neither appears anywhere else.
 2. **Timer**: `t` never decreases, and it stays the same while the timer is stopped (after `pause` or `restore`, until `resume`), except that `restore` itself may move it forward (the time banked by the last save before the app was closed) and `resume` may be up to **1 second** later than the event before it (older clients stamped it a few milliseconds late).
@@ -645,6 +718,39 @@ One result with everything needed to watch it back: the fields of a list item ab
 Flags a result as suspicious, with the same body, limits and replacement semantics as the daily flag endpoint. `200` with the updated list item, `404 not_found` if there is no such result.
 
 ### `DELETE /api/v1/admin/endless/results/{difficulty}/{number}/{userId}/flag`
+
+Removes the flag (automatic or not). `200` with the updated list item; also `200` if it wasn't flagged. `404 not_found` if there is no such result.
+
+## Admin endpoints (variant of the day)
+
+The same anti-cheat tools for the [variant of the day](#variant-of-the-day), with the same access rules as the admin endpoints above. A result is addressed by its date and user (there is one per user and date), and each item has the day's `variant` (`1` Diagonal, `2` Jigsaw, `3` Killer), never a generator or difficulty.
+
+`GET /api/v1/admin/results?date=YYYY-MM-DD` also lists them, in a `variantResults` array beside `results`, fastest first. Each item has the fields of a daily item except `generator` and `level`, plus `date` and `variant`:
+
+```json
+{
+  "userId": "2",
+  "displayName": "Bob",
+  "date": "2026-10-26",
+  "variant": 3,
+  "elapsedMs": 421000,
+  "completedAt": "2026-10-26T09:45:00+13:00",
+  "submittedAt": "2026-10-25T20:45:01.123Z",
+  "replay": "valid",
+  "replayError": "",
+  "flag": null
+}
+```
+
+### `GET /api/v1/admin/variant-daily/results/{date}/{userId}/replay`
+
+One result with everything needed to watch it back: the fields of a list item above, plus `givens` (the puzzle's starting grid as 81 digits; never the solution), `layout` (the puzzle's regions, diagonals and cages, as in [the endless replay](#get-apiv1adminendlessresultsdifficultynumberuseridreplay)) and `events` (`[]` when there is none). `400 bad_request` for a bad date or user id, `404 not_found` if there is no such result.
+
+### `PUT /api/v1/admin/variant-daily/results/{date}/{userId}/flag`
+
+Flags a result as suspicious, with the same body, limits and replacement semantics as the daily flag endpoint. `200` with the updated list item, `404 not_found` if there is no such result.
+
+### `DELETE /api/v1/admin/variant-daily/results/{date}/{userId}/flag`
 
 Removes the flag (automatic or not). `200` with the updated list item; also `200` if it wasn't flagged. `404 not_found` if there is no such result.
 

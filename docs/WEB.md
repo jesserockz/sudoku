@@ -917,6 +917,75 @@ The **Variants** tab is the Endless tab for Sudoku with an extra rule
   variants work with Classic and Graded. The text is `variantsHelp` in
   `src/ui/variants.ts`.
 
+## Variant of the day
+
+Under the day's games on the **Daily** tab sits one more card, the **variant of
+the day** (`docs/API.md`, [Variant of the
+day](API.md#variant-of-the-day)): a Diagonal, Jigsaw or Killer puzzle that is
+the same for everyone each day. The card is titled by its variant ("Killer of
+the day"), gives that variant's rule, and has one row, "Variant of the day",
+with a status ("Not started yet", "In progress · 1:05", "Solved in 7:01", plus
+" · not uploaded yet" while the result is queued) and **Play**, **Resume** or
+**Scores**. Players never see its generator or difficulty (it is always the
+Graded generator, at Expert or Diabolical): no "Graded", "Expert" or
+"Diabolical" appears on the card, the play screen, the leaderboard or the admin
+lists, only the variant. It does not follow the Classic / Graded switch.
+
+- **Generation** is local and offline: the variant (`dailyVariantOf`) and the
+  puzzle (`generateDailyVariant`, in `src/generator/variants.ts`) come from the
+  cached week's seed and the day, so the card works offline all week. The card
+  shows the variant at once; the puzzle is generated when **Play** is pressed,
+  behind the "Preparing Killer of the day..." overlay, and kept by
+  `VariantDayCache` (`src/data/variant-day.ts`) for the screens that ask again.
+  A saved game is recognised without generating the puzzle, so the home screen
+  never waits for it.
+- **Play** is the usual play screen (`PuzzleRef` `{ variantDay: true, variant }`,
+  screen `variant-day-play`), titled only "Killer of the day". The rule is the
+  Variants tab's (`variantRule`). Replays record as usual, colour pens included, and go
+  with the result.
+- **Results** have their own queue. `SudokuRepository.variantDaySync` is a
+  `ResultSync` over `variant-day-pending`, flushed by `refresh()` with the
+  others: `200`/`201`/`400` take a result off it, a network failure, 503
+  (including `maintenance`) or anything else leaves it queued, as for daily
+  results. `POST /api/v1/variant-daily/results` carries
+  `{ date, elapsedMs, completedAt, replay? }`; the server works the variant out
+  from the date. `refresh()` also keeps the server's record for today
+  (`variant-day-results`, from `GET /api/v1/me/results`' `variantDaily`).
+- **Storage** keeps the saved game apart from the daily games, by date alone in
+  `variant-day-games` (only the cached week's dates are kept). It is cleared
+  with the other progress on sign-out or when a different account signs in.
+- **Streak**: finishing it counts towards the one daily streak, server side
+  (`docs/API.md`, `GET /api/v1/me/stats`). The client shows the streak it is
+  given.
+- **Leaderboard**: the daily Leaderboard screen shows the variant of the day's
+  board in a card beneath the classic content for the same date (the same
+  "Earlier" / "Later" navigation, whichever tab is open), titled by the day's
+  variant and ranked by time, with the same streak markers and "suspicious"
+  badges. It is not a tab and is not part of the Total, it is the same for
+  Classic and Graded, and it loads on its own: `AppController.variantBoard` and
+  `variantBoardError` come from `GET /api/v1/variant-daily/leaderboard`, with a
+  failure (offline, maintenance) shown inside that card and retried by the
+  next sync. See scores after solving it opens this screen.
+- **Not downloaded yet / maintenance**: the card is part of the daily list, so
+  while the week isn't on the device it is replaced by the same "This week's
+  puzzles haven't been downloaded yet" card, or the maintenance "try again
+  later" one while the server is down.
+- **Admin**: Results and replays lists the day's variant of the day results in
+  a card above the games ("Killer of the day"), each opening its replay (drawn
+  with the puzzle's layout) with the same flag, confirm and remove-flag
+  controls (`AdminResultsModel`, key `{ variantDay: true, userId }`).
+- **Serverless play** has it too: the variant and puzzle come from the seed's
+  week (`SeedRepository.variantDay`), the game is saved per seed
+  (`seed-variant-day-games-<fp>`) and a solve goes into the seed's history
+  (`seed-variant-day-history-<fp>`, shown in History under "Variant of the
+  day"). There is no leaderboard: the card's Scores button is not offered and
+  after a solve the button reads **History**.
+
+Tests: `test/variant-day.test.ts` (controller, repositories, client and models
+against `test/fake-server.ts`), `test/variants.test.ts` (the shared fixture's
+`daily` section), `test/admin-results.test.ts`, and the end-to-end script
+`e2e/variant-of-the-day.cjs`.
+
 ## Serverless play (a shared seed)
 
 A group can play without a server: everyone enters the same **seed** (any

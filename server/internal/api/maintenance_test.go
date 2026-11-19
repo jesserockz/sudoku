@@ -138,10 +138,13 @@ func TestMaintenanceRefusesPlayers(t *testing.T) {
 		{"GET", "/api/v1/me/endless"},
 		{"GET", "/api/v1/me/stats"},
 		{"POST", "/api/v1/endless/results"},
+		{"POST", "/api/v1/variant-daily/results"},
+		{"GET", "/api/v1/variant-daily/leaderboard"},
 		{"GET", "/api/v1/endless/leaderboard"},
 		{"GET", "/api/v1/endless/leaderboard/easy/1"},
 		// A player probing an admin route is told about maintenance too.
 		{"GET", "/api/v1/admin/results"},
+		{"GET", "/api/v1/admin/variant-daily/results/2026-10-26/1/replay"},
 		{"PUT", "/api/v1/admin/maintenance"},
 	}
 	for _, rt := range routes {

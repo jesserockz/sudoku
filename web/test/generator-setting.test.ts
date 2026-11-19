@@ -568,19 +568,19 @@ test("the daily leaderboard opens on the generator in use and switches between t
   c.openScores();
   assert.deepEqual(c.screen, { kind: "scores", date: c.today, tab: 0, generator: G });
   await until(() => c.leaderboard !== null);
-  assert.equal(server.requests.at(-1)!.url.searchParams.get("generator"), "2");
+  assert.equal(server.requests.filter((r) => r.url.pathname === "/api/v1/leaderboard").at(-1)!.url.searchParams.get("generator"), "2");
 
   c.showScoresTab(1);
   c.showScoresGenerator(C);
   assert.deepEqual(c.screen, { kind: "scores", date: c.today, tab: 1, generator: C });
   await until(() => c.leaderboard !== null);
-  assert.equal(server.requests.at(-1)!.url.searchParams.get("generator"), "1");
+  assert.equal(server.requests.filter((r) => r.url.pathname === "/api/v1/leaderboard").at(-1)!.url.searchParams.get("generator"), "1");
 
   // Moving through the days keeps the generator, and so does a retry after a failure.
   c.shiftScoresDate(-1);
   assert.deepEqual(c.screen, { kind: "scores", date: "2026-10-26", tab: 1, generator: C });
   await until(() => c.leaderboard !== null);
-  assert.equal(server.requests.at(-1)!.url.searchParams.get("generator"), "1");
+  assert.equal(server.requests.filter((r) => r.url.pathname === "/api/v1/leaderboard").at(-1)!.url.searchParams.get("generator"), "1");
   server.online = false;
   c.openScores(0, c.today, G);
   await until(() => c.leaderboardError !== null);

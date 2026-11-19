@@ -1,5 +1,5 @@
 import { ApiException, type SubmitOutcome } from "../api/client.ts";
-import { type EndlessResult, type GameResult, variantOf } from "../api/models.ts";
+import { type EndlessResult, type GameResult, type VariantDayResult, variantOf } from "../api/models.ts";
 import { GENERATOR_CLASSIC } from "../generator/versions.ts";
 import { endlessGameKey, gameKey } from "./app-storage.ts";
 import { Mutex } from "./mutex.ts";
@@ -27,6 +27,9 @@ export const isUnauthorized = (report: FlushReport<unknown>): boolean =>
 export const dailyKey = (r: GameResult): string => gameKey(r.generator ?? GENERATOR_CLASSIC, r.date, r.level);
 /** Endless results are one per `(generator, variant, difficulty, number)`; see {@link endlessGameKey}. */
 export const endlessKey = (r: EndlessResult): string => endlessGameKey(r.generator, r.difficulty, r.number, variantOf(r));
+
+/** The variant of the day has one result a day: its date. */
+export const variantDayKey = (r: VariantDayResult): string => r.date;
 
 /**
  * The offline result queue: completed puzzles are queued durably, then sent

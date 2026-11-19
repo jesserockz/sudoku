@@ -13,6 +13,7 @@ import { randomSolution } from "../src/generator/solver.ts";
 import {
   CAGE_EMPTY_MIN, FALLBACK_JIGSAWS, GRADED_GIVENS, KILLER_CAGES, VariantPuzzle, buildClassicVariant, buildGradedVariant, cagesPlayable, carveCages, generateEndlessVariant, jigsawLayout, relabel,
   removeCellsIn, reshapeRegions, variantPuzzleSeed,
+  dailyVariantOf, dailyVariantRound, generateDailyVariant,
 } from "../src/generator/variants.ts";
 import { generateEndlessVersion } from "../src/generator/versions.ts";
 import { formatWeekSeed, parseWeekSeed } from "../src/generator/week-seed.ts";
@@ -29,6 +30,7 @@ interface Fixture {
   jigsaws: { seed: string; maxAttempts: number; regions: string; solution: string; attempts: number; fallback: boolean }[];
   cages: { minSize: number; maxSize: number; solution: string; seed: string; cages: Cage[] }[];
   classic: (LayoutCase & { seed: string; tier: number; maxAttempts: number; givens: string; solution: string; attempts: number })[];
+  daily: (LayoutCase & { weekSeed: string; day: number; puzzleSeed: string; tier: number; givens: string; solution: string; gradeLevel: number })[];
   fallback: (LayoutCase & { seed: string; tier: number; maxAttempts: number; givens: string; solution: string; gradeLevel: number; attempts: number })[];
   solver: (LayoutCase & { givens: string; nodeLimit: number; count: number })[];
   grader: (LayoutCase & { givens: string; solved: boolean; level: number; steps: number; counts: number[] })[];
@@ -318,4 +320,32 @@ test("removeCellsIn tries the first two cells of each cage first, whatever the t
   // Beyond the forced cells, removal stops at the target.
   const some = removeCellsIn(layout, sol, 40, new Xoshiro256StarStar(23n));
   assert.ok(some.filter((d) => d !== 0).length <= 40 && cagesPlayable(layout, some));
+});
+
+test("fixture variant of the day: every variant and tier", () => {
+  assert.ok(fixture.daily.length >= 14);
+  const variants = new Set<number>();
+  const tiers = new Set<number>();
+  for (const c of fixture.daily) {
+    const at = `${c.weekSeed} day ${c.day}`;
+    const seed = parseWeekSeed(c.weekSeed);
+    const round = dailyVariantRound(seed, c.day);
+    assert.deepEqual([round.variant, round.tier, formatWeekSeed(round.seed)], [c.variant, c.tier, c.puzzleSeed], at);
+    assert.equal(dailyVariantOf(seed, c.day), c.variant, at);
+    const d = generateDailyVariant(seed, c.day);
+    assert.deepEqual([d.variant, d.tier, d.givens, d.solution], [c.variant, c.tier, c.givens, c.solution], at);
+    const want = layoutOf(c);
+    assert.deepEqual([d.layout.variant, d.layout.regions, d.layout.diagonals, d.layout.cages], [want.variant, want.regions, want.diagonals, want.cages], at);
+    assert.equal(grade(digits(c.givens), d.layout).level, c.gradeLevel, at);
+    assert.ok(d.layout.isValid(digits(c.solution)), at);
+    assert.ok(cagesPlayable(d.layout, digits(c.givens)), at);
+    variants.add(d.variant);
+    tiers.add(d.tier);
+  }
+  assert.deepEqual([...variants].sort(), [VARIANT_DIAGONAL, VARIANT_JIGSAW, VARIANT_KILLER]);
+  assert.deepEqual([...tiers].sort(), [4, 5]);
+});
+
+test("the variant of the day rejects a day outside 1..7", () => {
+  for (const day of [0, 8, 1.5, Number.NaN]) assert.throws(() => generateDailyVariant(1n, day), RangeError);
 });

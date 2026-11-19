@@ -142,10 +142,35 @@ export interface GameResult {
 /** An item of `GET /api/v1/me/results`, which omits the date. */
 export type DayResult = Omit<GameResult, "date" | "replay">;
 
+/**
+ * One variant of the day result: the body of `POST /api/v1/variant-daily/results` (`date`, `elapsedMs`, `completedAt` and
+ * maybe `replay`) and its response, which adds the day's `variant` (1 Diagonal, 2 Jigsaw, 3 Killer). `replay` is only
+ * sent, never returned.
+ */
+export interface VariantDayResult {
+  date: string;
+  variant?: number;
+  elapsedMs: number;
+  completedAt: string;
+  replay?: Replay;
+}
+
 /** `GET /api/v1/me/results` */
 export interface MyResults {
   date: string;
   results: DayResult[];
+  /** The caller's variant of the day result for `date`, or `null` (older servers don't send it: null). */
+  variantDaily: VariantDayResult | null;
+}
+
+/**
+ * `GET /api/v1/variant-daily/leaderboard`: the variant of the day's times on `date`, ranked fastest first. `variant` is
+ * the day's variant. `streak` is that player's streak as of the board's date.
+ */
+export interface VariantBoard {
+  date: string;
+  variant: number;
+  entries: { rank: number; userId: string; displayName: string; elapsedMs: number; suspicious: boolean; streak: number }[];
 }
 
 /** `GET /api/v1/leaderboard`. `suspicious` marks a result an admin flagged (older servers don't send it: false). */
@@ -227,11 +252,23 @@ export interface AdminResult {
   flag: ResultFlag | null;
 }
 
+/**
+ * One variant of the day result as admins see it: an {@link AdminResult} for the day's `variant` (1 Diagonal, 2 Jigsaw,
+ * 3 Killer) instead of a game of a generator. `variantDay` tells it from the other kinds of result.
+ */
+export interface AdminVariantDayResult extends Omit<AdminResult, "generator" | "level"> {
+  variantDay: true;
+  date: string;
+  variant: number;
+}
+
 /** `GET /api/v1/admin/results` */
 export interface AdminResults {
   date: string;
   levels: number;
   results: AdminResult[];
+  /** The day's variant of the day results (older servers send none). */
+  variantResults: AdminVariantDayResult[];
 }
 
 /** `GET /api/v1/admin/results/{date}/{level}/{userId}/replay`. `givens` is the starting grid, never the solution. */
@@ -240,6 +277,13 @@ export interface ReplayDetail extends AdminResult {
   levels: number;
   givens: string;
   events: ReplayEvent[];
+}
+
+/** `GET /api/v1/admin/variant-daily/results/{date}/{userId}/replay`: `layout` is the puzzle's regions or cages (none for Diagonal's). */
+export interface VariantDayReplayDetail extends AdminVariantDayResult {
+  givens: string;
+  events: ReplayEvent[];
+  layout: Layout;
 }
 
 /** `GET /api/v1/endless`: the seed every endless puzzle on this server comes from. Never changes. */
@@ -328,6 +372,13 @@ export function weekPuzzles(week: Week, generator: number, date: string = week.t
 export const decodeGeneratorVersion = (json: unknown): number => {
   const v = num(json);
   if (!isGeneratorVersion(v)) throw new TypeError(`unsupported generator version: ${v}`);
+  return v;
+};
+
+/** The variant of a day's variant puzzle: Diagonal, Jigsaw or Killer (not standard Sudoku). */
+const decodeDayVariant = (json: unknown): number => {
+  const v = num(json);
+  if (!isVariant(v) || v === VARIANT_STANDARD) throw new TypeError(`not a variant of the day: ${v}`);
   return v;
 };
 
@@ -495,9 +546,22 @@ function decodeAdminResultBase(json: unknown): Omit<AdminResult, "generator" | "
   };
 }
 
+export function decodeAdminVariantDayResult(json: unknown): AdminVariantDayResult {
+  const o = obj(json);
+  return { variantDay: true, date: date(o.date), variant: decodeDayVariant(o.variant), ...decodeAdminResultBase(json) };
+}
+
+export function decodeVariantDayReplayDetail(json: unknown): VariantDayReplayDetail {
+  const result = decodeAdminVariantDayResult(json);
+  return { ...result, ...decodeReplayGame(obj(json)), layout: decodeLayout(result.variant, obj(json).layout) };
+}
+
 export function decodeAdminResults(json: unknown): AdminResults {
   const o = obj(json);
-  return { date: date(o.date), levels: num(o.levels), results: list(o.results, decodeAdminResult) };
+  return {
+    date: date(o.date), levels: num(o.levels), results: list(o.results, decodeAdminResult),
+    variantResults: optional(o.variantResults, (v) => list(v, decodeAdminVariantDayResult)) ?? [],
+  };
 }
 
 export function decodeReplayDetail(json: unknown): ReplayDetail {
@@ -598,9 +662,27 @@ export function decodeGameResult(json: unknown): GameResult {
   return { date: date(obj(json).date), ...decodeDayResult(json), ...(replay ? { replay } : {}) };
 }
 
+export function decodeVariantDayResult(json: unknown): VariantDayResult {
+  const o = obj(json);
+  const variant = optional(o.variant, decodeDayVariant);
+  const replay = optional(o.replay, decodeReplay);
+  return {
+    date: date(o.date), ...(variant === null ? {} : { variant }), elapsedMs: num(o.elapsedMs), completedAt: str(o.completedAt),
+    ...(replay ? { replay } : {}),
+  };
+}
+
 export function decodeMyResults(json: unknown): MyResults {
   const o = obj(json);
-  return { date: date(o.date), results: list(o.results, decodeDayResult) };
+  return { date: date(o.date), results: list(o.results, decodeDayResult), variantDaily: optional(o.variantDaily, decodeVariantDayResult) };
+}
+
+export function decodeVariantBoard(json: unknown): VariantBoard {
+  const o = obj(json);
+  return {
+    date: date(o.date), variant: decodeDayVariant(o.variant),
+    entries: list(o.entries, (e) => ({ ...decodeTimeEntry(e), streak: optional(obj(e).streak, num) ?? 0 })),
+  };
 }
 
 export function decodeLeaderboard(json: unknown): Leaderboard {

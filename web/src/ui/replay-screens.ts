@@ -1,10 +1,10 @@
-import { type AdminEndlessResult, type AdminResult, type ReplayStatus, variantOf } from "../api/models.ts";
+import { type AdminEndlessResult, type AdminResult, type AdminVariantDayResult, type ReplayStatus, variantOf } from "../api/models.ts";
 import { formatDuration } from "../game/timer.ts";
 import { DIFFICULTIES, endlessTitle, puzzleTitle } from "../generator/generator.ts";
 import { generatorName } from "../generator/versions.ts";
 import type { SudokuBoard } from "./board.ts";
-import { seriesName } from "./variants.ts";
-import { ENDLESS_DIFFICULTIES, type AdminResultsModel, type ResultsMode } from "./admin-results.ts";
+import { seriesName, variantDayTitle } from "./variants.ts";
+import { ENDLESS_DIFFICULTIES, type AdminResultsModel, type ResultsMode, replayHeading } from "./admin-results.ts";
 import type { AppController } from "./controller.ts";
 import { type Child, Component, h, topBar } from "./dom.ts";
 import { MIN_STRETCH_MS, SPEEDS, type ReplayViewer, formatGap, formatWall } from "./replay-viewer.ts";
@@ -66,7 +66,7 @@ export class AdminResultsScreen extends AdminResultsScreenBase {
       h("div", { class: "tabs" }, tab("daily", "Daily"), tab("endless", "Endless")),
       m.loadError && h("div", { class: "notice" }, m.loadError),
       m.loading && h("p", { class: "boot" }, "Loading…"),
-      m.mode === "endless" ? this.#endless(m) : Array.from({ length: levels }, (_, i) => i + 1).map((level) => {
+      m.mode === "endless" ? this.#endless(m) : [this.#variantDay(m), ...Array.from({ length: levels }, (_, i) => i + 1).map((level) => {
         const results = m.resultsFor(level);
         return h("div", { class: "card" },
           h("h2", null, puzzleTitle(level, levels)),
@@ -78,8 +78,23 @@ export class AdminResultsScreen extends AdminResultsScreenBase {
                 h("td", { class: "time" }, formatDuration(r.elapsedMs)),
               )))),
         );
-      }),
+      })],
     ];
+  }
+
+  /** The day's variant of the day results (by their variant; the generator and difficulty are not part of them). */
+  #variantDay(m: AdminResultsModel): Child {
+    const results = m.variantDayResults();
+    return h("div", { class: "card", id: "admin-variant-day" },
+      h("h2", null, results[0] ? variantDayTitle(results[0].variant) : "Variant of the day"),
+      results.length === 0
+        ? h("p", { class: "muted" }, "No results.")
+        : h("table", { class: "board-table results-table" }, h("tbody", null, results.map((r) =>
+          h("tr", { class: "clickable", onclick: () => this.app.openReplay(r) },
+            h("td", null, r.displayName, h("div", { class: "small" }, statusBadges(r))),
+            h("td", { class: "time" }, formatDuration(r.elapsedMs)),
+          )))),
+    );
   }
 
   #endless(m: AdminResultsModel): Child {
@@ -175,9 +190,7 @@ export class ReplayScreen extends AdminResultsScreenBase {
     }
     const d = v.detail;
     const result = m.find(d) ?? d;
-    const heading = "difficulty" in d
-      ? `${d.displayName}, ${seriesName(d.generator, variantOf(d))} ${endlessTitle(d.difficulty, d.number)}, submitted ${d.submittedAt.slice(0, 10)}`
-      : `${d.displayName}, ${generatorName(d.generator)} ${puzzleTitle(d.level, d.levels)} on ${d.date}`;
+    const heading = replayHeading(d);
     return [
       topBar("Replay", back),
       m.error && h("div", { class: "notice" }, m.error),
@@ -193,7 +206,7 @@ export class ReplayScreen extends AdminResultsScreenBase {
     ];
   }
 
-  #flag(m: AdminResultsModel, r: AdminResult | AdminEndlessResult): Child {
+  #flag(m: AdminResultsModel, r: AdminResult | AdminEndlessResult | AdminVariantDayResult): Child {
     const flag = r.flag;
     if (flag) {
       return h("div", { class: "flag" },

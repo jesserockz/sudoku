@@ -18,7 +18,7 @@ import { countSolutionsIn, randomSolutionIn } from "../src/generator/layout-solv
 import { Xoshiro256StarStar } from "../src/generator/random.ts";
 import { randomSolution } from "../src/generator/solver.ts";
 import {
-  GRADED_GIVENS, KILLER_CAGES, buildClassicVariant, buildGradedVariant, cagesPlayable, carveCages, generateEndlessVariant, jigsawLayout, relabel, removeCellsIn, variantPuzzleSeed,
+  GRADED_GIVENS, KILLER_CAGES, buildClassicVariant, buildGradedVariant, cagesPlayable, carveCages, dailyVariantRound, generateDailyVariant, generateEndlessVariant, jigsawLayout, relabel, removeCellsIn, variantPuzzleSeed,
 } from "../src/generator/variants.ts";
 import { formatWeekSeed, parseWeekSeed } from "../src/generator/week-seed.ts";
 
@@ -42,6 +42,17 @@ const puzzles = ([[1, "9f2c4a1b7e30d5c8"], [2, "0123456789abcdef"]] as const).fl
       }),
     ),
   ),
+);
+
+/** The variant of the day: every day of two weeks, between them all three variants and both tiers. */
+const daily = (["9f2c4a1b7e30d5c8", "0123456789abcdef"] as const).flatMap((seed) =>
+  [1, 2, 3, 4, 5, 6, 7].map((day) => {
+    const d = generateDailyVariant(parseWeekSeed(seed), day);
+    return {
+      weekSeed: seed, day, puzzleSeed: formatWeekSeed(dailyVariantRound(parseWeekSeed(seed), day).seed), variant: d.variant, tier: d.tier,
+      givens: d.givens, solution: d.solution, ...layoutJson(d.layout), gradeLevel: grade([...d.givens].map(Number), d.layout).level,
+    };
+  }),
 );
 
 /** Jigsaw layouts: generated ones, and the fallback list (`maxAttempts` 0) for each `seed mod 4`. */
@@ -180,9 +191,10 @@ const out = `{
   "cages": ${lines(cages)},
   "classic": ${lines(classic)},
   "fallback": ${lines(fallback)},
+  "daily": ${lines(daily)},
   "solver": ${lines(solverCases)},
   "grader": ${lines(graderCases)}
 }
 `;
 writeFileSync(OUT, out);
-console.log(`wrote ${OUT}: ${puzzles.length} puzzles, ${jigsaws.length} jigsaws, ${cages.length} cages, ${classic.length} classic, ${fallback.length} fallback, ${solverCases.length} solver, ${graderCases.length} grader`);
+console.log(`wrote ${OUT}: ${puzzles.length} puzzles, ${jigsaws.length} jigsaws, ${cages.length} cages, ${classic.length} classic, ${fallback.length} fallback, ${daily.length} daily, ${solverCases.length} solver, ${graderCases.length} grader`);

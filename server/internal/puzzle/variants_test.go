@@ -64,6 +64,18 @@ type variantFixture struct {
 		GradeLevel  int    `json:"gradeLevel"`
 		Attempts    int    `json:"attempts"`
 	} `json:"fallback"`
+	Daily []struct {
+		WeekSeed   string `json:"weekSeed"`
+		Day        int    `json:"day"`
+		PuzzleSeed string `json:"puzzleSeed"`
+		Variant    int    `json:"variant"`
+		Tier       int    `json:"tier"`
+		Givens     string `json:"givens"`
+		Solution   string `json:"solution"`
+		Regions    string `json:"regions"`
+		Cages      []Cage `json:"cages"`
+		GradeLevel int    `json:"gradeLevel"`
+	} `json:"daily"`
 	Solver []struct {
 		Variant   int    `json:"variant"`
 		Regions   string `json:"regions"`
@@ -569,6 +581,55 @@ func TestVariantGraderIsSound(t *testing.T) {
 					t.Fatalf("variant %d attempt %d: wrong step at cell %d", variant, n, i)
 				}
 			}
+		}
+	}
+}
+
+func TestVariantFixtureDaily(t *testing.T) {
+	variants, tiers := map[int]bool{}, map[int]bool{}
+	f := loadVariantFixture(t)
+	if len(f.Daily) < 14 {
+		t.Fatalf("%d daily fixture cases", len(f.Daily))
+	}
+	for _, c := range f.Daily {
+		at := fmt.Sprintf("%s day %d", c.WeekSeed, c.Day)
+		seed := mustSeed(t, c.WeekSeed)
+		variant, tier, ps := dailyVariantRound(seed, c.Day)
+		if variant != c.Variant || tier != c.Tier || ps != mustSeed(t, c.PuzzleSeed) {
+			t.Errorf("%s: round %d/%d/%x", at, variant, tier, ps)
+		}
+		if v := DailyVariantOf(seed, c.Day); v != c.Variant {
+			t.Errorf("%s: DailyVariantOf = %d", at, v)
+		}
+		d, err := GenerateDailyVariant(seed, c.Day)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d.Variant != c.Variant || d.Tier != c.Tier || d.Givens != c.Givens || d.Solution != c.Solution {
+			t.Errorf("%s: got v%d tier %d %s / %s", at, d.Variant, d.Tier, d.Givens, d.Solution)
+		}
+		want := fixtureLayout(t, c.Variant, c.Regions, c.Cages)
+		if d.Layout.Variant != c.Variant || d.Layout.Regions != want.Regions || d.Layout.Diagonals != want.Diagonals || !slices.EqualFunc(d.Layout.Cages, want.Cages, func(a, b Cage) bool { return a.Sum == b.Sum && slices.Equal(a.Cells, b.Cells) }) {
+			t.Errorf("%s: layout differs", at)
+		}
+		givens := digits(c.Givens)
+		if g, _ := GradeLayout(givens, d.Layout); g.Level != c.GradeLevel {
+			t.Errorf("%s: grade %d, want %d", at, g.Level, c.GradeLevel)
+		}
+		if !d.Layout.Valid(digits(c.Solution)) || !cagesPlayable(d.Layout, grid81(c.Givens)) {
+			t.Errorf("%s: invalid or unplayable", at)
+		}
+		variants[d.Variant], tiers[d.Tier] = true, true
+	}
+	if len(variants) != 3 || len(tiers) != 2 || variants[VariantStandard] {
+		t.Errorf("fixture covers variants %v tiers %v", variants, tiers)
+	}
+}
+
+func TestGenerateDailyVariantDay(t *testing.T) {
+	for _, day := range []int{0, 8, -1} {
+		if _, err := GenerateDailyVariant(1, day); err == nil {
+			t.Errorf("day %d accepted", day)
 		}
 	}
 }

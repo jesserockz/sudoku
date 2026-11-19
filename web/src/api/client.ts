@@ -1,11 +1,12 @@
 import {
-  type AdminEndlessResult, type AdminEndlessResults, type AdminResult, type AdminResults, type ApiError, type AppConfig,
+  type AdminEndlessResult, type AdminEndlessResults, type AdminResult, type AdminResults, type AdminVariantDayResult, type ApiError, type AppConfig,
   type EndlessBoard, type EndlessInfo, type EndlessProgress, type EndlessReplayDetail, type EndlessResult, type GameResult, type GeneratorSettings, type MaintenanceSettings, MAINTENANCE_CODE,
-  type Leaderboard, type Me, type MyEndlessResults, type MyResults, type MyStats, type ReleaseList, type ReplayDetail, type UpdateStatus, type Week,
-  decodeAdminEndlessResult, decodeAdminEndlessResults, decodeAdminResult, decodeAdminResults, decodeApiError, decodeAppConfig,
+  type Leaderboard, type Me, type MyEndlessResults, type MyResults, type MyStats, type ReleaseList, type ReplayDetail, type UpdateStatus, type VariantBoard,
+  type VariantDayReplayDetail, type VariantDayResult, type Week,
+  decodeAdminEndlessResult, decodeAdminEndlessResults, decodeAdminResult, decodeAdminResults, decodeAdminVariantDayResult, decodeApiError, decodeAppConfig,
   decodeEndlessBoard, decodeEndlessInfo, decodeEndlessProgress, decodeEndlessReplayDetail, decodeEndlessResult, decodeGameResult,
   decodeGeneratorSettings, decodeLeaderboard, decodeMaintenanceSettings, decodeMe, decodeMyEndlessResults, decodeMyResults, decodeMyStats, decodeReleaseList, decodeReplayDetail, decodeUpdateStatus,
-  decodeWeek,
+  decodeVariantBoard, decodeVariantDayReplayDetail, decodeVariantDayResult, decodeWeek,
 } from "./models.ts";
 import { type Replay, withoutColourEvents } from "../game/replay.ts";
 
@@ -121,6 +122,16 @@ export class SudokuApi {
     return this.#submitCompat("results", result, decodeGameResult);
   }
 
+  /** Submits a finished variant of the day. */
+  submitVariantDayResult(result: VariantDayResult): Promise<SubmitOutcome<VariantDayResult>> {
+    return this.#submitCompat("variant-daily/results", result, decodeVariantDayResult);
+  }
+
+  /** The variant of the day's leaderboard for `date` (the server's today when omitted). */
+  async variantBoard(date?: string): Promise<VariantBoard> {
+    return decodeVariantBoard(await this.#get("variant-daily/leaderboard" + (date ? `?date=${date}` : "")));
+  }
+
   /** The seed every endless puzzle comes from. */
   async endless(): Promise<EndlessInfo> {
     return decodeEndlessInfo(await this.#get("endless"));
@@ -205,6 +216,21 @@ export class SudokuApi {
     return decodeAdminResult(await this.#send("DELETE", `${resultPath(date, level, userId)}/flag?generator=${generator}`));
   }
 
+  /** Admin only: one variant of the day result's replay, with the puzzle's givens and layout. */
+  async adminVariantDayReplay(date: string, userId: string): Promise<VariantDayReplayDetail> {
+    return decodeVariantDayReplayDetail(await this.#get(`${variantDayPath(date, userId)}/replay`));
+  }
+
+  /** Admin only: flags a variant of the day result as suspicious, replacing any earlier flag. */
+  async flagVariantDayResult(date: string, userId: string, reason: string): Promise<AdminVariantDayResult> {
+    return decodeAdminVariantDayResult(await this.#send("PUT", `${variantDayPath(date, userId)}/flag`, { reason }));
+  }
+
+  /** Admin only: removes a variant of the day result's flag. */
+  async unflagVariantDayResult(date: string, userId: string): Promise<AdminVariantDayResult> {
+    return decodeAdminVariantDayResult(await this.#send("DELETE", `${variantDayPath(date, userId)}/flag`));
+  }
+
   /** Admin only: every endless result submitted on `date`, with replay checks and flags. */
   async adminEndlessResults(date: string): Promise<AdminEndlessResults> {
     return decodeAdminEndlessResults(await this.#get(`admin/endless/results?date=${date}`));
@@ -287,6 +313,8 @@ const resultPath = (date: string, level: number, userId: string) => `admin/resul
 
 /** An endless series as a query: `generator=N`, plus `&variant=V` for a variant (standard Sudoku's 0 is left out, as older servers expect). */
 const seriesQuery = (generator: number, variant: number) => `generator=${generator}${variant === 0 ? "" : `&variant=${variant}`}`;
+
+const variantDayPath = (date: string, userId: string) => `admin/variant-daily/results/${date}/${encodeURIComponent(userId)}`;
 
 const endlessResultPath = (difficulty: number, number: number, userId: string) =>
   `admin/endless/results/${difficulty}/${number}/${encodeURIComponent(userId)}`;

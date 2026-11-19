@@ -177,15 +177,15 @@ form.login input {
 form.login button { margin-top: 16px; width: 100%; }
 
 /* Today */
-.puzzles { list-style: none; margin: 0; padding: 0; }
-.puzzles li {
+.puzzles, .variant-day-list { list-style: none; margin: 0; padding: 0; }
+.puzzles li, .variant-day-list li {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   padding: 12px 0; border-bottom: 1px solid var(--line);
 }
-.puzzles li:last-child { border-bottom: none; }
-.puzzles .name { font-weight: 600; }
-.puzzles .status { font-size: 0.9rem; color: var(--muted); }
-.puzzles .status.done { color: var(--done); }
+.puzzles li:last-child, .variant-day-list li:last-child { border-bottom: none; }
+.puzzles .name, .variant-day-list .name { font-weight: 600; }
+.puzzles .status, .variant-day-list .status { font-size: 0.9rem; color: var(--muted); }
+.puzzles .status.done, .variant-day-list .status.done { color: var(--done); }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
 .actions a { color: var(--accent); padding: 8px; }
 /* A row of actions keeps its distance from what follows: another row or a paragraph as far as its own buttons are apart, a card or notice as far as cards are. */

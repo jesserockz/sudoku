@@ -1,19 +1,21 @@
 import { type Fetch, SudokuApi, type TokenProvider, SIGN_IN_UNAVAILABLE, devToken } from "../api/client.ts";
 import {
   type AppConfig, type DayResult, type EndlessBoard, type EndlessProgress, type EndlessResult, type GameResult, type Leaderboard, type Me,
-  type MyStats, type OidcConfig, type Streak, type Week, weekPuzzles,
+  type MyStats, type OidcConfig, type Streak, type VariantBoard, type VariantDayResult, type Week, weekPuzzles,
 } from "../api/models.ts";
 import { OidcClient, OidcException, TokenSession, type TokenResponse, createPkce } from "../api/oidc.ts";
 import { formatTimestamp, inWeek, today } from "../game/calendar.ts";
 import { Game } from "../game/game.ts";
 import { replayToSend } from "../game/replay.ts";
 import { type Puzzle } from "../generator/generator.ts";
-import type { VariantPuzzle } from "../generator/variants.ts";
+import type { DailyVariant, VariantPuzzle } from "../generator/variants.ts";
 import { GENERATOR_CLASSIC } from "../generator/versions.ts";
-import { type AppStorage, type HomeTab, type Settings, endlessGameKey, gameKey, gameKeyDate } from "./app-storage.ts";
+import { type AppStorage, type HomeTab, type Settings, endlessGameKey, gameKey, gameKeyDate, variantDayGameKey } from "./app-storage.ts";
 import { randomToken } from "./crypto.ts";
 import { type EndlessInProgress, EndlessPuzzleCache, type EndlessSolved, type EndlessSource, endlessInProgressOf } from "./endless.ts";
-import { type FlushReport, ResultSync, dailyKey, endlessKey } from "./result-sync.ts";
+import { type FlushReport, ResultSync, dailyKey, endlessKey, variantDayKey } from "./result-sync.ts";
+import { type VariantDaySolved, type VariantDaySource, VariantDayCache } from "./variant-day.ts";
+import type { SavedGame } from "../game/game.ts";
 
 /** Sign-in failed; the message is fit to show. */
 export class SignInError extends Error {}
@@ -34,9 +36,10 @@ export function normalizeUrl(url: string): string {
  * Pacific/Auckland. A new week needs a connection. Finished puzzles queue
  * results that upload whenever the server is reachable.
  */
-export class SudokuRepository implements EndlessSource {
+export class SudokuRepository implements EndlessSource, VariantDaySource {
   readonly sync: ResultSync;
   readonly endlessSync: ResultSync<EndlessResult>;
+  readonly variantDaySync: ResultSync<VariantDayResult>;
   readonly tokens: TokenProvider;
   readonly #storage: AppStorage;
   /** Where the identity provider sends the browser back to after sign-in. */
@@ -49,6 +52,7 @@ export class SudokuRepository implements EndlessSource {
   #oidc: { key: string; client: OidcClient } | null = null;
   #puzzleCache: { key: string; puzzles: Puzzle[] } | null = null;
   readonly #endlessPuzzles = new EndlessPuzzleCache();
+  readonly #variantDays = new VariantDayCache();
 
   constructor(
     storage: AppStorage,
@@ -80,6 +84,7 @@ export class SudokuRepository implements EndlessSource {
     };
     this.sync = new ResultSync(storage.pending, (r) => this.#client().submitResult(r), dailyKey);
     this.endlessSync = new ResultSync(storage.endlessPending, (r) => this.#client().submitEndlessResult(r), endlessKey);
+    this.variantDaySync = new ResultSync(storage.variantDayPending, (r) => this.#client().submitVariantDayResult(r), variantDayKey);
   }
 
   settings(): Settings {
@@ -244,21 +249,23 @@ export class SudokuRepository implements EndlessSource {
    * today's and the endless results. Network and HTTP failures propagate;
    * queued results stay queued.
    */
-  async refresh(): Promise<FlushReport<GameResult | EndlessResult>> {
+  async refresh(): Promise<FlushReport<GameResult | EndlessResult | VariantDayResult>> {
     const api = this.#client();
     this.#storage.me.write(await api.me());
     this.#storeWeek(await api.week());
     const report = await this.sync.flush();
+    const variantDay = await this.variantDaySync.flush();
     const mine = await api.myResults(this.today());
     this.#storage.serverResults.write({ [mine.date]: mine.results });
+    this.#storage.variantDayResults.write(mine.variantDaily ? { [mine.date]: mine.variantDaily } : null);
     if (!this.#storage.endless.read()) this.#storage.endless.write(await api.endless());
     const endless = await this.endlessSync.flush();
     this.#storeEndlessResults((await api.myEndlessResults()).results);
     return {
-      accepted: [...report.accepted, ...endless.accepted],
-      rejected: [...report.rejected, ...endless.rejected],
-      remaining: [...report.remaining, ...endless.remaining],
-      failure: report.failure ?? endless.failure,
+      accepted: [...report.accepted, ...endless.accepted, ...variantDay.accepted],
+      rejected: [...report.rejected, ...endless.rejected, ...variantDay.rejected],
+      remaining: [...report.remaining, ...endless.remaining, ...variantDay.remaining],
+      failure: report.failure ?? endless.failure ?? variantDay.failure,
     };
   }
 
@@ -390,6 +397,49 @@ export class SudokuRepository implements EndlessSource {
     this.#storage.endlessGames.update((games) => games && Object.fromEntries(Object.entries(games).filter(([k, g]) => !(g.completed && done.has(k)))));
   }
 
+  /** The variant of the day of `date` (in `week`): generated from the week's seed, so offline, and kept for next time. */
+  variantDay(week: Week, date: string): DailyVariant {
+    return this.#variantDays.get(week.seed, date);
+  }
+
+  /** A saved variant of the day game for `date`, if it still matches the puzzle. */
+  loadVariantDayGame(date: string, puzzle: DailyVariant): Game | null {
+    const saved = this.variantDaySaved(date);
+    return saved && saved.givens === puzzle.givens ? Game.restore(saved, puzzle.layout) : null;
+  }
+
+  /** The saved variant of the day game for `date`, whatever puzzle it was for. */
+  variantDaySaved(date: string): SavedGame | null {
+    return this.#storage.variantDayGames.read()?.[variantDayGameKey(date)] ?? null;
+  }
+
+  saveVariantDayGame(date: string, game: Game, nowMs: number): void {
+    this.#storage.variantDayGames.update((games) => ({ ...games, [variantDayGameKey(date)]: game.save(nowMs) }));
+  }
+
+  /** Queues the result of a just-finished variant of the day (the server works out which variant it was). */
+  async completeVariantDay(date: string, _variant: number, game: Game): Promise<VariantDayResult> {
+    if (game.completedElapsedMs === null) throw new Error("game isn't complete");
+    const result: VariantDayResult = { date, elapsedMs: game.completedElapsedMs, completedAt: formatTimestamp(this.#now()) };
+    const replay = replayToSend(game.replay);
+    if (replay) result.replay = replay;
+    await this.variantDaySync.enqueue(result);
+    return result;
+  }
+
+  /** `date`'s solved variant of the day: the server's record, else the offline queue's. */
+  variantDaySolved(date: string): VariantDaySolved | null {
+    const server = this.#storage.variantDayResults.read()?.[date];
+    if (server) return { elapsedMs: server.elapsedMs, synced: true };
+    const queued = this.variantDaySync.pending().find((r) => r.date === date);
+    return queued ? { elapsedMs: queued.elapsedMs, synced: false } : null;
+  }
+
+  /** The variant of the day's leaderboard for `date`. */
+  variantBoard(date: string): Promise<VariantBoard> {
+    return this.#client().variantBoard(date);
+  }
+
   pending(): GameResult[] {
     return this.sync.pending();
   }
@@ -438,6 +488,7 @@ export class SudokuRepository implements EndlessSource {
     if (previous?.isoWeek !== week.isoWeek) {
       // Games from other weeks can't be finished any more; their results (if any) are already queued.
       this.#storage.games.update((games) => games && Object.fromEntries(Object.entries(games).filter(([k]) => inWeek(week, gameKeyDate(k)))));
+      this.#storage.variantDayGames.update((games) => games && Object.fromEntries(Object.entries(games).filter(([k]) => inWeek(week, k))));
     }
   }
 

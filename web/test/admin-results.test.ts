@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ApiException } from "../src/api/client.ts";
-import type { AdminEndlessResult, AdminEndlessResults, AdminResult, AdminResults, EndlessReplayDetail, ReplayDetail } from "../src/api/models.ts";
-import { AdminResultsModel, type ResultsApi } from "../src/ui/admin-results.ts";
+import type {
+  AdminEndlessResult, AdminEndlessResults, AdminResult, AdminResults, AdminVariantDayResult, EndlessReplayDetail, ReplayDetail, VariantDayReplayDetail,
+} from "../src/api/models.ts";
+import { Layout } from "../src/core/layout.ts";
+import { AdminResultsModel, type ResultsApi, replayHeading } from "../src/ui/admin-results.ts";
 import type { ReplayViewer } from "../src/ui/replay-viewer.ts";
 
 const TODAY = "2026-10-27";
@@ -13,7 +16,7 @@ const res = (userId: string, level: number, extra: Partial<AdminResult> = {}): A
   replay: "valid", replayError: "", flag: null, ...extra,
 });
 const flag = (reason: string, auto = false): NonNullable<AdminResult["flag"]> => ({ reason, auto, flaggedBy: null, flaggedAt: "f" });
-const day = (date: string, ...results: AdminResult[]): AdminResults => ({ date, levels: 5, results });
+const day = (date: string, ...results: AdminResult[]): AdminResults => ({ date, levels: 5, results, variantResults: [] });
 const detailOf = (r: AdminResult, date = TODAY): ReplayDetail => ({
   ...r, date, levels: 5, givens: puzzle, events: [{ a: "start", t: 0, w: 1 }, { a: "place", t: 100, w: 2, c: 2, d: 4 }],
 });
@@ -25,6 +28,14 @@ const eres = (userId: string, difficulty: number, number: number, extra: Partial
 const eday = (date: string, ...results: AdminEndlessResult[]): AdminEndlessResults => ({ date, results });
 const edetailOf = (r: AdminEndlessResult): EndlessReplayDetail => ({
   ...r, givens: puzzle, events: [{ a: "start", t: 0, w: 1 }, { a: "place", t: 100, w: 2, c: 2, d: 4 }],
+});
+
+const vres = (userId: string, extra: Partial<AdminVariantDayResult> = {}): AdminVariantDayResult => ({
+  variantDay: true, userId, displayName: userId.toUpperCase(), date: TODAY, variant: 3, elapsedMs: 5000, completedAt: "c", submittedAt: "s",
+  replay: "valid", replayError: "", flag: null, ...extra,
+});
+const vdetailOf = (r: AdminVariantDayResult): VariantDayReplayDetail => ({
+  ...r, givens: puzzle, events: [{ a: "start", t: 0, w: 1 }, { a: "place", t: 100, w: 2, c: 2, d: 4 }], layout: Layout.DIAGONAL,
 });
 
 const g = (generator: number) => (generator === 1 ? "" : `:g${generator}`);
@@ -51,6 +62,8 @@ class FakeApi implements ResultsApi {
   endlessDays = new Map<string, AdminEndlessResults | Error>();
   endlessDetails = new Map<string, EndlessReplayDetail | Error>();
   endlessChange: AdminEndlessResult | Error = eres("a", 1, 1);
+  variantDetails = new Map<string, VariantDayReplayDetail | Error>();
+  variantChange: AdminVariantDayResult | Error = vres("a");
   hold: Deferred<void>[] = [];
   gate: Deferred<void> | null = null;
 
@@ -84,6 +97,21 @@ class FakeApi implements ResultsApi {
   unflagResult(generator: number, date: string, level: number, userId: string): Promise<AdminResult> {
     this.calls.push(`unflag:${date}:${level}:${userId}${g(generator)}`);
     return this.#answer(this.change);
+  }
+
+  adminVariantDayReplay(date: string, userId: string): Promise<VariantDayReplayDetail> {
+    this.calls.push(`vreplay:${date}:${userId}`);
+    return this.#answer(this.variantDetails.get(`${date}:${userId}`));
+  }
+
+  flagVariantDayResult(date: string, userId: string, reason: string): Promise<AdminVariantDayResult> {
+    this.calls.push(`vflag:${date}:${userId}:${reason}`);
+    return this.#answer(this.variantChange);
+  }
+
+  unflagVariantDayResult(date: string, userId: string): Promise<AdminVariantDayResult> {
+    this.calls.push(`vunflag:${date}:${userId}`);
+    return this.#answer(this.variantChange);
   }
 
   adminEndlessResults(date: string): Promise<AdminEndlessResults> {
@@ -601,4 +629,49 @@ test("an endless flag leaves a daily replay with the same player alone", async (
   api.endlessChange = eres("a", 1, 1, { flag: flag("x") });
   await model.flag({ generator: 1, difficulty: 1, number: 1, userId: "a" }, "x");
   assert.equal(model.viewer!.detail.flag, null);
+});
+
+test("variant of the day results are listed with the day, opened, flagged and unflagged", async () => {
+  const { api, model } = setup();
+  const a = vres("a");
+  const b = vres("b", { elapsedMs: 9000 });
+  api.days.set(TODAY, { ...day(TODAY, res("a", 1)), variantResults: [a, b] });
+  await model.load();
+  assert.deepEqual(model.variantDayResults(), [a, b]);
+  assert.equal(model.find(a), a);
+  assert.equal(model.find({ variantDay: true, userId: "zz" }), null);
+  // A daily result of the same player is another result.
+  assert.equal(model.find({ generator: 1, level: 1, userId: "a" })!.elapsedMs, 1000);
+
+  api.variantDetails.set(`${TODAY}:a`, vdetailOf(a));
+  await model.open(a);
+  assert.deepEqual(model.opened, { variantDay: true, userId: "a" });
+  assert.equal(model.viewer!.game.layout, Layout.DIAGONAL);
+  assert.equal(replayHeading(model.viewer!.detail), "A, Killer of the day on 2026-10-27");
+
+  // Flagging updates the list and the open replay; the other result stays as it was.
+  api.variantChange = { ...a, flag: flag("sus") };
+  await model.flag(a, "  sus ");
+  assert.equal(model.find(a)!.flag!.reason, "sus");
+  assert.equal(model.find(b)!.flag, null);
+  assert.equal(model.viewer!.detail.flag!.reason, "sus");
+  api.variantChange = a;
+  await model.unflag(a);
+  assert.equal(model.find(a)!.flag, null);
+  assert.deepEqual(api.calls.slice(-3), [`vreplay:${TODAY}:a`, `vflag:${TODAY}:a:sus`, `vunflag:${TODAY}:a`]);
+});
+
+test("changing a variant of the day flag with nothing loaded, or an unopened list, is harmless", async () => {
+  const { model } = setup();
+  await model.flag(vres("a"), "x");
+  assert.equal(model.data, null);
+  assert.deepEqual(model.variantDayResults(), []);
+});
+
+test("the replay heading names a daily game, an endless puzzle and a variant of the day", () => {
+  assert.equal(replayHeading(detailOf(res("a", 2))), "A, Classic Medium on 2026-10-27");
+  assert.equal(replayHeading(edetailOf(eres("a", 1, 4))), "A, Classic Easy #4, submitted 2026-10-27");
+  const text = replayHeading(vdetailOf(vres("a", { variant: 1 })));
+  assert.equal(text, "A, Diagonal of the day on 2026-10-27");
+  assert.ok(!/Graded|Expert|Diabolical/.test(text));
 });

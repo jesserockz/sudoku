@@ -82,13 +82,17 @@ func (s *Store) UserDailyResults(ctx context.Context, userID int64) ([]UserDaily
 
 // CountingDates returns, for every user with a result on date, the distinct
 // dates up to and including date on which they have a result (of any
-// generator) that is not admin-flagged, oldest first. These are the days that
-// count towards a streak.
+// generator, or of the variant of the day) that is not admin-flagged, oldest
+// first. These are the days that count towards a streak.
 func (s *Store) CountingDates(ctx context.Context, date string) (map[int64][]string, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT DISTINCT r.user_id, r.date FROM results r
+		WITH r AS (
+			SELECT user_id, date, flagged_at, flag_auto FROM results
+			UNION ALL
+			SELECT user_id, date, flagged_at, flag_auto FROM daily_variant_results)
+		SELECT DISTINCT r.user_id, r.date FROM r
 		WHERE r.date <= ? AND NOT (r.flagged_at IS NOT NULL AND r.flag_auto = 0)
-			AND r.user_id IN (SELECT user_id FROM results WHERE date = ?)
+			AND r.user_id IN (SELECT user_id FROM r WHERE date = ?)
 		ORDER BY r.user_id, r.date`, date, date)
 	if err != nil {
 		return nil, fmt.Errorf("counting dates: %w", err)

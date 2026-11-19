@@ -1,5 +1,7 @@
 // Wording for the variants (Diagonal, Jigsaw, Killer), kept free of the DOM so it can be unit-tested.
+import { formatDuration } from "../game/timer.ts";
 import { VARIANT_DIAGONAL, VARIANT_JIGSAW, VARIANT_KILLER, VARIANT_STANDARD, variantName } from "../core/layout.ts";
+import { DIFFICULTIES } from "../generator/generator.ts";
 import { generatorName } from "../generator/versions.ts";
 
 /** The variants the Variants tab offers, in its picker's order. */
@@ -9,6 +11,9 @@ export const VARIANT_PICKS: readonly number[] = [VARIANT_DIAGONAL, VARIANT_JIGSA
 export function seriesName(generator: number, variant: number): string {
   return variant === VARIANT_STANDARD ? generatorName(generator) : `${generatorName(generator)} ${variantName(variant)}`;
 }
+
+/** The variant of the day by name, e.g. "Killer of the day". It never says which generator or difficulty the puzzle has. */
+export const variantDayTitle = (variant: number): string => `${variantName(variant)} of the day`;
 
 /** A variant's extra rule in plain words, as the explainer lists it (lower case, after the variant's name). */
 export function variantRule(variant: number): string {
@@ -57,4 +62,25 @@ export function variantsHelp({ seed, bothGenerators }: VariantsHelpContext): Var
         : "Everyone gets the same puzzle for the same number. Each variant has its own leaderboard, and Stats shows your numbers for each.",
     ],
   };
+}
+
+/** What the "Preparing" overlay says while a variant's puzzle is generated: an endless puzzle by series, difficulty and number, or the variant of the day by name alone. */
+export function preparingText(ref: { variantDay: true; variant: number } | { generator: number; variant?: number; difficulty: number; number: number }): string {
+  if ("variantDay" in ref) return `Preparing ${variantDayTitle(ref.variant)}…`;
+  return `Preparing ${seriesName(ref.generator, ref.variant ?? 0)} ${DIFFICULTIES[ref.difficulty - 1]!.name} #${ref.number}…`;
+}
+
+/** The variant of the day's row on the Daily tab: what its status line says and which button it gets. */
+export interface VariantDayRow {
+  text: string;
+  /** `scores` is only offered with a server: serverless play has no leaderboard. */
+  action: "play" | "resume" | "scores" | null;
+}
+
+export function variantDayRow(status: { kind: "new" } | { kind: "in-progress"; elapsedMs: number } | { kind: "done"; elapsedMs: number; synced: boolean }, serverless: boolean): VariantDayRow {
+  switch (status.kind) {
+    case "new": return { text: "Not started yet", action: "play" };
+    case "in-progress": return { text: `In progress · ${formatDuration(status.elapsedMs)}`, action: "resume" };
+    case "done": return { text: `Solved in ${formatDuration(status.elapsedMs)}${status.synced ? "" : " · not uploaded yet"}`, action: serverless ? null : "scores" };
+  }
 }

@@ -38,6 +38,8 @@ type Server struct {
 	// maint is the maintenance setting, kept in memory so the per-request
 	// check is free; loaded at start and updated by the admin PUT.
 	maint atomic.Pointer[store.Maintenance]
+	// variantDaily caches generated variant of the day puzzles.
+	variantDaily variantDailyCache
 }
 
 func New(deps Deps) *Server {
@@ -63,6 +65,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/me/results", s.requireAuth(s.getMyResults))
 	s.mux.HandleFunc("POST /api/v1/results", s.requireAuth(s.postResult))
 	s.mux.HandleFunc("GET /api/v1/leaderboard", s.requireAuth(s.getLeaderboard))
+	s.mux.HandleFunc("POST /api/v1/variant-daily/results", s.requireAuth(s.postVariantDailyResult))
+	s.mux.HandleFunc("GET /api/v1/variant-daily/leaderboard", s.requireAuth(s.getVariantDailyLeaderboard))
 	s.mux.HandleFunc("GET /api/v1/endless", s.requireAuth(s.getEndless))
 	s.mux.HandleFunc("GET /api/v1/me/endless", s.requireAuth(s.getMyEndless))
 	s.mux.HandleFunc("GET /api/v1/me/stats", s.requireAuth(s.getMyStats))
@@ -77,6 +81,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/admin/endless/results/{difficulty}/{number}/{userId}/replay", s.requireAdmin(s.getAdminEndlessReplay))
 	s.mux.HandleFunc("PUT /api/v1/admin/endless/results/{difficulty}/{number}/{userId}/flag", s.requireAdmin(s.putAdminEndlessFlag))
 	s.mux.HandleFunc("DELETE /api/v1/admin/endless/results/{difficulty}/{number}/{userId}/flag", s.requireAdmin(s.deleteAdminEndlessFlag))
+	s.mux.HandleFunc("GET /api/v1/admin/variant-daily/results/{date}/{userId}/replay", s.requireAdmin(s.getAdminVariantDailyReplay))
+	s.mux.HandleFunc("PUT /api/v1/admin/variant-daily/results/{date}/{userId}/flag", s.requireAdmin(s.putAdminVariantDailyFlag))
+	s.mux.HandleFunc("DELETE /api/v1/admin/variant-daily/results/{date}/{userId}/flag", s.requireAdmin(s.deleteAdminVariantDailyFlag))
 	s.mux.HandleFunc("GET /api/v1/admin/generator", s.requireAdmin(s.getAdminGenerator))
 	s.mux.HandleFunc("PUT /api/v1/admin/generator", s.requireAdmin(s.putAdminGenerator))
 	s.mux.HandleFunc("GET /api/v1/admin/maintenance", s.requireAdmin(s.getAdminMaintenance))

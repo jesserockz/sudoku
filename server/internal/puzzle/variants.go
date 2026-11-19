@@ -514,3 +514,46 @@ func GenerateEndlessVariant(generator, variant int, endlessSeed uint64, difficul
 	}
 	return VariantPuzzle{b.Puzzle, b.Layout}, nil
 }
+
+// dailyVariantDomain is "vday" in ASCII: the derivation of the variant of the
+// day from the week seed, apart from every other seed derivation.
+const dailyVariantDomain uint64 = 0x76646179
+
+// dailyVariantRound derives the variant, the tier and the puzzle seed of the
+// variant of the day from independent rounds of the same hash.
+func dailyVariantRound(weekSeed uint64, dayOfWeek int) (variant, tier int, seed uint64) {
+	h := mix(dailyVariantDomain)
+	h = mix(h ^ weekSeed)
+	h = mix(h + uint64(dayOfWeek))
+	return 1 + int(mix(h+1)%3), 4 + int(mix(h+2)%2), mix(h + 3)
+}
+
+// DailyVariantOf is just the variant (1..Variants-1) of the variant of the
+// day, without generating its puzzle: the same draw as GenerateDailyVariant.
+func DailyVariantOf(weekSeed uint64, dayOfWeek int) int {
+	variant, _, _ := dailyVariantRound(weekSeed, dayOfWeek)
+	return variant
+}
+
+// DailyVariant is the variant of the day: a Graded puzzle of a variant
+// (1..Variants-1) with its layout and tier (4 or 5).
+type DailyVariant struct {
+	VariantPuzzle
+	Variant int
+	Tier    int
+}
+
+// GenerateDailyVariant is the variant of the day, a pure function of
+// (weekSeed, dayOfWeek) giving bit-identical puzzles to the web generator:
+// the variant (Diagonal, Jigsaw or Killer) and the tier (Expert or
+// Diabolical) are drawn from the week seed and day, and the puzzle is the
+// Graded generator's build of that variant. dayOfWeek is 1 (Monday) to 7
+// (Sunday).
+func GenerateDailyVariant(weekSeed uint64, dayOfWeek int) (DailyVariant, error) {
+	if dayOfWeek < 1 || dayOfWeek > 7 {
+		return DailyVariant{}, fmt.Errorf("dayOfWeek must be 1..7: %d", dayOfWeek)
+	}
+	variant, tier, seed := dailyVariantRound(weekSeed, dayOfWeek)
+	b := buildGradedVariant(seed, variant, tier, MaxAttemptsVariantGraded[variant])
+	return DailyVariant{VariantPuzzle{b.Puzzle, b.Layout}, variant, tier}, nil
+}

@@ -1,20 +1,22 @@
 import { ApiException, SIGN_IN_UNAVAILABLE } from "../api/client.ts";
 import {
   type AppConfig, type EndlessBoard, type EndlessProgress, type EndlessResult, type Leaderboard, type MaintenanceSettings, type MaintenanceState, type Me,
-  type MyStats, type Streak, type Week, variantOf,
+  type MyStats, type Streak, type VariantBoard, type VariantDayResult, type Week, variantOf,
 } from "../api/models.ts";
 import { type HomeTab, endlessGameKey, parseEndlessGameKey } from "../data/app-storage.ts";
 import type { EndlessInProgress, EndlessSource } from "../data/endless.ts";
+import type { VariantDaySource } from "../data/variant-day.ts";
 import { OidcException } from "../api/oidc.ts";
 import { SignInError, type SudokuRepository } from "../data/repository.ts";
 import { MemoryStore } from "../data/store.ts";
-import { addDays } from "../game/calendar.ts";
+import { addDays, dayOfWeek } from "../game/calendar.ts";
 import { Game } from "../game/game.ts";
 import type { ReplayInput } from "../game/replay.ts";
 import { VARIANT_DIAGONAL, VARIANT_STANDARD, isVariant } from "../core/layout.ts";
 import { DIFFICULTIES, type EndlessPuzzle, isEndlessNumber, type Puzzle } from "../generator/generator.ts";
-import type { VariantPuzzle } from "../generator/variants.ts";
-import { GENERATOR_CLASSIC, isGeneratorVersion } from "../generator/versions.ts";
+import { type DailyVariant, type VariantPuzzle, dailyVariantOf } from "../generator/variants.ts";
+import { parseWeekSeed } from "../generator/week-seed.ts";
+import { GENERATOR_CLASSIC, generatorName, isGeneratorVersion } from "../generator/versions.ts";
 import { lessonById } from "../learn/lessons.ts";
 import { LearnProgress } from "../learn/progress.ts";
 import { fingerprint, sameSettings, type SeedSettings } from "../serverless/seed.ts";
@@ -24,6 +26,7 @@ import { AdminModel } from "./admin.ts";
 import { AdminResultsModel, type ResultKey } from "./admin-results.ts";
 import { backAroundOf, maintenanceError } from "./maintenance.ts";
 import { streakSummary } from "./stats.ts";
+import { seriesName, variantDayTitle } from "./variants.ts";
 
 /** Register `<origin>/auth/callback` as the redirect URI with the identity provider. */
 export const CALLBACK_PATH = "/auth/callback";
@@ -63,8 +66,19 @@ export interface EndlessRef {
   number: number;
 }
 
-/** A puzzle being played: today's game `level` (from the generator in use, {@link AppController.generator}), or an endless puzzle. */
-export type PuzzleRef = number | EndlessRef;
+/** Today's variant of the day: `variant` (1 Diagonal, 2 Jigsaw, 3 Killer) is the day's. */
+export interface VariantDayRef {
+  variantDay: true;
+  variant: number;
+}
+
+export const isVariantDayRef = (ref: PuzzleRef): ref is VariantDayRef => typeof ref === "object" && "variantDay" in ref;
+
+/**
+ * A puzzle being played: today's game `level` (from the generator in use, {@link AppController.generator}), an endless
+ * puzzle, or the variant of the day.
+ */
+export type PuzzleRef = number | EndlessRef | VariantDayRef;
 
 /** One difficulty on the endless tab, in the current series. `next` is the lowest number not solved yet. */
 export interface EndlessSummary {
@@ -82,6 +96,8 @@ export type Screen =
   | { kind: "learn"; lesson: string }
   | { kind: "play"; generator: number; level: number }
   | { kind: "endless-play"; generator: number; variant: number; difficulty: number; number: number }
+  /** Today's variant of the day (`variant` is the day's). */
+  | { kind: "variant-day-play"; date: string; variant: number }
   /**
    * The endless leaderboard of `generator`'s series of `variant`: everyone's progress in `difficulty`, or with `number`
    * that puzzle's times.
@@ -201,8 +217,11 @@ export class AppController extends EventTarget {
    * server's config after each sync, and from the Admin page when they switch it.
    */
   maintenance: MaintenanceState | null = null;
-  /** A variant's puzzle being generated before it opens (it can take a moment), or `null`. */
-  preparing: EndlessRef | null = null;
+  /** The variant of the day's leaderboard shown beneath the daily boards, and why it couldn't load. */
+  variantBoard: VariantBoard | null = null;
+  variantBoardError: string | null = null;
+  /** A variant's puzzle (an endless one, or the variant of the day) being generated before it opens (it can take a moment), or `null`. */
+  preparing: EndlessRef | VariantDayRef | null = null;
 
   readonly #repo: SudokuRepository;
   readonly #seeds: SeedRepository;
@@ -213,7 +232,10 @@ export class AppController extends EventTarget {
   #endless: { ref: EndlessRef; puzzle: VariantPuzzle; game: Game } | null = null;
   /** The last sync couldn't reach the server, or it is in maintenance: retried periodically, as `online` events aren't reliable. */
   #offline = false;
+  /** The variant of the day being played (or last played), so the play screen and its updates share one `Game`. */
+  #variantDay: { date: string; puzzle: DailyVariant; game: Game } | null = null;
   #leaderboardRequest = 0;
+  #variantBoardRequest = 0;
   #statsRequest = 0;
 
   /** How far the player is through the Learn tab's lessons: kept on this device only. */
@@ -363,10 +385,11 @@ export class AppController extends EventTarget {
         this.syncing = false;
         this.needsSignIn = this.#repo.needsSignIn;
         // Keep an open game as it is; otherwise pick up the new week, results and day.
-        if (this.screen.kind !== "play" && this.screen.kind !== "endless-play") this.#loadLocal();
+        if (!isPlaying(this.screen)) this.#loadLocal();
         else this.#refreshQueued();
         // A leaderboard that failed (e.g. offline) tries again.
         if (this.screen.kind === "scores" && this.leaderboardError !== null) this.#loadLeaderboard(this.screen.date, this.screen.generator);
+        if (this.screen.kind === "scores" && this.variantBoardError !== null) this.#loadVariantBoard(this.screen.date);
         if (this.screen.kind === "stats" && this.statsError !== null) this.openStats();
         if (this.screen.kind === "endless-scores" && this.leaderboardError !== null) {
           this.openEndlessScores(this.screen.difficulty, this.screen.number, this.screen.generator, this.screen.variant);
@@ -545,12 +568,14 @@ export class AppController extends EventTarget {
     this.#seeds.leave();
     this.games.clear();
     this.#endless = null;
+    this.#variantDay = null;
     Object.assign(this, { seed: null, puzzles: null, week: null, notice: null, screen: { kind: "today" } });
     this.start();
   }
 
   async #startSeed(profile: SeedProfile): Promise<void> {
     this.#endless = null;
+    this.#variantDay = null;
     this.#set({ seed: profile, phase: { kind: "loading" } });
     try {
       await this.#loadSeedDay();
@@ -720,6 +745,7 @@ export class AppController extends EventTarget {
     const endSession = await this.#repo.endSessionUrl(`${this.origin}/`);
     this.#repo.signOut();
     this.games.clear();
+    this.#variantDay = null;
     Object.assign(this, { puzzles: null, week: null, me: null, streak: null, stats: null, statsGenerator: null, notice: null, needsSignIn: false, maintenance: null, screen: { kind: "today" } });
     if (endSession) this.#host.location.assign(endSession);
     else this.start();
@@ -787,6 +813,11 @@ export class AppController extends EventTarget {
   /** Where endless puzzles, games and results live: the seed's repository in serverless play. */
   get #endlessSource(): EndlessSource {
     return this.seed ? this.#seeds : this.#repo;
+  }
+
+  /** Serverless play's variant of the day solve times, newest day first. */
+  variantDayHistory(): VariantDayResult[] {
+    return this.#seeds.variantDayHistory();
   }
 
   /** Serverless play's endless solve times, by series, variant, difficulty then number. */
@@ -913,19 +944,30 @@ export class AppController extends EventTarget {
 
   /** The game for `ref`, if it's open (today's games, or the endless puzzle on screen). */
   gameOf(ref: PuzzleRef): Game | null {
+    if (isVariantDayRef(ref)) return this.#variantDay?.game ?? null;
     if (typeof ref === "number") return this.games.get(ref) ?? null;
     return this.#endless && sameEndless(this.#endless.ref, ref) ? this.#endless.game : null;
   }
 
   /** The puzzle for `ref`. */
-  puzzleOf(ref: PuzzleRef): Puzzle | EndlessPuzzle | null {
+  puzzleOf(ref: PuzzleRef): Puzzle | EndlessPuzzle | DailyVariant | null {
+    if (isVariantDayRef(ref)) return this.#variantDay?.puzzle ?? null;
     if (typeof ref === "number") return this.puzzle(ref);
     return this.#endless && sameEndless(this.#endless.ref, ref) ? this.#endless.puzzle : null;
   }
 
+  /** The play screen's title for `ref`: the generator and the puzzle's name, or just "Killer of the day" for the variant of the day (it never names a generator or difficulty). */
+  headingOf(ref: PuzzleRef): string {
+    if (isVariantDayRef(ref)) return variantDayTitle(ref.variant);
+    const puzzle = this.puzzleOf(ref) as Puzzle | EndlessPuzzle;
+    if (typeof ref !== "number") return `${seriesName(ref.generator, ref.variant ?? 0)} · ${puzzle.title}`;
+    return this.generators.length > 1 ? `${generatorName(this.generator)} · ${puzzle.title}` : puzzle.title;
+  }
+
   /** "See scores" after solving `ref`. */
   openScoresFor(ref: PuzzleRef): void {
-    if (typeof ref === "number") this.openScores(ref);
+    if (isVariantDayRef(ref)) this.openScores(0);
+    else if (typeof ref === "number") this.openScores(ref);
     else this.openEndlessScores(ref.difficulty, ref.number, ref.generator, ref.variant);
   }
 
@@ -950,6 +992,8 @@ export class AppController extends EventTarget {
     }
     this.screen = { kind: "scores", date, tab, generator };
     this.#loadLeaderboard(date, generator);
+    // It is the same for every generator, so only a new day (or a failed load) fetches it again.
+    if (this.variantBoard?.date !== date || this.variantBoardError !== null) this.#loadVariantBoard(date);
   }
 
   /** The leaderboard's Classic / Graded switch: the same day and tab, for `generator`'s puzzles. */
@@ -1015,6 +1059,82 @@ export class AppController extends EventTarget {
     ).finally(() => this.#changed());
   }
 
+  #loadVariantBoard(date: string): void {
+    const request = ++this.#variantBoardRequest;
+    this.variantBoard = null;
+    this.variantBoardError = null;
+    this.#changed();
+    this.#repo.variantBoard(date).then(
+      (board) => {
+        if (request === this.#variantBoardRequest) this.variantBoard = board;
+      },
+      (e) => {
+        if (request !== this.#variantBoardRequest) return;
+        this.variantBoardError = e instanceof ApiException || e instanceof OidcException ? this.#problem(e) : "You're offline. The leaderboard needs a connection to the server.";
+      },
+    ).finally(() => this.#changed());
+  }
+
+  // Variant of the day
+
+  /** Where the variant of the day's puzzle, game and result live: the seed's repository in serverless play. */
+  get #variantSource(): VariantDaySource {
+    return this.seed ? this.#seeds : this.#repo;
+  }
+
+  /**
+   * Today's variant of the day: 1 Diagonal, 2 Jigsaw or 3 Killer, drawn from the week's seed (so known offline), or `null`
+   * until a week is known. Its generator and difficulty are never shown.
+   */
+  get variantDayKind(): number | null {
+    return this.week ? dailyVariantOf(parseWeekSeed(this.week.seed), dayOfWeek(this.today)) : null;
+  }
+
+  /** Today's variant of the day's state, as {@link statusOf} for a level. Never generates the puzzle. */
+  variantDayStatus(): PuzzleStatus {
+    const solved = this.#variantSource.variantDaySolved(this.today);
+    if (solved) return { kind: "done", elapsedMs: solved.elapsedMs, synced: solved.synced };
+    const open = this.#variantDay?.date === this.today ? this.#variantDay.game : null;
+    if (open) {
+      return open.completedElapsedMs !== null
+        ? { kind: "done", elapsedMs: open.completedElapsedMs, synced: false }
+        : { kind: "in-progress", elapsedMs: open.elapsedMs(this.nowMs()) };
+    }
+    const saved = this.#variantSource.variantDaySaved(this.today);
+    if (!saved) return { kind: "new" };
+    return saved.completed ? { kind: "done", elapsedMs: saved.elapsedMs, synced: false } : { kind: "in-progress", elapsedMs: saved.elapsedMs };
+  }
+
+  /**
+   * Plays today's variant of the day, resuming it if it was started here. One solved elsewhere opens its leaderboard. The
+   * puzzle can take a moment to generate, so {@link preparing} names it for a frame first; the promise settles once it is open.
+   */
+  async openVariantDay(): Promise<void> {
+    const week = this.week;
+    const variant = this.variantDayKind;
+    if (!week || variant === null) return;
+    const date = this.today;
+    let day = this.#variantDay?.date === date ? this.#variantDay : null;
+    if (this.variantDayStatus().kind === "done" && !day?.game.isComplete) {
+      this.openScores(0);
+      return;
+    }
+    if (!day) {
+      const preparing: VariantDayRef = { variantDay: true, variant };
+      this.preparing = preparing;
+      this.#changed();
+      await (this.#host.nextFrame?.() ?? new Promise<void>((resolve) => setTimeout(resolve, 0)));
+      // Another puzzle was opened meanwhile: that one wins.
+      if (this.preparing !== preparing) return;
+      this.preparing = null;
+      const puzzle = this.#variantSource.variantDay(week, date);
+      const game = this.#variantSource.loadVariantDayGame(date, puzzle) ?? this.#stamp(Game.create(puzzle.givens, puzzle.layout), { a: "start" });
+      day = { date, puzzle, game };
+    }
+    this.#variantDay = day;
+    this.#set({ screen: { kind: "variant-day-play", date, variant } });
+  }
+
   // Play
 
   /**
@@ -1031,6 +1151,14 @@ export class AppController extends EventTarget {
     const timerOnly = action?.a === "pause" || action?.a === "resume";
     if (action && !before.isComplete && (!timerOnly || after.timer.isRunning !== before.timer.isRunning)) after = this.#stamp(after, action);
     if (finished) after = this.#stamp(after, { a: "finish" });
+    if (isVariantDayRef(ref)) {
+      const day = this.#variantDay!;
+      day.game = after;
+      this.#variantSource.saveVariantDayGame(day.date, after, this.nowMs());
+      if (finished) void this.#variantSource.completeVariantDay(day.date, ref.variant, after).then(() => this.sync());
+      this.#changed();
+      return;
+    }
     if (typeof ref !== "number") {
       this.#endless!.game = after;
       const variant = variantOf(ref);
@@ -1091,7 +1219,7 @@ export class AppController extends EventTarget {
   tick(): void {
     if (this.phase.kind !== "ready") return;
     // Don't pull the board out from under someone mid-puzzle; openToday() catches up.
-    if (this.screen.kind !== "play" && this.screen.kind !== "endless-play" && this.#currentDay() !== this.today) {
+    if (!isPlaying(this.screen) && this.#currentDay() !== this.today) {
       this.#loadLocal();
       this.sync();
     } else if (this.#offline && this.#host.isVisible()) {
@@ -1103,6 +1231,9 @@ export class AppController extends EventTarget {
     return this.seed ? this.#seeds.today() : this.#repo.today();
   }
 }
+
+/** Whether `screen` is a puzzle being played: its board is kept as it is while syncs and day changes happen. */
+const isPlaying = (screen: Screen): boolean => screen.kind === "play" || screen.kind === "endless-play" || screen.kind === "variant-day-play";
 
 const isMaintenance = (e: unknown): e is ApiException => e instanceof ApiException && e.isMaintenance;
 

@@ -1,7 +1,7 @@
 // The admin replay viewer's logic, free of the DOM: rebuilds the board after every event, plays the
 // replay back on the game clock, and points out what's worth a closer look (long gaps, time hidden or
 // paused, a steady machine-like pace). Digits stay hidden unless the admin reveals them.
-import type { EndlessReplayDetail, ReplayDetail } from "../api/models.ts";
+import type { EndlessReplayDetail, ReplayDetail, VariantDayReplayDetail } from "../api/models.ts";
 import { Layout } from "../core/layout.ts";
 import { colOf, rowOf } from "../core/geometry.ts";
 import { COLOUR_NAMES } from "../game/colours.ts";
@@ -163,7 +163,7 @@ export const cellName = (i: number): string => `R${rowOf(i) + 1}C${colOf(i) + 1}
  * admin is also a player and shouldn't see a solution by accident.
  */
 export class ReplayViewer extends EventTarget {
-  readonly detail: ReplayDetail | EndlessReplayDetail;
+  readonly detail: ReplayDetail | EndlessReplayDetail | VariantDayReplayDetail;
   readonly events: readonly ReplayEvent[];
   readonly analysis: Analysis;
   /** `frames[k]` is the game after the first `k` events. */
@@ -176,7 +176,7 @@ export class ReplayViewer extends EventTarget {
   speed: Speed = 1;
   revealDigits = false;
 
-  constructor(detail: ReplayDetail | EndlessReplayDetail) {
+  constructor(detail: ReplayDetail | EndlessReplayDetail | VariantDayReplayDetail) {
     super();
     this.detail = detail;
     this.events = detail.events;
