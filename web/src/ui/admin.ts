@@ -28,6 +28,9 @@ export interface AdminHost {
   maintenanceChanged(settings: MaintenanceSettings): void;
 }
 
+/** Shown on both progress cards: the server does the whole update itself, so the page only watches and can be closed. */
+export const CLOSE_HINT = "You can close this page: the server carries on by itself.";
+
 export const POLL_MS = 1000;
 export const RESTART_TIMEOUT_MS = 2 * 60 * 1000;
 
