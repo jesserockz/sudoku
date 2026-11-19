@@ -663,6 +663,9 @@ test("admin endless results are keyed by variant, and a variant's replay plays u
     adminReplay: async () => { throw new Error("unused"); },
     flagResult: async () => { throw new Error("unused"); },
     unflagResult: async () => { throw new Error("unused"); },
+    adminVariantDayReplay: async () => { throw new Error("unused"); },
+    flagVariantDayResult: async () => { throw new Error("unused"); },
+    unflagVariantDayResult: async () => { throw new Error("unused"); },
     adminEndlessResults: async (date: string) => ({ date, results: [result, plain] }),
     adminEndlessReplay: async (g: number, d: number, n: number, u: string, v?: number) => {
       calls.push(`replay ${g} ${d} ${n} ${u} ${v}`);

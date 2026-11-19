@@ -1,6 +1,6 @@
 import {
-  type DayResult, type EndlessInfo, type EndlessResult, type GameResult, type Me, type OidcConfig, type Streak, type Week,
-  decodeDayResult, decodeEndlessInfo, decodeGeneratorVersion, decodeEndlessResult, decodeGameResult, decodeMe, decodeOidcConfig, decodeStreak, decodeWeek,
+  type DayResult, type EndlessInfo, type EndlessResult, type GameResult, type Me, type OidcConfig, type Streak, type VariantDayResult, type Week,
+  decodeDayResult, decodeEndlessInfo, decodeGeneratorVersion, decodeEndlessResult, decodeGameResult, decodeMe, decodeOidcConfig, decodeStreak, decodeVariantDayResult, decodeWeek,
 } from "../api/models.ts";
 import type { SavedGame } from "../game/game.ts";
 import { VARIANT_DIAGONAL, VARIANT_STANDARD, isVariant } from "../core/layout.ts";
@@ -68,6 +68,9 @@ export function parseEndlessGameKey(key: string): { generator: number; variant: 
   const [difficulty, number] = parts.map(Number) as [number, number];
   return { generator, variant, difficulty, number };
 }
+
+/** The date of a variant of the day game key: games of the variant of the day are kept apart from the daily ones, by date alone. */
+export const variantDayGameKey = (date: string): string => date;
 
 /** The home page's tabs. */
 export type HomeTab = "daily" | "endless" | "variants" | "learn";
@@ -142,6 +145,12 @@ export class AppStorage {
   readonly endlessResults: StoredValue<EndlessResult[]>;
   /** The offline queue of endless results. */
   readonly endlessPending: StoredValue<EndlessResult[]>;
+  /** Variant of the day games in progress or finished, keyed by {@link variantDayGameKey}. Only the cached week's are kept. */
+  readonly variantDayGames: StoredValue<Record<string, SavedGame>>;
+  /** The server's record of the user's variant of the day result, by date (only the latest fetch is kept). */
+  readonly variantDayResults: StoredValue<Record<string, VariantDayResult>>;
+  /** The offline queue of variant of the day results. */
+  readonly variantDayPending: StoredValue<VariantDayResult[]>;
   /** The user's last known daily streak, so the home page shows it offline and after a reload. */
   readonly streak: StoredValue<Streak>;
   /** The home page tab last shown on this device. */
@@ -171,6 +180,9 @@ export class AppStorage {
     this.endlessGames = new StoredValue(store, "endless-games", (j) => record(j, decodeSavedGame));
     this.endlessResults = new StoredValue(store, "endless-results", (j) => list(j, decodeEndlessResult));
     this.endlessPending = new StoredValue(store, "endless-pending", (j) => list(j, decodeEndlessResult));
+    this.variantDayGames = new StoredValue(store, "variant-day-games", (j) => record(j, decodeSavedGame));
+    this.variantDayResults = new StoredValue(store, "variant-day-results", (j) => record(j, decodeVariantDayResult));
+    this.variantDayPending = new StoredValue(store, "variant-day-pending", (j) => list(j, decodeVariantDayResult));
     this.streak = new StoredValue(store, "streak", decodeStreak);
     this.homeTab = new StoredValue(store, "home-tab", decodeHomeTab);
     this.endlessHelpSeen = new StoredValue(store, "endless-help-seen", bool);
@@ -195,6 +207,9 @@ export class AppStorage {
     this.endlessGames.write(null);
     this.endlessResults.write(null);
     this.endlessPending.write(null);
+    this.variantDayGames.write(null);
+    this.variantDayResults.write(null);
+    this.variantDayPending.write(null);
     this.streak.write(null);
   }
 }

@@ -2,13 +2,11 @@ import { colOf, index, rowOf } from "../core/geometry.ts";
 import { nextColour } from "../game/colours.ts";
 import { formatDuration } from "../game/timer.ts";
 import { variantName } from "../core/layout.ts";
-import { generatorName } from "../generator/versions.ts";
 import { SudokuBoard, SudokuKeypad } from "./board.ts";
-import { ENDLESS_LABEL, type AppController, type PuzzleRef } from "./controller.ts";
+import { ENDLESS_LABEL, type AppController, type PuzzleRef, isVariantDayRef } from "./controller.ts";
 import { type Child, Component, h, topBar } from "./dom.ts";
 import { type InputMode, toggleMode } from "./input-mode.ts";
 import { shareResultsButton } from "./share.ts";
-import { seriesName } from "./variants.ts";
 import { ScreenWakeLock } from "./wake-lock.ts";
 import { lockZoom } from "./zoom-lock.ts";
 
@@ -27,7 +25,7 @@ import { lockZoom } from "./zoom-lock.ts";
  */
 export class PlayScreen extends Component {
   app!: AppController;
-  /** Today's game number, or the endless puzzle. */
+  /** Today's game number, the endless puzzle or the variant of the day. */
   ref: PuzzleRef = 0;
   #selected = -1;
   #mode: InputMode = "digits";
@@ -187,7 +185,7 @@ export class PlayScreen extends Component {
           app.seed && typeof ref === "number"
             ? shareResultsButton(() => app.resultsSummary(), true)
             : h("button", { class: "primary", onclick: () => app.openScoresFor(ref) }, app.seed ? "History" : "See scores"),
-          typeof ref === "number"
+          typeof ref === "number" || isVariantDayRef(ref)
             ? h("button", { onclick: () => app.openToday() }, "Today's puzzles")
             : [
               h("button", { onclick: () => void app.openEndless({ ...ref, number: ref.number + 1 }) }, `Play #${ref.number + 1}`),
@@ -227,8 +225,7 @@ export class PlayScreen extends Component {
     }
 
     return [
-      topBar(typeof ref !== "number" ? `${seriesName(ref.generator, ref.variant ?? 0)} · ${puzzle.title}`
-        : app.generators.length > 1 ? `${generatorName(app.generator)} · ${puzzle.title}` : puzzle.title, () => app.openToday(),
+      topBar(app.headingOf(ref), () => app.openToday(),
         this.#timer,
         !game.isComplete && !paused && h("button", { class: "link", onclick: () => this.#pause() }, "Pause")),
       h("div", { class: "play-area" },

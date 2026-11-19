@@ -2,11 +2,12 @@ import { type Week, weekPuzzles } from "../api/models.ts";
 import { inWeek, today, weekOf } from "../game/calendar.ts";
 import { Game, type SavedGame } from "../game/game.ts";
 import type { Puzzle } from "../generator/generator.ts";
-import type { VariantPuzzle } from "../generator/variants.ts";
+import type { DailyVariant, VariantPuzzle } from "../generator/variants.ts";
 import { type KeyValueStore, StoredValue, list, num, obj, optional, record, str } from "../data/store.ts";
-import { decodeSavedGame, endlessGameKey, gameKey, gameKeyDate } from "../data/app-storage.ts";
+import { decodeSavedGame, endlessGameKey, gameKey, gameKeyDate, variantDayGameKey } from "../data/app-storage.ts";
+import { type VariantDaySolved, type VariantDaySource, VariantDayCache } from "../data/variant-day.ts";
 import { type EndlessInProgress, EndlessPuzzleCache, type EndlessSolved, type EndlessSource, endlessInProgressOf } from "../data/endless.ts";
-import { type EndlessResult, decodeEndlessResult, variantOf } from "../api/models.ts";
+import { type EndlessResult, type VariantDayResult, decodeEndlessResult, decodeVariantDayResult, variantOf } from "../api/models.ts";
 import { GENERATOR_CLASSIC, enabledGenerators } from "../generator/versions.ts";
 import { endlessSeed, fingerprint, resultsSummary, seedSettings, seedWeekFor, type SeedSettings, weekSeed } from "./seed.ts";
 
@@ -74,7 +75,7 @@ export function decodeSeedGenerators(json: unknown): number[] {
  * Games and history are kept per seed (keyed by its fingerprint), so switching
  * seeds and back resumes where you were and never mixes two groups' games.
  */
-export class SeedRepository implements EndlessSource {
+export class SeedRepository implements EndlessSource, VariantDaySource {
   readonly #store: KeyValueStore;
   readonly #now: () => number;
   readonly #active: StoredValue<SeedProfile>;
@@ -82,6 +83,7 @@ export class SeedRepository implements EndlessSource {
   #puzzleCache: { key: string; puzzles: Puzzle[] } | null = null;
   #endlessSeed: { seed: string; hex: string } | null = null;
   readonly #endlessPuzzles = new EndlessPuzzleCache();
+  readonly #variantDays = new VariantDayCache();
 
   constructor(store: KeyValueStore, now: () => number = Date.now) {
     this.#store = store;
@@ -259,6 +261,58 @@ export class SeedRepository implements EndlessSource {
     return result;
   }
 
+  /** The variant of the day of `date` (in `week`, which the active seed gave): generated from the week's seed and kept for next time. */
+  variantDay(week: Week, date: string): DailyVariant {
+    return this.#variantDays.get(week.seed, date);
+  }
+
+  /** A saved variant of the day game for `date`, if it still matches the puzzle. */
+  loadVariantDayGame(date: string, puzzle: DailyVariant): Game | null {
+    const saved = this.variantDaySaved(date);
+    return saved && saved.givens === puzzle.givens ? Game.restore(saved, puzzle.layout) : null;
+  }
+
+  /** The saved variant of the day game for `date`, whatever puzzle it was for. */
+  variantDaySaved(date: string): SavedGame | null {
+    return this.#variantDayGames().read()?.[variantDayGameKey(date)] ?? null;
+  }
+
+  /** Saves a game, dropping saved ones from other weeks: they can't be finished any more. */
+  saveVariantDayGame(date: string, game: Game, nowMs: number): void {
+    const week = weekOf(date);
+    this.#variantDayGames().update((saved) => ({
+      ...Object.fromEntries(Object.entries(saved ?? {}).filter(([k]) => inWeek(week, k))),
+      [variantDayGameKey(date)]: game.save(nowMs),
+    }));
+  }
+
+  /** Records a just-finished variant of the day (of `variant`) in the history. The first result for a date counts. */
+  async completeVariantDay(date: string, variant: number, game: Game): Promise<VariantDayResult> {
+    const profile = this.#requireProfile();
+    if (game.completedElapsedMs === null) throw new Error("game isn't complete");
+    const history = this.#variantDayHistory(profile);
+    const existing = (history.read() ?? []).find((r) => r.date === date);
+    if (existing) return existing;
+    const result: VariantDayResult = {
+      date, variant, elapsedMs: game.completedElapsedMs, completedAt: new Date(this.#now()).toISOString().replace(".000Z", "Z"),
+    };
+    history.update((h) => [...(h ?? []), result]);
+    return result;
+  }
+
+  /** `date`'s solved variant of the day, from the history. */
+  variantDaySolved(date: string): VariantDaySolved | null {
+    const result = this.variantDayHistory().find((r) => r.date === date);
+    return result ? { elapsedMs: result.elapsedMs, synced: true } : null;
+  }
+
+  /** Every variant of the day solve of the active seed, newest day first. */
+  variantDayHistory(): VariantDayResult[] {
+    const profile = this.profile();
+    const results = profile ? (this.#variantDayHistory(profile).read() ?? []) : [];
+    return results.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  }
+
   #requireProfile(): SeedProfile {
     const profile = this.profile();
     if (!profile) throw new Error("no seed is active");
@@ -283,6 +337,14 @@ export class SeedRepository implements EndlessSource {
 
   #endlessGames(): StoredValue<Record<string, SavedGame>> {
     return new StoredValue(this.#store, `seed-endless-games-${this.#requireProfile().fingerprint.replace(/^#/, "")}`, (j) => record(j, decodeSavedGame));
+  }
+
+  #variantDayGames(): StoredValue<Record<string, SavedGame>> {
+    return new StoredValue(this.#store, `seed-variant-day-games-${this.#requireProfile().fingerprint.replace(/^#/, "")}`, (j) => record(j, decodeSavedGame));
+  }
+
+  #variantDayHistory(profile: SeedProfile): StoredValue<VariantDayResult[]> {
+    return new StoredValue(this.#store, `seed-variant-day-history-${profile.fingerprint.replace(/^#/, "")}`, (j) => list(j, decodeVariantDayResult));
   }
 
   #endlessHistory(profile: SeedProfile): StoredValue<EndlessResult[]> {

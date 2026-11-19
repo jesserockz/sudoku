@@ -2,12 +2,8 @@ package api
 
 import (
 	"encoding/json"
-	"errors"
-	"io"
 	"net/http"
 	"strconv"
-	"strings"
-	"unicode/utf8"
 
 	"github.com/jesserockz/sudoku/server/internal/httpx"
 	"github.com/jesserockz/sudoku/server/internal/puzzle"
@@ -161,15 +157,8 @@ func (s *Server) putAdminEndlessFlag(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var req flagRequest
-	// The body, and so the reason, is optional.
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBody)).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
-		httpx.Error(w, http.StatusBadRequest, httpx.CodeBadRequest, "malformed JSON body")
-		return
-	}
-	reason := strings.TrimSpace(req.Reason)
-	if utf8.RuneCountInString(reason) > maxFlagReason {
-		httpx.Error(w, http.StatusBadRequest, httpx.CodeBadRequest, "reason must be at most 500 characters")
+	reason, ok := flagReason(w, r)
+	if !ok {
 		return
 	}
 	err := s.deps.Store.FlagEndlessResult(r.Context(), k.uid, k.generator, k.variant, k.difficulty, k.number, currentUser(r).ID, reason, s.deps.Clock.Now())

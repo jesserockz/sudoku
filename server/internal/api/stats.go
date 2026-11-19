@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"slices"
 
 	"github.com/jesserockz/sudoku/server/internal/httpx"
 	"github.com/jesserockz/sudoku/server/internal/puzzle"
@@ -82,7 +83,12 @@ func (s *Server) getMyStats(w http.ResponseWriter, r *http.Request) {
 		httpx.Internal(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, buildStats(today, results, schedule, gen, endless))
+	variantDays, err := s.deps.Store.UserVariantDailyDates(r.Context(), uid)
+	if err != nil {
+		httpx.Internal(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, buildStats(today, results, schedule, gen, endless, variantDays))
 }
 
 // dailyAcc accumulates one tier's daily results.
@@ -96,8 +102,9 @@ type dailyAcc struct {
 // buildStats summarises a user's results. results must be ordered by date,
 // then level; each is assigned the tier its level has among that week's games
 // in schedule. The per-difficulty stats count only results played with
-// generator gen; the streak counts every generator.
-func buildStats(today week.Date, results []store.UserDailyResult, schedule store.Schedule, gen int, endless []store.EndlessStat) statsResponse {
+// generator gen; the streak counts every generator and the variant of the day
+// (variantDays, ordered by date) alike.
+func buildStats(today week.Date, results []store.UserDailyResult, schedule store.Schedule, gen int, endless []store.EndlessStat, variantDays []store.VariantDailyDate) statsResponse {
 	var acc [puzzle.Tiers]dailyAcc
 	var dates []week.Date
 	levelsOf := map[string]int{} // by ISO week, so each is resolved once
@@ -131,6 +138,13 @@ func buildStats(today week.Date, results []store.UserDailyResult, schedule store
 		}
 		a.recent = append(a.recent, recentJSON{Date: r.Date, Level: r.Level, ElapsedMs: r.ElapsedMs})
 	}
+
+	for _, v := range variantDays {
+		if !v.AdminFlagged {
+			dates = append(dates, storedDate(v.Date))
+		}
+	}
+	slices.SortFunc(dates, func(a, b week.Date) int { return a.DaysSince(b) })
 
 	out := statsResponse{
 		Generator: gen,

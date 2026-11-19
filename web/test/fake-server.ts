@@ -1,7 +1,9 @@
 // An in-memory v1 server and OIDC provider behind a fetch function, following docs/API.md.
-import type { EndlessResult, GameResult } from "../src/api/models.ts";
+import type { EndlessResult, GameResult, VariantDayResult } from "../src/api/models.ts";
 import { createPkce } from "../src/api/oidc.ts";
-import { weekAt } from "../src/game/calendar.ts";
+import { weekAt, weekOf } from "../src/game/calendar.ts";
+import { dailyVariantOf } from "../src/generator/variants.ts";
+import { parseWeekSeed } from "../src/generator/week-seed.ts";
 import { weekSeed } from "../src/serverless/seed.ts";
 
 export const ISSUER = "https://auth.test/o/sudoku/";
@@ -18,6 +20,16 @@ export class FakeServer {
   resultsStatus: number | null = null;
   /** When set, only endless result uploads answer this status. */
   endlessResultsStatus: number | null = null;
+  /** When set, only variant of the day result uploads answer this status. */
+  variantDayResultsStatus: number | null = null;
+  /** When set, the variant of the day leaderboard answers this status. */
+  variantBoardStatus: number | null = null;
+  /** When set, the variant of the day leaderboard waits for this promise before answering. */
+  variantBoardGate: Promise<void> | null = null;
+  /** The variant of the day leaderboard's `entries`, as the server would rank them (`streak` is 0 when left out). */
+  variantBoardEntries: unknown[] = [];
+  /** False plays an older server: it has no variant of the day (its routes answer 404 and `GET /me/results` has no `variantDaily`). */
+  hasVariantDay = true;
   /** When set, the endless leaderboard endpoints answer this status. */
   endlessBoardStatus: number | null = null;
   /** When set, the endless leaderboard endpoints wait for this promise before answering. */
@@ -77,6 +89,9 @@ export class FakeServer {
   adminResultsList: unknown = { date: "2026-10-27", levels: 5, results: [] };
   adminReplayDetail: unknown = null;
   adminFlagResult: unknown = null;
+  /** The same for the variant of the day admin endpoints: one result's replay, and a flag change. */
+  adminVariantReplayDetail: unknown = null;
+  adminVariantFlagResult: unknown = null;
   /** The same for the endless admin results endpoints. */
   adminEndlessList: unknown = { date: "2026-10-27", results: [] };
   adminEndlessReplayDetail: unknown = null;
@@ -116,6 +131,7 @@ export class FakeServer {
    * Stored endless results; one without a `generator` plays a result from before there were several series (Classic),
    * and one without a `variant` is standard Sudoku's (0), as the API leaves it out.
    */
+  readonly storedVariantDay: (VariantDayResult & { variant: number })[] = [];
   readonly storedEndless: (Omit<EndlessResult, "generator"> & { generator?: number })[] = [];
 
   constructor(now: () => number, authMode: "dev" | "oidc" = "dev") {
@@ -178,6 +194,10 @@ export class FakeServer {
     if (!user) return json({ error: { code: "unauthorized", message: "bad token" } }, 401);
     if (this.maintenance && !this.admin) {
       return json({ error: { code: "maintenance", message: "the server is down for maintenance", ...(this.maintenance.until ? { until: this.maintenance.until } : {}) } }, 503);
+    }
+    if (this.hasVariantDay && r.url.pathname.startsWith("/api/v1/admin/variant-daily/results")) {
+      if (!this.admin) return json({ error: { code: "forbidden", message: "admin access required" } }, 403);
+      return json(r.url.pathname.endsWith("/replay") ? this.adminVariantReplayDetail : this.adminVariantFlagResult);
     }
     if (r.url.pathname.startsWith("/api/v1/admin/endless/results")) {
       if (!this.admin) return json({ error: { code: "forbidden", message: "admin access required" } }, 403);
@@ -247,7 +267,37 @@ export class FakeServer {
       }
       case "/api/v1/me/results": {
         const date = r.url.searchParams.get("date") ?? weekAt(this.now()).today;
-        return json({ date, results: this.stored.filter((s) => s.date === date).map(({ date: _, replay: _r, ...rest }) => rest) });
+        const variantDaily = this.storedVariantDay.find((s) => s.date === date);
+        return json({
+          date, results: this.stored.filter((s) => s.date === date).map(({ date: _, replay: _r, ...rest }) => rest),
+          ...(this.hasVariantDay ? { variantDaily: variantDaily ? { ...variantDaily, replay: undefined } : null } : {}),
+        });
+      }
+      case "/api/v1/variant-daily/results": {
+        if (!this.hasVariantDay) return json({ error: { code: "not_found", message: "" } }, 404);
+        if (this.resultsStatus !== null || this.variantDayResultsStatus !== null) {
+          return json({ error: { code: "boom", message: "" } }, this.variantDayResultsStatus ?? this.resultsStatus!);
+        }
+        if (this.rejectAll) return json({ error: { code: "invalid_result", message: "nope" } }, 400);
+        if (this.rejectColours && /"a":"(colour|clearColours)"/.test(r.body)) return json({ error: { code: "invalid_result", message: "unknown action" } }, 400);
+        const sent = JSON.parse(r.body) as VariantDayResult;
+        const existing = this.storedVariantDay.find((s) => s.date === sent.date);
+        if (existing) return json(existing, 200);
+        // The server works the variant out from the date.
+        const info = weekOf(sent.date);
+        const variant = dailyVariantOf(parseWeekSeed(await weekSeed(SECRET, info.isoWeek)), info.dayOfWeek);
+        const result = { ...sent, variant };
+        this.storedVariantDay.push(result);
+        return json(result, 201);
+      }
+      case "/api/v1/variant-daily/leaderboard": {
+        if (!this.hasVariantDay) return json({ error: { code: "not_found", message: "" } }, 404);
+        await this.variantBoardGate;
+        if (this.variantBoardStatus !== null) return json({ error: { code: "boom", message: "board broke" } }, this.variantBoardStatus);
+        const date = r.url.searchParams.get("date") ?? weekAt(this.now()).today;
+        const info = weekOf(date);
+        const variant = dailyVariantOf(parseWeekSeed(await weekSeed(SECRET, info.isoWeek)), info.dayOfWeek);
+        return json({ date, variant, entries: this.variantBoardEntries });
       }
       case "/api/v1/results": {
         if (this.resultsStatus !== null) return json({ error: { code: "boom", message: "" } }, this.resultsStatus);

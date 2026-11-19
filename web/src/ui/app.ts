@@ -1,5 +1,4 @@
 import type { AppController, PuzzleRef } from "./controller.ts";
-import { DIFFICULTIES } from "../generator/generator.ts";
 import { h } from "./dom.ts";
 import { helpDialog } from "./help.ts";
 import "./learn.ts";
@@ -7,7 +6,7 @@ import { ADMIN_BANNER, ADMIN_BANNER_COMPACT, PLAYER_BANNER, PLAYER_BANNER_COMPAC
 import "./play.ts";
 import "./replay-screens.ts";
 import "./screens.ts";
-import { seriesName } from "./variants.ts";
+import { preparingText } from "./variants.ts";
 
 type ScreenElement = HTMLElement & { app: AppController; ref?: PuzzleRef; lesson?: string; update(): void };
 
@@ -47,7 +46,9 @@ export class SudokuApp extends HTMLElement {
         ? ["sudoku-play", `play-${screen.generator}-${screen.level}`]
         : screen.kind === "endless-play"
           ? ["sudoku-play", `endless-play-${screen.generator}-${screen.variant}-${screen.difficulty}-${screen.number}`]
-          : screen.kind === "learn"
+          : screen.kind === "variant-day-play"
+            ? ["sudoku-play", `variant-day-play-${screen.date}`]
+            : screen.kind === "learn"
             ? ["sudoku-learn", `learn-${screen.lesson}`]
             : [`sudoku-${screen.kind}`, screen.kind];
     if (key === this.#key && this.#screen) {
@@ -58,6 +59,7 @@ export class SudokuApp extends HTMLElement {
     next.app = app;
     if (screen.kind === "play") next.ref = screen.level;
     else if (screen.kind === "learn") next.lesson = screen.lesson;
+    else if (screen.kind === "variant-day-play") next.ref = { variantDay: true, variant: screen.variant };
     else if (screen.kind === "endless-play") next.ref = { generator: screen.generator, variant: screen.variant, difficulty: screen.difficulty, number: screen.number };
     // Set before swapping: the old screen may change the app as it leaves (e.g. pausing its game).
     this.#key = key;
@@ -77,7 +79,7 @@ export class SudokuApp extends HTMLElement {
     const ready = app.phase.kind === "ready";
     const admin = ready && app.me?.admin === true && app.maintenance !== null;
     const player = ready && app.serverDown !== null && app.puzzles !== null;
-    const compact = app.screen.kind === "play" || app.screen.kind === "endless-play";
+    const compact = app.screen.kind === "play" || app.screen.kind === "endless-play" || app.screen.kind === "variant-day-play";
     const back = app.backAround;
     const key = admin || player ? JSON.stringify([admin ? "admin" : "player", compact, back, app.screen.kind === "admin"]) : "";
     if (key === (this.#maintenance?.key ?? "")) return;
@@ -111,7 +113,7 @@ export class SudokuApp extends HTMLElement {
     const ref = app.preparing;
     this.#preparing?.remove();
     this.#preparing = ref && h("div", { class: "preparing", role: "status" },
-      h("p", null, `Preparing ${seriesName(ref.generator, ref.variant ?? 0)} ${DIFFICULTIES[ref.difficulty - 1]!.name} #${ref.number}…`));
+      h("p", null, preparingText(ref)));
     if (this.#preparing) this.append(this.#preparing);
   }
 

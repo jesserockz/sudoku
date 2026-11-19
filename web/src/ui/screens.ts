@@ -16,7 +16,7 @@ import { GENERATOR_CHOICES, generatorsSummary, sameGenerators } from "./generato
 import { fromLocalInput, maintenanceError, PLAYER_TRY_LATER, toLocalInput } from "./maintenance.ts";
 import { sparklinePoints, streakMarker, streakSummary } from "./stats.ts";
 import { actionButton, canShare, copyText, share, shareResultsButton } from "./share.ts";
-import { VARIANT_PICKS, seriesName, variantRuleSentence } from "./variants.ts";
+import { VARIANT_PICKS, seriesName, variantDayRow, variantDayTitle, variantRuleSentence } from "./variants.ts";
 
 /** A screen: a component that renders from the app's state. */
 abstract class Screen extends Component {
@@ -333,6 +333,7 @@ export class TodayScreen extends Screen {
         streak && h("p", { class: "streak" }, h("span", { class: "flame", "aria-hidden": "true" }, "\u{1F525}"), streak),
         h("ul", { class: "puzzles" }, rows),
       ),
+      this.#variantDay(),
       serverless
         ? [
           h("div", { class: "actions" },
@@ -345,6 +346,27 @@ export class TodayScreen extends Screen {
           h("button", { onclick: () => app.openScores(0) }, "Leaderboard"),
           h("button", { onclick: () => app.openStats() }, "Stats")),
     ]];
+  }
+
+  /** The variant of the day, beneath the day's games: its type, rule, and a way to play it. */
+  #variantDay(): Child {
+    const app = this.app;
+    const variant = app.variantDayKind;
+    if (variant === null) return null;
+    const status = app.variantDayStatus();
+    const row = variantDayRow(status, app.seed !== null);
+    const action = row.action === "scores"
+      ? h("button", { onclick: () => app.openScores(0) }, "Scores")
+      : row.action && h("button", { class: "primary", onclick: () => void app.openVariantDay() }, row.action === "play" ? "Play" : "Resume");
+    return h("div", { class: "card", id: "variant-day" },
+      h("h2", null, variantDayTitle(variant)),
+      h("p", { class: "variant-rule" }, variantRuleSentence(variant)),
+      h("ul", { class: "variant-day-list" }, h("li", null,
+        h("div", null,
+          h("div", { class: "name" }, "Variant of the day"),
+          h("div", { class: ["status", status.kind === "done" && "done"] }, row.text)),
+        action)),
+    );
   }
 
   /** The seed's details and ways to bring others in. */
@@ -412,14 +434,14 @@ export class ScoresScreen extends Screen {
     const levels = (board?.puzzles.length || app.puzzles?.length) ?? 0;
 
     const streaks = new Map(board?.players.map((p) => [p.userId, p.streak]));
-    const marker = (userId: string) => {
-      const m = streakMarker(streaks.get(userId) ?? 0);
+    const marker = (userId: string, streak = streaks.get(userId) ?? 0) => {
+      const m = streakMarker(streak);
       return m && h("span", { class: "streak-marker", title: m.title }, m.text);
     };
-    const scoreRow = (rank: number, userId: string, name: string, ms: number, isMe: boolean, suspicious: boolean) =>
+    const scoreRow = (rank: number, userId: string, name: string, ms: number, isMe: boolean, suspicious: boolean, streak?: number) =>
       h("tr", { class: [isMe && "me", suspicious && "flagged"] },
         h("td", { class: "rank" }, String(rank)),
-        h("td", null, name, marker(userId), suspicious && h("span", { class: "badge suspicious", title: "An admin flagged this result as suspicious" }, "suspicious")),
+        h("td", null, name, marker(userId, streak), suspicious && h("span", { class: "badge suspicious", title: "An admin flagged this result as suspicious" }, "suspicious")),
         h("td", { class: "time" }, formatDuration(ms)),
       );
     let body: Child;
@@ -438,6 +460,21 @@ export class ScoresScreen extends Screen {
         ? h("p", { class: "muted" }, "No one has solved this one yet.")
         : h("table", { class: "board-table" }, h("tbody", null,
           entries.map((e) => scoreRow(e.rank, e.userId, e.displayName, e.elapsedMs, e.userId === meId, e.suspicious))));
+    }
+
+    // The variant of the day's board has its own load, and no tabs: it is for the same day whatever tab is open.
+    const variantBoard = app.variantBoard?.date === date ? app.variantBoard : null;
+    let variantBody: Child;
+    if (app.variantBoardError !== null) {
+      // A connection or maintenance error is already shown for the classic board: once is enough.
+      variantBody = app.leaderboardError === app.variantBoardError ? null : h("p", { class: "error" }, app.variantBoardError);
+    } else if (!variantBoard) {
+      variantBody = h("p", { class: "muted" }, "Loading…");
+    } else if (variantBoard.entries.length === 0) {
+      variantBody = h("p", { class: "muted" }, "No one has solved it yet.");
+    } else {
+      variantBody = h("table", { class: "board-table" }, h("tbody", null,
+        variantBoard.entries.map((e) => scoreRow(e.rank, e.userId, e.displayName, e.elapsedMs, e.userId === meId, e.suspicious, e.streak))));
     }
 
     const players = board?.players.slice().sort((a, b) =>
@@ -465,6 +502,11 @@ export class ScoresScreen extends Screen {
               ` ${p.completedLevels.length}/${levels}`,
             ),
           )))),
+      ),
+      h("div", { class: "card", id: "variant-board" },
+        h("h2", null, variantBoard ? variantDayTitle(variantBoard.variant) : "Variant of the day"),
+        h("p", { class: "muted small" }, "Ranked by time. It counts towards your streak, but not the Total."),
+        variantBody,
       ),
     ];
   }
@@ -621,13 +663,14 @@ export class HistoryScreen extends Screen {
     const app = this.app;
     const history = app.history();
     const endless = app.endlessHistory();
+    const variantDays = app.variantDayHistory();
     // One card per day and generator; the generator is named once more than one is in play.
     const byDay = new Map<string, typeof history>();
     for (const r of history) byDay.set(`${r.date} ${r.generator}`, [...(byDay.get(`${r.date} ${r.generator}`) ?? []), r]);
     const named = app.generators.length > 1 || new Set(history.map((r) => r.generator)).size > 1;
     return [
       topBar("History", () => app.openToday()),
-      history.length === 0 && endless.length === 0
+      history.length === 0 && endless.length === 0 && variantDays.length === 0
         ? h("div", { class: "card center" }, h("p", { class: "muted" }, "Solved puzzles show up here."))
         : [...byDay.values()].map((results) => h("div", { class: "card" },
           h("h2", null, results[0]!.date === app.today ? "Today" : describeDate(results[0]!.date),
@@ -643,6 +686,15 @@ export class HistoryScreen extends Screen {
             ),
           )),
         )),
+      variantDays.length > 0 && h("div", { class: "card", id: "history-variant-day" },
+        h("h2", null, "Variant of the day"),
+        h("table", { class: "board-table" }, h("tbody", null,
+          variantDays.map((r) => h("tr", null,
+            h("td", null, r.date === app.today ? "Today" : describeDate(r.date), r.variant !== undefined && ` · ${variantName(r.variant)}`),
+            h("td", { class: "time" }, formatDuration(r.elapsedMs)),
+          )),
+        )),
+      ),
       endless.length > 0 && h("div", { class: "card", id: "history-endless" },
         h("h2", null, ENDLESS_LABEL),
         // Every series: each generator's standard puzzles, then its variants (History is sorted that way too).

@@ -85,7 +85,7 @@ func TestMaintenanceFailures(t *testing.T) {
 func TestMigrateAddsMaintenance(t *testing.T) {
 	ctx := context.Background()
 	s, path := openTemp(t)
-	if _, err := s.db.Exec(`DROP TABLE maintenance_settings; PRAGMA user_version = 8`); err != nil {
+	if _, err := s.db.Exec(`DROP TABLE maintenance_settings; DROP TABLE daily_variant_replays; DROP TABLE daily_variant_results; PRAGMA user_version = 8`); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()

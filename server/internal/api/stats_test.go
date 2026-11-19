@@ -113,7 +113,7 @@ func TestBuildStatsTiersFollowEachWeeksLevelCount(t *testing.T) {
 		{Generator: 1, Date: "2026-11-02", Level: 3, ElapsedMs: 7000},
 		{Generator: 1, Date: "2026-11-02", Level: 4, ElapsedMs: 9000}, // beyond the week's three games
 	}
-	got := buildStats(days(t, "2026-11-02")[0], results, schedule, 1, nil)
+	got := buildStats(days(t, "2026-11-02")[0], results, schedule, 1, nil, nil)
 
 	completed := make([]int, 5)
 	for i, d := range got.Daily {
@@ -149,7 +149,7 @@ func TestBuildStatsRecentKeepsLatestTwenty(t *testing.T) {
 	for i := 0; i < 25; i++ {
 		results = append(results, store.UserDailyResult{Generator: 1, Date: start.AddDays(i).String(), Level: 1, ElapsedMs: int64(1000 + i)})
 	}
-	d := buildStats(start.AddDays(24), results, schedule, 1, nil).Daily[0]
+	d := buildStats(start.AddDays(24), results, schedule, 1, nil, nil).Daily[0]
 	if d.Completed != 25 || len(d.Recent) != 20 {
 		t.Fatalf("completed %d, recent %d", d.Completed, len(d.Recent))
 	}
@@ -162,7 +162,7 @@ func TestBuildStatsRecentKeepsLatestTwenty(t *testing.T) {
 }
 
 func TestBuildStatsEmpty(t *testing.T) {
-	got := buildStats(days(t, "2026-11-05")[0], nil, store.Schedule{{EffectiveWeek: "0000-W00", Levels: 5}}, 1, nil)
+	got := buildStats(days(t, "2026-11-05")[0], nil, store.Schedule{{EffectiveWeek: "0000-W00", Levels: 5}}, 1, nil, nil)
 	if got.Streak.LastDate != nil || got.Streak.Current != 0 || got.Streak.Best != 0 {
 		t.Errorf("streak = %+v", got.Streak)
 	}

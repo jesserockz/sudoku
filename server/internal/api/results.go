@@ -203,6 +203,9 @@ func validateResult(req submitRequest, today week.Date) (week.Date, error) {
 type myResultsResponse struct {
 	Date    string       `json:"date"`
 	Results []resultJSON `json:"results"`
+	// VariantDaily is the user's variant of the day result for the date, or
+	// null.
+	VariantDaily *variantDailyResultJSON `json:"variantDaily"`
 }
 
 func (s *Server) getMyResults(w http.ResponseWriter, r *http.Request) {
@@ -215,9 +218,18 @@ func (s *Server) getMyResults(w http.ResponseWriter, r *http.Request) {
 		httpx.Internal(w, r, err)
 		return
 	}
+	variantResult, err := s.deps.Store.UserVariantDailyResult(r.Context(), currentUser(r).ID, date.String())
+	if err != nil {
+		httpx.Internal(w, r, err)
+		return
+	}
 	out := myResultsResponse{Date: date.String(), Results: make([]resultJSON, len(results))}
 	for i, res := range results {
 		out.Results[i] = toResultJSON(res)
+	}
+	if variantResult != nil {
+		v := toVariantDailyResultJSON(*variantResult)
+		out.VariantDaily = &v
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }

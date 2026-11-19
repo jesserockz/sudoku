@@ -75,6 +75,8 @@ type adminResultsResponse struct {
 	Date    string            `json:"date"`
 	Levels  int               `json:"levels"`
 	Results []adminResultJSON `json:"results"`
+	// VariantResults are the day's variant of the day results.
+	VariantResults []adminVariantDailyJSON `json:"variantResults"`
 }
 
 func (s *Server) getAdminResults(w http.ResponseWriter, r *http.Request) {
@@ -92,9 +94,21 @@ func (s *Server) getAdminResults(w http.ResponseWriter, r *http.Request) {
 		httpx.Internal(w, r, err)
 		return
 	}
-	out := adminResultsResponse{Date: date.String(), Levels: levels, Results: make([]adminResultJSON, len(rows))}
+	variantRows, err := s.deps.Store.AdminVariantDailyResults(r.Context(), date.String())
+	if err != nil {
+		httpx.Internal(w, r, err)
+		return
+	}
+	out := adminResultsResponse{
+		Date: date.String(), Levels: levels,
+		Results:        make([]adminResultJSON, len(rows)),
+		VariantResults: make([]adminVariantDailyJSON, len(variantRows)),
+	}
 	for i, row := range rows {
 		out.Results[i] = toAdminResultJSON(row)
+	}
+	for i, row := range variantRows {
+		out.VariantResults[i] = toAdminVariantDailyJSON(row)
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
@@ -192,20 +206,30 @@ type flagRequest struct {
 	Reason string `json:"reason"`
 }
 
+// flagReason reads the optional reason of a flag request body. On a bad body
+// or a reason that is too long it writes a 400 and returns false.
+func flagReason(w http.ResponseWriter, r *http.Request) (string, bool) {
+	var req flagRequest
+	// The body, and so the reason, is optional.
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBody)).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		httpx.Error(w, http.StatusBadRequest, httpx.CodeBadRequest, "malformed JSON body")
+		return "", false
+	}
+	reason := strings.TrimSpace(req.Reason)
+	if utf8.RuneCountInString(reason) > maxFlagReason {
+		httpx.Error(w, http.StatusBadRequest, httpx.CodeBadRequest, "reason must be at most 500 characters")
+		return "", false
+	}
+	return reason, true
+}
+
 func (s *Server) putAdminFlag(w http.ResponseWriter, r *http.Request) {
 	k, ok := s.resultKey(w, r)
 	if !ok {
 		return
 	}
-	var req flagRequest
-	// The body, and so the reason, is optional.
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBody)).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
-		httpx.Error(w, http.StatusBadRequest, httpx.CodeBadRequest, "malformed JSON body")
-		return
-	}
-	reason := strings.TrimSpace(req.Reason)
-	if utf8.RuneCountInString(reason) > maxFlagReason {
-		httpx.Error(w, http.StatusBadRequest, httpx.CodeBadRequest, "reason must be at most 500 characters")
+	reason, ok := flagReason(w, r)
+	if !ok {
 		return
 	}
 	err := s.deps.Store.FlagResult(r.Context(), k.uid, k.generator, k.date.String(), k.level, currentUser(r).ID, reason, s.deps.Clock.Now())

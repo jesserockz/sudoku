@@ -446,3 +446,46 @@ export function generateEndlessVariant(generator: number, variant: number, endle
   return new VariantPuzzle(generator, variant, b.layout, endlessSeed, tier, number, b.givens, b.solution);
 }
 
+
+/** "vday" in ASCII: the derivation of the variant of the day from the week seed, apart from every other seed derivation. */
+export const DAILY_VARIANT_DOMAIN = 0x76646179n;
+
+/** The variant (1..3), tier (4 Expert or 5 Diabolical) and puzzle seed of the variant of the day, from independent rounds of one hash. */
+export function dailyVariantRound(weekSeed: bigint, dayOfWeek: number): { variant: number; tier: number; seed: bigint } {
+  let h = SplitMix64.mix(DAILY_VARIANT_DOMAIN);
+  h = SplitMix64.mix(h ^ BigInt.asUintN(64, weekSeed));
+  h = SplitMix64.mix(h + BigInt(dayOfWeek));
+  return {
+    variant: 1 + Number(SplitMix64.mix(h + 1n) % 3n),
+    tier: 4 + Number(SplitMix64.mix(h + 2n) % 2n),
+    seed: SplitMix64.mix(h + 3n),
+  };
+}
+
+/** The variant of the day: a Graded puzzle of a variant (1..3) with its layout and its tier (never shown to players). */
+export interface DailyVariant {
+  readonly variant: number;
+  readonly tier: number;
+  readonly givens: string;
+  readonly solution: string;
+  readonly layout: Layout;
+}
+
+/**
+ * The variant of the day, a pure function of the week seed and the ISO day of
+ * week (1 Monday to 7 Sunday), bit-identical in the Go port: the variant
+ * (Diagonal, Jigsaw or Killer) and the tier (Expert or Diabolical) are drawn
+ * from the seed, and the puzzle is the Graded generator's build of that
+ * variant. Throws a `RangeError` for a day outside 1..7.
+ */
+export function generateDailyVariant(weekSeed: bigint, dayOfWeek: number): DailyVariant {
+  if (!(Number.isInteger(dayOfWeek) && dayOfWeek >= 1 && dayOfWeek <= 7)) throw new RangeError(`dayOfWeek must be 1..7: ${dayOfWeek}`);
+  const { variant, tier, seed } = dailyVariantRound(weekSeed, dayOfWeek);
+  const b = buildGradedVariant(seed, variant, tier);
+  return { variant, tier, givens: b.givens, solution: b.solution, layout: b.layout };
+}
+
+/** Just the variant (1..3) of the variant of the day: the same draw as {@link generateDailyVariant}, without generating its puzzle. */
+export function dailyVariantOf(weekSeed: bigint, dayOfWeek: number): number {
+  return dailyVariantRound(weekSeed, dayOfWeek).variant;
+}
