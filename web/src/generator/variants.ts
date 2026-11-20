@@ -377,6 +377,9 @@ export function buildClassicVariant(seed: bigint, variant: number, tier: number,
   return { givens: best!.givens.join(""), solution: best!.board.solution.join(""), layout: best!.board.layout, grade: null, attempts };
 }
 
+/** The rank of a stuck attempt of {@link buildGradedVariant}: worse than any solvable one, better than any unplayable one. */
+const STUCK_KEY = 1000;
+
 /**
  * Graded variant puzzle from a puzzle seed and tier (1..5): generator v2's
  * build under the variant. Up to `maxAttempts` attempts, each a full grid (and
@@ -384,16 +387,18 @@ export function buildClassicVariant(seed: bigint, variant: number, tier: number,
  * layout; the first in the band wins, else the non-stuck attempt nearest the
  * band (the easier on equal distance, then the earliest), else the earliest.
  * Attempts that are not playable (see {@link cagesPlayable}) rank after every
- * playable one.
+ * playable one. With `untilSolvable` it keeps making attempts past
+ * `maxAttempts` while the best so far is stuck or unplayable, so the result is
+ * never either (the variant of the day from version 2 on).
  */
-export function buildGradedVariant(seed: bigint, variant: number, tier: number, maxAttempts = MAX_ATTEMPTS_VARIANT_GRADED[variant]!): VariantBuild {
+export function buildGradedVariant(seed: bigint, variant: number, tier: number, maxAttempts = MAX_ATTEMPTS_VARIANT_GRADED[variant]!, untilSolvable = false): VariantBuild {
   const band = BANDS[tier - 1]!;
   const random = new Xoshiro256StarStar(seed);
   const next = boards(variant, seed, tier, random);
   let best: { board: Attempt; givens: number[]; grade: Grade } | null = null;
   let bestKey = 0;
   let attempts = 0;
-  while (attempts < maxAttempts) {
+  while (attempts < maxAttempts || (untilSolvable && bestKey >= STUCK_KEY)) {
     attempts++;
     const board = next();
     const givens = removeCellsIn(board.layout, board.solution, GRADED_GIVENS[variant]![tier - 1]!, random);
@@ -403,7 +408,7 @@ export function buildGradedVariant(seed: bigint, variant: number, tier: number, 
       best = { board, givens, grade: g };
       break;
     }
-    const key = (playable ? 0 : UNPLAYABLE_KEY) + (g.level === STUCK_LEVEL ? 1000 : (g.level < band.minLevel ? band.minLevel - g.level : g.level - band.maxLevel) * 10 + g.level);
+    const key = (playable ? 0 : UNPLAYABLE_KEY) + (g.level === STUCK_LEVEL ? STUCK_KEY : (g.level < band.minLevel ? band.minLevel - g.level : g.level - band.maxLevel) * 10 + g.level);
     if (best === null || key < bestKey) {
       best = { board, givens, grade: g };
       bestKey = key;
@@ -450,14 +455,26 @@ export function generateEndlessVariant(generator: number, variant: number, endle
 /** "vday" in ASCII: the derivation of the variant of the day from the week seed, apart from every other seed derivation. */
 export const DAILY_VARIANT_DOMAIN = 0x76646179n;
 
-/** The variant (1..3), tier (4 Expert or 5 Diabolical) and puzzle seed of the variant of the day, from independent rounds of one hash. */
-export function dailyVariantRound(weekSeed: bigint, dayOfWeek: number): { variant: number; tier: number; seed: bigint } {
+/** The first date (ISO, inclusive) of version 2 of the variant of the day; earlier dates keep version 1 so stored results and replays still validate. */
+export const DAILY_VARIANT_CUTOFF = "2026-11-20";
+
+/** The version of the variant of the day of an ISO `date`: 1 before {@link DAILY_VARIANT_CUTOFF}, 2 from it. */
+export function dailyVariantVersion(date: string): number {
+  return date < DAILY_VARIANT_CUTOFF ? 1 : 2;
+}
+
+/**
+ * The variant (1..3), tier and puzzle seed of the variant of the day, from independent rounds of one hash. The tier
+ * is 4 or 5 (Expert or Diabolical) in version 1 and 3 or 4 (Hard or Expert) from version 2; the variant and seed
+ * draws are the same in both.
+ */
+export function dailyVariantRound(weekSeed: bigint, dayOfWeek: number, version: number): { variant: number; tier: number; seed: bigint } {
   let h = SplitMix64.mix(DAILY_VARIANT_DOMAIN);
   h = SplitMix64.mix(h ^ BigInt.asUintN(64, weekSeed));
   h = SplitMix64.mix(h + BigInt(dayOfWeek));
   return {
     variant: 1 + Number(SplitMix64.mix(h + 1n) % 3n),
-    tier: 4 + Number(SplitMix64.mix(h + 2n) % 2n),
+    tier: (version === 1 ? 4 : 3) + Number(SplitMix64.mix(h + 2n) % 2n),
     seed: SplitMix64.mix(h + 3n),
   };
 }
@@ -474,18 +491,20 @@ export interface DailyVariant {
 /**
  * The variant of the day, a pure function of the week seed and the ISO day of
  * week (1 Monday to 7 Sunday), bit-identical in the Go port: the variant
- * (Diagonal, Jigsaw or Killer) and the tier (Expert or Diabolical) are drawn
- * from the seed, and the puzzle is the Graded generator's build of that
- * variant. Throws a `RangeError` for a day outside 1..7.
+ * (Diagonal, Jigsaw or Killer) and the tier are drawn from the seed (see
+ * {@link dailyVariantRound}), and the puzzle is the Graded generator's build
+ * of that variant; from version 2 it never settles for a stuck puzzle. Throws
+ * a `RangeError` for a day outside 1..7 or a version other than 1 or 2.
  */
-export function generateDailyVariant(weekSeed: bigint, dayOfWeek: number): DailyVariant {
+export function generateDailyVariant(weekSeed: bigint, dayOfWeek: number, version: number): DailyVariant {
   if (!(Number.isInteger(dayOfWeek) && dayOfWeek >= 1 && dayOfWeek <= 7)) throw new RangeError(`dayOfWeek must be 1..7: ${dayOfWeek}`);
-  const { variant, tier, seed } = dailyVariantRound(weekSeed, dayOfWeek);
-  const b = buildGradedVariant(seed, variant, tier);
+  if (version !== 1 && version !== 2) throw new RangeError(`version must be 1 or 2: ${version}`);
+  const { variant, tier, seed } = dailyVariantRound(weekSeed, dayOfWeek, version);
+  const b = buildGradedVariant(seed, variant, tier, MAX_ATTEMPTS_VARIANT_GRADED[variant]!, version === 2);
   return { variant, tier, givens: b.givens, solution: b.solution, layout: b.layout };
 }
 
 /** Just the variant (1..3) of the variant of the day: the same draw as {@link generateDailyVariant}, without generating its puzzle. */
 export function dailyVariantOf(weekSeed: bigint, dayOfWeek: number): number {
-  return dailyVariantRound(weekSeed, dayOfWeek).variant;
+  return dailyVariantRound(weekSeed, dayOfWeek, 1).variant;
 }

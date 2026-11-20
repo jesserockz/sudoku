@@ -64,7 +64,20 @@ type variantFixture struct {
 		GradeLevel  int    `json:"gradeLevel"`
 		Attempts    int    `json:"attempts"`
 	} `json:"fallback"`
+	UntilSolvable []struct {
+		Seed        string `json:"seed"`
+		Variant     int    `json:"variant"`
+		Tier        int    `json:"tier"`
+		MaxAttempts int    `json:"maxAttempts"`
+		Givens      string `json:"givens"`
+		Solution    string `json:"solution"`
+		Regions     string `json:"regions"`
+		Cages       []Cage `json:"cages"`
+		GradeLevel  int    `json:"gradeLevel"`
+		Attempts    int    `json:"attempts"`
+	} `json:"untilSolvable"`
 	Daily []struct {
+		Version    int    `json:"version"`
 		WeekSeed   string `json:"weekSeed"`
 		Day        int    `json:"day"`
 		PuzzleSeed string `json:"puzzleSeed"`
@@ -283,12 +296,39 @@ func TestVariantFixtureClassic(t *testing.T) {
 
 func TestVariantFixtureFallback(t *testing.T) {
 	for _, c := range loadVariantFixture(t).Fallback {
-		b := buildGradedVariant(mustSeed(t, c.Seed), c.Variant, c.Tier, c.MaxAttempts)
+		b := buildGradedVariant(mustSeed(t, c.Seed), c.Variant, c.Tier, c.MaxAttempts, false)
 		if b.Givens != c.Givens || b.Solution != c.Solution || b.Grade.Level != c.GradeLevel || b.Attempts != c.Attempts {
 			t.Errorf("fallback %s: got %s level %d attempts %d", c.Seed, b.Givens, b.Grade.Level, b.Attempts)
 		}
 		if want := fixtureLayout(t, c.Variant, c.Regions, c.Cages); b.Layout.Regions != want.Regions || len(b.Layout.Cages) != len(want.Cages) {
 			t.Errorf("fallback %s: layout differs", c.Seed)
+		}
+	}
+}
+
+// TestVariantFixtureUntilSolvable checks the builds that go on past maxAttempts
+// because the first attempt is stuck or unplayable, and that without the option
+// they settle for that attempt.
+func TestVariantFixtureUntilSolvable(t *testing.T) {
+	f := loadVariantFixture(t)
+	if len(f.UntilSolvable) == 0 {
+		t.Fatal("no untilSolvable fixture cases")
+	}
+	for _, c := range f.UntilSolvable {
+		seed := mustSeed(t, c.Seed)
+		b := buildGradedVariant(seed, c.Variant, c.Tier, c.MaxAttempts, true)
+		if b.Givens != c.Givens || b.Solution != c.Solution || b.Grade.Level != c.GradeLevel || b.Attempts != c.Attempts {
+			t.Errorf("untilSolvable %s: got %s level %d attempts %d", c.Seed, b.Givens, b.Grade.Level, b.Attempts)
+		}
+		if want := fixtureLayout(t, c.Variant, c.Regions, c.Cages); b.Layout.Regions != want.Regions || len(b.Layout.Cages) != len(want.Cages) {
+			t.Errorf("untilSolvable %s: layout differs", c.Seed)
+		}
+		if c.Attempts <= c.MaxAttempts || b.Grade.Level == StuckLevel || !cagesPlayable(b.Layout, grid81(b.Givens)) {
+			t.Errorf("untilSolvable %s: attempts %d, stuck or unplayable", c.Seed, c.Attempts)
+		}
+		plain := buildGradedVariant(seed, c.Variant, c.Tier, c.MaxAttempts, false)
+		if plain.Attempts != c.MaxAttempts || (plain.Grade.Level != StuckLevel && cagesPlayable(plain.Layout, grid81(plain.Givens))) {
+			t.Errorf("untilSolvable %s: plain build is not the stuck or unplayable first attempt", c.Seed)
 		}
 	}
 }
@@ -586,22 +626,22 @@ func TestVariantGraderIsSound(t *testing.T) {
 }
 
 func TestVariantFixtureDaily(t *testing.T) {
-	variants, tiers := map[int]bool{}, map[int]bool{}
+	variants, tiers, versions := map[int]bool{}, map[int]bool{}, map[int]bool{}
 	f := loadVariantFixture(t)
-	if len(f.Daily) < 14 {
+	if len(f.Daily) < 28 {
 		t.Fatalf("%d daily fixture cases", len(f.Daily))
 	}
 	for _, c := range f.Daily {
-		at := fmt.Sprintf("%s day %d", c.WeekSeed, c.Day)
+		at := fmt.Sprintf("%s day %d v%d", c.WeekSeed, c.Day, c.Version)
 		seed := mustSeed(t, c.WeekSeed)
-		variant, tier, ps := dailyVariantRound(seed, c.Day)
+		variant, tier, ps := dailyVariantRound(seed, c.Day, c.Version)
 		if variant != c.Variant || tier != c.Tier || ps != mustSeed(t, c.PuzzleSeed) {
 			t.Errorf("%s: round %d/%d/%x", at, variant, tier, ps)
 		}
 		if v := DailyVariantOf(seed, c.Day); v != c.Variant {
 			t.Errorf("%s: DailyVariantOf = %d", at, v)
 		}
-		d, err := GenerateDailyVariant(seed, c.Day)
+		d, err := GenerateDailyVariant(seed, c.Day, c.Version)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -620,16 +660,41 @@ func TestVariantFixtureDaily(t *testing.T) {
 			t.Errorf("%s: invalid or unplayable", at)
 		}
 		variants[d.Variant], tiers[d.Tier] = true, true
+		versions[c.Version] = true
 	}
-	if len(variants) != 3 || len(tiers) != 2 || variants[VariantStandard] {
-		t.Errorf("fixture covers variants %v tiers %v", variants, tiers)
+	if len(variants) != 3 || len(tiers) != 3 || variants[VariantStandard] || !versions[1] || !versions[2] {
+		t.Errorf("fixture covers variants %v tiers %v versions %v", variants, tiers, versions)
 	}
 }
 
 func TestGenerateDailyVariantDay(t *testing.T) {
 	for _, day := range []int{0, 8, -1} {
-		if _, err := GenerateDailyVariant(1, day); err == nil {
+		if _, err := GenerateDailyVariant(1, day, 1); err == nil {
 			t.Errorf("day %d accepted", day)
+		}
+	}
+	for _, version := range []int{0, 3, -1} {
+		if _, err := GenerateDailyVariant(1, 1, version); err == nil {
+			t.Errorf("version %d accepted", version)
+		}
+	}
+}
+
+func TestDailyVariantVersion(t *testing.T) {
+	for date, want := range map[string]int{"2026-11-19": 1, "2026-11-20": 2, "2025-01-01": 1, "2026-12-01": 2} {
+		if got := DailyVariantVersion(date); got != want || DailyVariantVersion(DailyVariantCutoff) != 2 {
+			t.Errorf("DailyVariantVersion(%s) = %d, want %d", date, got, want)
+		}
+	}
+}
+
+// TestDailyVariantVersionTiers checks that version 2 is one tier easier but draws the same variant and seed.
+func TestDailyVariantVersionTiers(t *testing.T) {
+	for day := 1; day <= 7; day++ {
+		v1, t1, s1 := dailyVariantRound(7, day, 1)
+		v2, t2, s2 := dailyVariantRound(7, day, 2)
+		if v1 != v2 || s1 != s2 || t1 != t2+1 || (t1 != 4 && t1 != 5) {
+			t.Errorf("day %d: v1 %d/%d/%x, v2 %d/%d/%x", day, v1, t1, s1, v2, t2, s2)
 		}
 	}
 }

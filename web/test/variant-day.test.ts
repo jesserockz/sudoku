@@ -100,9 +100,10 @@ test("the variant of the day is drawn from the week seed and the day, never stan
 });
 
 test("the variant of the day's puzzle belongs to its variant and is solved by its solution", () => {
-  const d = generateDailyVariant(parseWeekSeed("0123456789abcdef"), 6);
+  const d = generateDailyVariant(parseWeekSeed("0123456789abcdef"), 6, 1);
   assert.equal(d.variant, dailyVariantOf(parseWeekSeed("0123456789abcdef"), 6));
   assert.ok([4, 5].includes(d.tier));
+  assert.ok([3, 4].includes(generateDailyVariant(parseWeekSeed("0123456789abcdef"), 6, 2).tier));
   assert.ok(d.layout.isValid([...d.solution].map(Number)));
 });
 
@@ -115,6 +116,18 @@ test("the cache keeps the latest few puzzles and reuses them", () => {
   ["2026-10-27", "2026-10-28", "2026-10-29", "2026-10-30"].slice(0, VARIANT_DAY_CACHE_SIZE).forEach((d) => cache.get(seed, d));
   assert.notEqual(cache.get(seed, "2026-10-26"), first, "regenerated after being dropped");
   assert.deepEqual(cache.get(seed, "2026-10-26"), first);
+});
+
+test("the cache generates a date with the version of that date, also for the same day of the week", () => {
+  const cache = new VariantDayCache();
+  const seed = "9f2c4a1b7e30d5c8";
+  // Two Thursdays, either side of the cutoff, share the cache key but for the version.
+  const before = cache.get(seed, "2026-11-19");
+  const from = cache.get(seed, "2026-11-26");
+  assert.deepEqual(before, generateDailyVariant(parseWeekSeed(seed), 4, 1));
+  assert.deepEqual(from, generateDailyVariant(parseWeekSeed(seed), 4, 2));
+  assert.ok([4, 5].includes(before.tier) && [3, 4].includes(from.tier));
+  assert.equal(cache.get(seed, "2026-11-19"), before);
 });
 
 // Wording
