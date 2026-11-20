@@ -44,15 +44,17 @@ const puzzles = ([[1, "9f2c4a1b7e30d5c8"], [2, "0123456789abcdef"]] as const).fl
   ),
 );
 
-/** The variant of the day: every day of two weeks, between them all three variants and both tiers. */
-const daily = (["9f2c4a1b7e30d5c8", "0123456789abcdef"] as const).flatMap((seed) =>
-  [1, 2, 3, 4, 5, 6, 7].map((day) => {
-    const d = generateDailyVariant(parseWeekSeed(seed), day);
-    return {
-      weekSeed: seed, day, puzzleSeed: formatWeekSeed(dailyVariantRound(parseWeekSeed(seed), day).seed), variant: d.variant, tier: d.tier,
-      givens: d.givens, solution: d.solution, ...layoutJson(d.layout), gradeLevel: grade([...d.givens].map(Number), d.layout).level,
-    };
-  }),
+/** The variant of the day, in both versions: every day of two weeks, between them all three variants and both tiers of each. */
+const daily = ([1, 2] as const).flatMap((version) =>
+  (["9f2c4a1b7e30d5c8", "0123456789abcdef"] as const).flatMap((seed) =>
+    [1, 2, 3, 4, 5, 6, 7].map((day) => {
+      const d = generateDailyVariant(parseWeekSeed(seed), day, version);
+      return {
+        version, weekSeed: seed, day, puzzleSeed: formatWeekSeed(dailyVariantRound(parseWeekSeed(seed), day, version).seed), variant: d.variant, tier: d.tier,
+        givens: d.givens, solution: d.solution, ...layoutJson(d.layout), gradeLevel: grade([...d.givens].map(Number), d.layout).level,
+      };
+    }),
+  ),
 );
 
 /** Jigsaw layouts: generated ones, and the fallback list (`maxAttempts` 0) for each `seed mod 4`. */
@@ -120,6 +122,16 @@ const fallbackUnplayable = ([1, 2] as const).map((tier) => {
   }
 });
 (fallback as object[]).push(...fallbackUnplayable);
+
+/**
+ * Graded variant builds with `untilSolvable`, whose first attempt (`maxAttempts` 1) is stuck or unplayable so more
+ * attempts are made: the number is the one of `variantPuzzleSeed(2, variant, 4242n, tier, number)`.
+ */
+const untilSolvable = ([[VARIANT_KILLER, 3, 6], [VARIANT_KILLER, 3, 30], [VARIANT_DIAGONAL, 4, 5], [VARIANT_JIGSAW, 4, 36], [VARIANT_KILLER, 5, 2]] as const).map(([variant, tier, n]) => {
+  const seed = variantPuzzleSeed(2, variant, 4242n, tier, n);
+  const b = buildGradedVariant(seed, variant, tier, 1, true);
+  return { seed: formatWeekSeed(seed), variant, tier, maxAttempts: 1, givens: b.givens, solution: b.solution, ...layoutJson(b.layout), gradeLevel: b.grade!.level, attempts: b.attempts };
+});
 
 /** Solution counts with node budgets, including aborted searches. */
 const solverCases = (() => {
@@ -191,10 +203,11 @@ const out = `{
   "cages": ${lines(cages)},
   "classic": ${lines(classic)},
   "fallback": ${lines(fallback)},
+  "untilSolvable": ${lines(untilSolvable)},
   "daily": ${lines(daily)},
   "solver": ${lines(solverCases)},
   "grader": ${lines(graderCases)}
 }
 `;
 writeFileSync(OUT, out);
-console.log(`wrote ${OUT}: ${puzzles.length} puzzles, ${jigsaws.length} jigsaws, ${cages.length} cages, ${classic.length} classic, ${fallback.length} fallback, ${daily.length} daily, ${solverCases.length} solver, ${graderCases.length} grader`);
+console.log(`wrote ${OUT}: ${puzzles.length} puzzles, ${jigsaws.length} jigsaws, ${cages.length} cages, ${classic.length} classic, ${fallback.length} fallback, ${untilSolvable.length} untilSolvable, ${daily.length} daily, ${solverCases.length} solver, ${graderCases.length} grader`);

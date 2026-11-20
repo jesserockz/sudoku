@@ -436,13 +436,20 @@ func buildClassicVariant(seed uint64, variant, tier, maxAttempts int) VariantBui
 	return VariantBuild{Puzzle{gridString(bestGivens), gridString(best.solution)}, best.layout, nil, n}
 }
 
+// stuckKey ranks a stuck attempt of buildGradedVariant: worse than any solvable
+// one, better than any unplayable one.
+const stuckKey = 1000
+
 // buildGradedVariant is a Graded variant puzzle from a puzzle seed and tier
 // (1..Tiers): generator v2's build under the variant, up to maxAttempts (at
 // least 1) attempts with cells removed to GradedGivens, graded under the
 // layout. The first in the band wins, else the non-stuck attempt nearest the
 // band (the easier on equal distance, then the earliest), else the earliest.
-// Attempts that are not playable rank after every playable one.
-func buildGradedVariant(seed uint64, variant, tier, maxAttempts int) VariantBuild {
+// Attempts that are not playable rank after every playable one. With
+// untilSolvable it keeps making attempts past maxAttempts while the best so far
+// is stuck or unplayable, so the result is never either (the variant of the day
+// from version 2 on).
+func buildGradedVariant(seed uint64, variant, tier, maxAttempts int, untilSolvable bool) VariantBuild {
 	band := Bands[tier-1]
 	random := newXoshiro(seed)
 	next := attempts(variant, seed, tier, random)
@@ -450,7 +457,7 @@ func buildGradedVariant(seed uint64, variant, tier, maxAttempts int) VariantBuil
 	var bestGivens [cells]int
 	var bestGrade LayoutGrade
 	bestKey, n := 0, 0
-	for n < maxAttempts {
+	for n < maxAttempts || (untilSolvable && bestKey >= stuckKey) {
 		n++
 		a := next()
 		givens := removeCellsIn(a.layout, a.solution, GradedGivens[variant][tier-1], random, removalNodes)
@@ -461,7 +468,7 @@ func buildGradedVariant(seed uint64, variant, tier, maxAttempts int) VariantBuil
 			best, bestGivens, bestGrade = a, givens, g
 			break
 		}
-		key := 1000
+		key := stuckKey
 		if g.Level != StuckLevel {
 			key = band.distance(g.Level)*10 + g.Level
 		}
@@ -510,7 +517,7 @@ func GenerateEndlessVariant(generator, variant int, endlessSeed uint64, difficul
 	if generator == VersionClassic {
 		b = buildClassicVariant(seed, variant, difficulty, maxAttempts)
 	} else {
-		b = buildGradedVariant(seed, variant, difficulty, MaxAttemptsVariantGraded[variant])
+		b = buildGradedVariant(seed, variant, difficulty, MaxAttemptsVariantGraded[variant], false)
 	}
 	return VariantPuzzle{b.Puzzle, b.Layout}, nil
 }
@@ -519,24 +526,44 @@ func GenerateEndlessVariant(generator, variant int, endlessSeed uint64, difficul
 // day from the week seed, apart from every other seed derivation.
 const dailyVariantDomain uint64 = 0x76646179
 
+// DailyVariantCutoff is the first date (ISO, inclusive) of version 2 of the
+// variant of the day; earlier dates keep version 1 so stored results and
+// replays still validate.
+const DailyVariantCutoff = "2026-11-20"
+
+// DailyVariantVersion is the version of the variant of the day of an ISO date:
+// 1 before DailyVariantCutoff, 2 from it.
+func DailyVariantVersion(date string) int {
+	if date < DailyVariantCutoff {
+		return 1
+	}
+	return 2
+}
+
 // dailyVariantRound derives the variant, the tier and the puzzle seed of the
-// variant of the day from independent rounds of the same hash.
-func dailyVariantRound(weekSeed uint64, dayOfWeek int) (variant, tier int, seed uint64) {
+// variant of the day from independent rounds of the same hash. The tier is 4 or
+// 5 (Expert or Diabolical) in version 1 and 3 or 4 (Hard or Expert) from
+// version 2; the variant and seed draws are the same in both.
+func dailyVariantRound(weekSeed uint64, dayOfWeek, version int) (variant, tier int, seed uint64) {
 	h := mix(dailyVariantDomain)
 	h = mix(h ^ weekSeed)
 	h = mix(h + uint64(dayOfWeek))
-	return 1 + int(mix(h+1)%3), 4 + int(mix(h+2)%2), mix(h + 3)
+	base := 3
+	if version == 1 {
+		base = 4
+	}
+	return 1 + int(mix(h+1)%3), base + int(mix(h+2)%2), mix(h + 3)
 }
 
 // DailyVariantOf is just the variant (1..Variants-1) of the variant of the
 // day, without generating its puzzle: the same draw as GenerateDailyVariant.
 func DailyVariantOf(weekSeed uint64, dayOfWeek int) int {
-	variant, _, _ := dailyVariantRound(weekSeed, dayOfWeek)
+	variant, _, _ := dailyVariantRound(weekSeed, dayOfWeek, 1)
 	return variant
 }
 
 // DailyVariant is the variant of the day: a Graded puzzle of a variant
-// (1..Variants-1) with its layout and tier (4 or 5).
+// (1..Variants-1) with its layout and tier (3 to 5).
 type DailyVariant struct {
 	VariantPuzzle
 	Variant int
@@ -545,15 +572,18 @@ type DailyVariant struct {
 
 // GenerateDailyVariant is the variant of the day, a pure function of
 // (weekSeed, dayOfWeek) giving bit-identical puzzles to the web generator:
-// the variant (Diagonal, Jigsaw or Killer) and the tier (Expert or
-// Diabolical) are drawn from the week seed and day, and the puzzle is the
-// Graded generator's build of that variant. dayOfWeek is 1 (Monday) to 7
-// (Sunday).
-func GenerateDailyVariant(weekSeed uint64, dayOfWeek int) (DailyVariant, error) {
+// the variant (Diagonal, Jigsaw or Killer) and the tier are drawn from the
+// week seed and day (see dailyVariantRound), and the puzzle is the Graded
+// generator's build of that variant; from version 2 it never settles for a
+// stuck puzzle. dayOfWeek is 1 (Monday) to 7 (Sunday), version 1 or 2.
+func GenerateDailyVariant(weekSeed uint64, dayOfWeek, version int) (DailyVariant, error) {
 	if dayOfWeek < 1 || dayOfWeek > 7 {
 		return DailyVariant{}, fmt.Errorf("dayOfWeek must be 1..7: %d", dayOfWeek)
 	}
-	variant, tier, seed := dailyVariantRound(weekSeed, dayOfWeek)
-	b := buildGradedVariant(seed, variant, tier, MaxAttemptsVariantGraded[variant])
+	if version != 1 && version != 2 {
+		return DailyVariant{}, fmt.Errorf("version must be 1 or 2: %d", version)
+	}
+	variant, tier, seed := dailyVariantRound(weekSeed, dayOfWeek, version)
+	b := buildGradedVariant(seed, variant, tier, MaxAttemptsVariantGraded[variant], version == 2)
 	return DailyVariant{VariantPuzzle{b.Puzzle, b.Layout}, variant, tier}, nil
 }

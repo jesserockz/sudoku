@@ -29,7 +29,7 @@ func dailyVariantOn(t *testing.T, date string) puzzle.DailyVariant {
 	if err != nil {
 		t.Fatal(err)
 	}
-	v, err := puzzle.GenerateDailyVariant(ws, d.Weekday())
+	v, err := puzzle.GenerateDailyVariant(ws, d.Weekday(), puzzle.DailyVariantVersion(date))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -454,4 +454,27 @@ func TestVariantDailyAdminWithoutReplay(t *testing.T) {
 	}
 	expectError(t, do(t, e.srv, "PUT", variantAdminURL(testDate, "x")+"/flag", adminToken, nil), http.StatusBadRequest, "bad_request")
 	expectError(t, do(t, e.srv, "DELETE", variantAdminURL(testDate, "x")+"/flag", adminToken, nil), http.StatusBadRequest, "bad_request")
+}
+
+// TestVariantDailyVersionByDate checks the puzzle of a date is generated with
+// the version of that date: version 1 (tier 4 or 5) before the cutoff and
+// version 2 (tier 3 or 4) from it.
+func TestVariantDailyVersionByDate(t *testing.T) {
+	deps := adminConfig()
+	deps.Store = newTestStore(t)
+	s := New(deps)
+	for date, tiers := range map[string][2]int{"2026-11-19": {4, 5}, "2026-11-20": {3, 4}} {
+		day, err := week.ParseDate(date)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := s.variantDailyFor(day)
+		if got.Tier != tiers[0] && got.Tier != tiers[1] {
+			t.Errorf("%s: tier %d, want %v", date, got.Tier, tiers)
+		}
+		want, err := puzzle.GenerateDailyVariant(s.weekSeedOf(day), day.Weekday(), puzzle.DailyVariantVersion(date))
+		if err != nil || got.Givens != want.Givens || got.Solution != want.Solution || got.Tier != want.Tier {
+			t.Errorf("%s: puzzle differs from its version's", date)
+		}
+	}
 }

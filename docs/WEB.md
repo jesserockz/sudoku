@@ -927,13 +927,15 @@ the day"), gives that variant's rule, and has one row, "Variant of the day",
 with a status ("Not started yet", "In progress · 1:05", "Solved in 7:01", plus
 " · not uploaded yet" while the result is queued) and **Play**, **Resume** or
 **Scores**. Players never see its generator or difficulty (it is always the
-Graded generator, at Expert or Diabolical): no "Graded", "Expert" or
+Graded generator, at Expert or Diabolical, or from 2026-11-20 at Hard or Expert): no "Graded", "Expert" or
 "Diabolical" appears on the card, the play screen, the leaderboard or the admin
 lists, only the variant. It does not follow the Classic / Graded switch.
 
 - **Generation** is local and offline: the variant (`dailyVariantOf`) and the
   puzzle (`generateDailyVariant`, in `src/generator/variants.ts`) come from the
-  cached week's seed and the day, so the card works offline all week. The card
+  cached week's seed and the day (and the version of the date,
+  `dailyVariantVersion`: dates before 2026-11-20 keep the older, harder
+  puzzle), so the card works offline all week. The card
   shows the variant at once; the puzzle is generated when **Play** is pressed,
   behind the "Preparing Killer of the day..." overlay, and kept by
   `VariantDayCache` (`src/data/variant-day.ts`) for the screens that ask again.

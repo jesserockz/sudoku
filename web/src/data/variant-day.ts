@@ -1,7 +1,7 @@
 import type { Week } from "../api/models.ts";
 import { dayOfWeek } from "../game/calendar.ts";
 import type { Game, SavedGame } from "../game/game.ts";
-import { type DailyVariant, generateDailyVariant } from "../generator/variants.ts";
+import { type DailyVariant, dailyVariantVersion, generateDailyVariant } from "../generator/variants.ts";
 import { parseWeekSeed } from "../generator/week-seed.ts";
 
 /** A solved variant of the day. `synced` is false while its result waits in the offline queue. */
@@ -39,8 +39,9 @@ export class VariantDayCache {
   /** The variant of the day for the 16-hex-character week `seed` on `date`. */
   get(seed: string, date: string): DailyVariant {
     const day = dayOfWeek(date);
-    const key = `${seed}/${day}`;
-    const puzzle = this.#cached.get(key) ?? generateDailyVariant(parseWeekSeed(seed), day);
+    const version = dailyVariantVersion(date);
+    const key = `${seed}/${day}/${version}`;
+    const puzzle = this.#cached.get(key) ?? generateDailyVariant(parseWeekSeed(seed), day, version);
     // Most recently used last, so the first is the one to drop.
     this.#cached.delete(key);
     this.#cached.set(key, puzzle);

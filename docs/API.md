@@ -172,10 +172,10 @@ Attempts are capped at 200 for Diagonal and Jigsaw and 30 for Killer (whose atte
 
 ## Variant of the day
 
-Besides the classic daily games there is one extra daily puzzle, the **variant of the day**: a Diagonal, Jigsaw or Killer puzzle with its own results and leaderboard. It is a pure function of the week seed and the ISO day of week (`1` Monday to `7` Sunday), the same inputs as the daily games, bit-identical in TypeScript (`generateDailyVariant`, `dailyVariantOf`) and Go (`puzzle.GenerateDailyVariant`, `puzzle.DailyVariantOf`), pinned by the `daily` section of `testdata/variants.json`.
+Besides the classic daily games there is one extra daily puzzle, the **variant of the day**: a Diagonal, Jigsaw or Killer puzzle with its own results and leaderboard. It is a pure function of the week seed and the ISO day of week (`1` Monday to `7` Sunday), the same inputs as the daily games, bit-identical in TypeScript (`generateDailyVariant`, `dailyVariantOf`) and Go (`puzzle.GenerateDailyVariant`, `puzzle.DailyVariantOf`), pinned by the `daily` section of `testdata/variants.json` (each case has its `version`) and, for the until-solvable build, its `untilSolvable` section.
 
 - It always uses the **Graded** generator (version 2), whatever the admin's [enabled generators](#enabled-generators) are, so it does not depend on the Classic / Graded switch.
-- Its difficulty is Expert (tier 4) or Diabolical (tier 5), chosen per day. Clients never show the generator or the difficulty, only the variant (for example "Killer of the day").
+- Its difficulty is chosen per day and depends on the **version**, which follows the puzzle's date (`dailyVariantVersion(date)` / `puzzle.DailyVariantVersion(date)`): version 1 before `2026-11-20` (`DAILY_VARIANT_CUTOFF` / `puzzle.DailyVariantCutoff`) is Expert (tier 4) or Diabolical (tier 5); version 2 from `2026-11-20` inclusive is Hard (tier 3) or Expert (tier 4), and never settles for a stuck puzzle (see below). Earlier dates keep regenerating exactly as before, so stored results and replays still validate. Clients never show the generator or the difficulty, only the variant (for example "Killer of the day").
 - The variant is drawn pseudo-randomly per day (a variant can repeat on consecutive days), not from a fixed cycle.
 
 ```
@@ -184,10 +184,13 @@ h = mix(DAILY_VARIANT_DOMAIN)
 h = mix(h ^ weekSeed)
 h = mix(h + dayOfWeek)
 variant = 1 + mix(h + 1) mod 3             // 1 Diagonal, 2 Jigsaw, 3 Killer
-tier    = 4 + mix(h + 2) mod 2             // 4 Expert, 5 Diabolical
+tier    = 4 + mix(h + 2) mod 2             // version 1: 4 Expert, 5 Diabolical
+tier    = 3 + mix(h + 2) mod 2             // version 2: 3 Hard, 4 Expert
 seed    = mix(h + 3)                       // the puzzle seed
-puzzle  = buildGradedVariant(seed, variant, tier, MaxAttemptsVariantGraded[variant])
+puzzle  = buildGradedVariant(seed, variant, tier, MaxAttemptsVariantGraded[variant], untilSolvable = (version == 2))
 ```
+
+The variant and the puzzle seed are drawn the same in both versions. With `untilSolvable` (an extra argument of `buildGradedVariant`, off for endless puzzles) the build keeps making attempts past `maxAttempts` while its best attempt so far is stuck or unplayable (ranking key of 1000 or more), with no other cap; the selection rules are otherwise the same.
 
 `mix` is SplitMix64's output function and `buildGradedVariant` the [Graded variant build](#difficulty). A player has at most one result per date. Finishing it counts towards the [daily streak](#get-apiv1mestats) exactly like a classic daily result (a date with a result that no admin has flagged counts), and the streak stays one number. Its leaderboard is separate from the classic boards and is never part of the Total.
 

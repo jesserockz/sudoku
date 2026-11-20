@@ -42,7 +42,7 @@ async function engine() {
   const src = path.resolve(__dirname, "../src/generator");
   const variants = await import(pathToFileURL(path.join(src, "variants.ts")).href);
   const weekSeed = await import(pathToFileURL(path.join(src, "week-seed.ts")).href);
-  return { daily: (seed, day) => variants.generateDailyVariant(weekSeed.parseWeekSeed(seed), day) };
+  return { daily: (seed, day, date) => variants.generateDailyVariant(weekSeed.parseWeekSeed(seed), day, variants.dailyVariantVersion(date)) };
 }
 
 async function signIn(browser, user) {
@@ -73,7 +73,7 @@ async function solve(page, day) {
   const browser = await chromium.launch();
   const page = await signIn(browser, player);
   const week = await page.evaluate(() => JSON.parse(localStorage.getItem("sudoku.week")));
-  const day = daily(week.seed, week.dayOfWeek);
+  const day = daily(week.seed, week.dayOfWeek, week.today);
   const name = NAMES[day.variant];
   check(name !== undefined, `today's variant of the day is ${name}`);
 
@@ -177,7 +177,7 @@ async function solve(page, day) {
   const { weekAt } = await import(pathToFileURL(path.resolve(__dirname, "../src/game/calendar.ts")).href);
   const { weekSeed: seedWeekSeed } = await import(pathToFileURL(path.resolve(__dirname, "../src/serverless/seed.ts")).href);
   const info = weekAt(Date.now());
-  const seedDay = daily(await seedWeekSeed(`votd-${run}`, info.isoWeek), info.dayOfWeek);
+  const seedDay = daily(await seedWeekSeed(`votd-${run}`, info.isoWeek), info.dayOfWeek, info.today);
   const seedName = NAMES[seedDay.variant];
   check((await seedCard.locator("h2").innerText()) === `${seedName} of the day`, `the seed's card is titled "${seedName} of the day"`);
   check(!HIDDEN.test(await seedCard.innerText()), "the seed's card names no generator or difficulty");

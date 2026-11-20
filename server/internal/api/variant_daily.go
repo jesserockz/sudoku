@@ -68,8 +68,8 @@ func (s *Server) variantDailyFor(date week.Date) puzzle.DailyVariant {
 	if d, ok := s.variantDaily.get(key); ok {
 		return d
 	}
-	// The weekday is 1..7, so generating cannot fail.
-	d, _ := puzzle.GenerateDailyVariant(s.weekSeedOf(date), date.Weekday())
+	// The weekday is 1..7 and the version 1 or 2, so generating cannot fail.
+	d, _ := puzzle.GenerateDailyVariant(s.weekSeedOf(date), date.Weekday(), puzzle.DailyVariantVersion(key))
 	s.variantDaily.put(key, d)
 	return d
 }
