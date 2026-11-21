@@ -362,7 +362,8 @@ variant games and results (see [Endless puzzles](#endless-puzzles) and
 results for today (each with its generator), the player's Classic / Graded
 pick (`generator`, kept on sign-out), the last
 streak (`streak`, from `GET /api/v1/me/stats`; cleared on sign-out) and the offline
-result queue (`ResultSync`). The rules (`SudokuRepository`):
+result queue (`ResultSync`). Games and queued results are parked per user on
+sign-out (`parked-progress`, see below). The rules (`SudokuRepository`):
 
 - Exactly one week is kept. "Today" is the device clock in Pacific/Auckland;
   if the cached week covers it, the day's games come from its seed with no
@@ -374,6 +375,20 @@ result queue (`ResultSync`). The rules (`SudokuRepository`):
   are dropped, per the API contract); anything else leaves it for next time.
 - If a different account signs in with OIDC, the previous account's games and
   queued results are discarded rather than uploaded under the new account.
+- **Signing out keeps the player's progress on the device**, so it can't be
+  used to restart a ranked puzzle with a fresh timer. `AppStorage.parkProgress`
+  sets the signed-in user's games (daily, endless, variant of the day: saved
+  `elapsedMs` included) and queued results aside under `parked-progress`,
+  keyed by `me.id`, replacing any older entry for that id (nothing is parked
+  when the user was never synced or has nothing to keep). Everything else tied
+  to the user is cleared as before. When that same user signs in again, either
+  way (dev or OIDC), `SudokuRepository` restores the entry as soon as `me` is
+  known (`#restoreParked`) and removes it from the parked record; the normal
+  sync then flushes the restored queues under the right account. A game
+  already live under the same key is kept unless the parked one has more time
+  on it; queues are merged without duplicates, a live result winning over a
+  parked one for the same puzzle. Another account signing in on the same
+  device never sees the entry, and it stays for its owner.
 
 `test/repository.test.ts` covers this against an in-memory store and a fake
 server.
@@ -524,7 +539,10 @@ Code + PKCE (S256), using the issuer, client id and scopes from
    Nothing syncs (or refreshes) while the page is hidden, so the OS can't cut
    a refresh off half way; the app syncs when it is shown again.
 4. **Sign out** forgets the tokens and, if the provider has an
-   `end_session_endpoint`, ends the provider session too.
+   `end_session_endpoint`, ends the provider session too. The user's games in
+   progress and queued results are not lost: they are parked on the device for
+   that account and come back when it signs in again (see
+   [Offline data](#offline-data)).
 
 Provider setup: a **public** client (no secret) using Authorization Code +
 PKCE, redirect URI `https://<your host>/auth/callback`, access tokens signed as
@@ -955,7 +973,8 @@ lists, only the variant. It does not follow the Classic / Graded switch.
   (`variant-day-results`, from `GET /api/v1/me/results`' `variantDaily`).
 - **Storage** keeps the saved game apart from the daily games, by date alone in
   `variant-day-games` (only the cached week's dates are kept). It is cleared
-  with the other progress on sign-out or when a different account signs in.
+  when a different account signs in; on sign-out it is parked for its user
+  and restored when they sign in again (see [Offline data](#offline-data)).
 - **Streak**: finishing it counts towards the one daily streak, server side
   (`docs/API.md`, `GET /api/v1/me/stats`). The client shows the streak it is
   given.
