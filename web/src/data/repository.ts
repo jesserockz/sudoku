@@ -16,6 +16,7 @@ import { type EndlessInProgress, EndlessPuzzleCache, type EndlessSolved, type En
 import { type FlushReport, ResultSync, dailyKey, endlessKey, variantDayKey } from "./result-sync.ts";
 import { type VariantDaySolved, type VariantDaySource, VariantDayCache } from "./variant-day.ts";
 import type { SavedGame } from "../game/game.ts";
+import type { StoredValue } from "./store.ts";
 
 /** Sign-in failed; the message is fit to show. */
 export class SignInError extends Error {}
@@ -220,6 +221,7 @@ export class SudokuRepository implements EndlessSource, VariantDaySource {
     const me = await this.#client().me();
     if (previousUser && previousUser.id !== me.id) this.#storage.clearProgress();
     this.#storage.me.write(me);
+    this.#restoreParked(me.id);
     await this.refresh();
   }
 
@@ -251,7 +253,9 @@ export class SudokuRepository implements EndlessSource, VariantDaySource {
    */
   async refresh(): Promise<FlushReport<GameResult | EndlessResult | VariantDayResult>> {
     const api = this.#client();
-    this.#storage.me.write(await api.me());
+    const me = await api.me();
+    this.#storage.me.write(me);
+    this.#restoreParked(me.id);
     this.#storeWeek(await api.week());
     const report = await this.sync.flush();
     const variantDay = await this.variantDaySync.flush();
@@ -480,6 +484,37 @@ export class SudokuRepository implements EndlessSource, VariantDaySource {
     if (replay) result.replay = replay;
     await this.sync.enqueue(result);
     return result;
+  }
+
+  /**
+   * Gives back what sign-out set aside for this user. A game already live under the same key (it was started since)
+   * is kept unless the parked one has more time on it; queued results are merged, a live one winning over a parked
+   * one for the same puzzle, as the first queued result does.
+   */
+  #restoreParked(userId: string): void {
+    const parked = this.#storage.takeParkedProgress(userId);
+    if (!parked) return;
+    const s = this.#storage;
+    const games = (store: StoredValue<Record<string, SavedGame>>, back: Record<string, SavedGame>): void =>
+      store.update((live) => {
+        const merged = { ...(live ?? {}) };
+        for (const [key, game] of Object.entries(back)) {
+          const current = merged[key];
+          if (!current || game.elapsedMs > current.elapsedMs) merged[key] = game;
+        }
+        return merged;
+      });
+    const queue = <T>(store: StoredValue<T[]>, back: T[], key: (r: T) => string): void =>
+      store.update((live) => {
+        const have = new Set((live ?? []).map(key));
+        return [...back.filter((r) => !have.has(key(r))), ...(live ?? [])];
+      });
+    games(s.games, parked.games);
+    games(s.endlessGames, parked.endlessGames);
+    games(s.variantDayGames, parked.variantDayGames);
+    queue(s.pending, parked.pending, dailyKey);
+    queue(s.endlessPending, parked.endlessPending, endlessKey);
+    queue(s.variantDayPending, parked.variantDayPending, variantDayKey);
   }
 
   #storeWeek(week: Week): void {

@@ -123,6 +123,31 @@ function decodePendingAuth(json: unknown): PendingAuth {
   };
 }
 
+/**
+ * One account's unfinished business, set aside while it is signed out: the games in progress (timers included) and
+ * the results queued but not yet uploaded. See {@link AppStorage.parkProgress}.
+ */
+export interface ParkedProgress {
+  games: Record<string, SavedGame>;
+  endlessGames: Record<string, SavedGame>;
+  variantDayGames: Record<string, SavedGame>;
+  pending: GameResult[];
+  endlessPending: EndlessResult[];
+  variantDayPending: VariantDayResult[];
+}
+
+function decodeParkedProgress(json: unknown): ParkedProgress {
+  const o = obj(json);
+  return {
+    games: record(o.games, decodeSavedGame),
+    endlessGames: record(o.endlessGames, decodeSavedGame),
+    variantDayGames: record(o.variantDayGames, decodeSavedGame),
+    pending: list(o.pending, decodeGameResult),
+    endlessPending: list(o.endlessPending, decodeEndlessResult),
+    variantDayPending: list(o.variantDayPending, decodeVariantDayResult),
+  };
+}
+
 /** Everything server mode keeps between launches, as JSON documents in a {@link KeyValueStore}. */
 export class AppStorage {
   readonly settings: StoredValue<Settings>;
@@ -153,6 +178,11 @@ export class AppStorage {
   readonly variantDayPending: StoredValue<VariantDayResult[]>;
   /** The user's last known daily streak, so the home page shows it offline and after a reload. */
   readonly streak: StoredValue<Streak>;
+  /**
+   * Progress set aside at sign-out, by user id (`me.id`), so the same account gets it back on its next sign-in and
+   * no other account on a shared device ever sees it.
+   */
+  readonly parkedProgress: StoredValue<Record<string, ParkedProgress>>;
   /** The home page tab last shown on this device. */
   readonly homeTab: StoredValue<HomeTab>;
   /** Set once the endless explainer has popped up on this device, so it only does so once. */
@@ -184,6 +214,7 @@ export class AppStorage {
     this.variantDayResults = new StoredValue(store, "variant-day-results", (j) => record(j, decodeVariantDayResult));
     this.variantDayPending = new StoredValue(store, "variant-day-pending", (j) => list(j, decodeVariantDayResult));
     this.streak = new StoredValue(store, "streak", decodeStreak);
+    this.parkedProgress = new StoredValue(store, "parked-progress", (j) => record(j, decodeParkedProgress));
     this.homeTab = new StoredValue(store, "home-tab", decodeHomeTab);
     this.endlessHelpSeen = new StoredValue(store, "endless-help-seen", bool);
     this.generator = new StoredValue(store, "generator", decodeGeneratorVersion);
@@ -191,11 +222,46 @@ export class AppStorage {
     this.variantsHelpSeen = new StoredValue(store, "variants-help-seen", bool);
   }
 
-  /** Forgets everything tied to the signed-in user, keeping the server URL. */
+  /**
+   * Forgets everything tied to the signed-in user, keeping the server URL. The user's games and queued results are
+   * first set aside with {@link parkProgress}, so signing out doesn't lose a puzzle in progress or its timer.
+   */
   clearUserData(): void {
+    this.parkProgress();
     this.settings.update((s) => s && { ...s, devUser: null, oidc: null });
     this.tokens.write(null);
     this.clearProgress();
+  }
+
+  /**
+   * Sets the signed-in user's games and queued results aside under their id, replacing any older entry for that
+   * id. Nothing is parked, and no older entry touched, when the user isn't known (never synced) or has nothing
+   * to keep.
+   */
+  parkProgress(): void {
+    const me = this.me.read();
+    if (!me) return;
+    const parked: ParkedProgress = {
+      games: this.games.read() ?? {},
+      endlessGames: this.endlessGames.read() ?? {},
+      variantDayGames: this.variantDayGames.read() ?? {},
+      pending: this.pending.read() ?? [],
+      endlessPending: this.endlessPending.read() ?? [],
+      variantDayPending: this.variantDayPending.read() ?? [],
+    };
+    if (Object.values(parked).every((v) => Object.keys(v).length === 0)) return;
+    this.parkedProgress.update((all) => ({ ...all, [me.id]: parked }));
+  }
+
+  /** Removes and returns what {@link parkProgress} set aside for `userId`, or `null` when there is none. */
+  takeParkedProgress(userId: string): ParkedProgress | null {
+    const all = this.parkedProgress.read();
+    const parked = all?.[userId];
+    if (!all || !parked) return null;
+    const others = { ...all };
+    delete others[userId];
+    this.parkedProgress.write(Object.keys(others).length === 0 ? null : others);
+    return parked;
   }
 
   /** Forgets the user's games and results (e.g. when a different account signs in). */
