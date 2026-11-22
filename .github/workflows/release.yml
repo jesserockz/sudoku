@@ -42,7 +42,7 @@ jobs:
         uses: actions/checkout@v7.0.1
       - name: Resolve next version
         id: resolve
-        uses: release-drafter/release-drafter@v7.10.0
+        uses: release-drafter/release-drafter@v7.11.0
         with:
           dry-run: true
       - name: Set up Node
@@ -78,7 +78,7 @@ jobs:
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Update draft release
         id: drafter
-        uses: release-drafter/release-drafter@v7.10.0
+        uses: release-drafter/release-drafter@v7.11.0
         with:
           commitish: ${{ steps.bump.outputs.sha }}
       - name: Clear the draft's assets
@@ -106,7 +106,7 @@ jobs:
         with:
           ref: ${{ needs.draft.outputs.sha }}
       - name: Set up Go
-        uses: actions/setup-go@v7.0.0
+        uses: actions/setup-go@v7.1.0
         with:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
