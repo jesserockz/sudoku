@@ -169,6 +169,11 @@ heavier border so it is unmistakable next to the player's pale amber one.
 `web/e2e/maintenance.cjs <url> [screenshot dir]` (a dev-auth server with `ann` as
 admin and an empty database) drives all of it with two browser contexts.
 
+`web/e2e/update-progress.cjs <url>` (the same kind of server) mocks the update
+status to check that the Server admin progress cards (downloading, restarting
+for an update and for a rollback, and reopening the page mid-restart) show the
+progress and never ask the admin to keep the page open.
+
 ### Results and replays
 
 **Results and replays** at the top of the Server admin page lists a day's

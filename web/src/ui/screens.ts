@@ -893,7 +893,7 @@ export class AdminScreen extends Screen {
         return h("div", { class: "card" },
           h("p", null, `Restarting the server${p.target ? ` on ${p.target}` : ""}…`),
           h("progress", { max: 1 }),
-          h("p", { class: "muted small" }, "This can take a minute. Don't close this page."),
+          h("p", { class: "muted small" }, "This can take a minute."),
         );
       case "done": return h("div", { class: "card" }, h("p", null, p.message));
       case "failed": return h("div", { class: "notice" }, p.message);
