@@ -4,12 +4,13 @@
 //   node web/e2e/update-progress.cjs [http://localhost:8080]
 //
 // The update status is mocked with page.route (the real server never updates itself here). While downloading, the
-// card shows the message, the bytes and that the page can be closed. While restarting, for an update and for a
-// rollback, it says the same, and reopening the page mid-restart shows the card again. Nothing says "Don't close".
+// card shows the message and the bytes. While restarting, for an update and for a rollback, it says only that this
+// can take a minute, and reopening the page mid-restart shows the card again. Nothing tells the admin to keep the
+// page open: the server does the work itself.
 const { chromium } = require("playwright");
 
 const base = process.argv[2] || "http://localhost:8080";
-const HINT = "You can close this page: the server carries on by itself.";
+const WAIT = "This can take a minute.";
 
 function check(condition, message) {
   if (!condition) throw new Error("FAILED: " + message);
@@ -55,25 +56,24 @@ function check(condition, message) {
   await openAdmin();
   await page.getByText("Downloading v99.0.0", { exact: true }).waitFor();
   check(await page.getByText("1.0 MB of 4.0 MB").count() === 1, "the running card shows the bytes");
-  check(await page.getByText(HINT, { exact: true }).count() === 1, "the running card says the page can be closed");
-  check(!(await page_text()).includes("Don't close"), "the running card never says 'Don't close'");
+  check(!/close/i.test(await page_text()), "the running card says nothing about closing the page");
 
   mocked = status("restarting");
   await openAdmin();
   await page.getByText("Restarting the server on 99.0.0").waitFor();
-  check(await page.getByText("This can take a minute. " + HINT, { exact: true }).count() === 1, "the restarting card for an update says the page can be closed");
-  check(!(await page_text()).includes("Don't close"), "the restarting card never says 'Don't close'");
+  check(await page.getByText(WAIT, { exact: true }).count() === 1, "the restarting card for an update says it can take a minute");
+  check(!/close/i.test(await page_text()), "the restarting card says nothing about closing the page");
 
   mocked = status("restarting", { action: "rollback" });
   await openAdmin();
   await page.getByText("Restarting the server on 99.0.0").waitFor();
-  check(await page.getByText("This can take a minute. " + HINT, { exact: true }).count() === 1, "the restarting card for a rollback says the page can be closed");
+  check(await page.getByText(WAIT, { exact: true }).count() === 1, "the restarting card for a rollback says the same");
 
   // Reopening: leave the page and come back while the server still says it is restarting.
   await page.goto("about:blank");
   await openAdmin();
   await page.getByText("Restarting the server on 99.0.0").waitFor();
-  check(await page.getByText("This can take a minute. " + HINT, { exact: true }).count() === 1, "reopening the page mid-restart shows the card again");
+  check(await page.getByText(WAIT, { exact: true }).count() === 1, "reopening the page mid-restart shows the card again");
 
   await browser.close();
   console.log("all ok");

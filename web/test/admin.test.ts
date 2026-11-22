@@ -3,7 +3,7 @@ import { beforeEach, test } from "node:test";
 import { ApiException } from "../src/api/client.ts";
 import type { GeneratorSettings, MaintenanceSettings, Release, ReleaseList, UpdateStatus } from "../src/api/models.ts";
 import {
-  AdminModel, CLOSE_HINT, POLL_MS, RESTART_TIMEOUT_MS, actionLabel, describeError, flavourOf, formatBytes, progressFraction,
+  AdminModel, POLL_MS, RESTART_TIMEOUT_MS, actionLabel, describeError, flavourOf, formatBytes, progressFraction,
   type AdminApi, type AdminHost,
 } from "../src/ui/admin.ts";
 
@@ -672,9 +672,4 @@ test("a second maintenance request is ignored while one is running", async () =>
   release();
   await first;
   assert.deepEqual(api.maintenanceCalls, ["set:true:null"]);
-});
-
-test("the close hint says the page can be closed and never asks to keep it open", () => {
-  assert.match(CLOSE_HINT, /You can close this page/);
-  assert.doesNotMatch(CLOSE_HINT, /Don't close/);
 });

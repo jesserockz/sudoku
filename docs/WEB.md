@@ -90,11 +90,9 @@ server is `restarting` (or stops answering, as it restarts) the page polls
 `GET /api/v1/config` until `version` matches the target, giving up after two
 minutes, and then reports "Updated to X" or what went wrong. A failure
 reported by the server shows its error. If the page is opened while an update
-is under way it picks it up. Both progress cards tell the admin the page can
-be closed, because the server does the work itself. When the server has a
-previous binary, "Roll back to previous binary" does the same after a
-confirmation. Errors show the server's message; a 403 reads "Your account isn't
-an admin".
+is under way it picks it up. When the server has a previous binary, "Roll back
+to previous binary" does the same after a confirmation. Errors show the
+server's message; a 403 reads "Your account isn't an admin".
 
 **Puzzle generators.** The page also has a Puzzle generators card (admins
 only): which generators players can play ("On: Classic and Graded") and three
@@ -173,8 +171,8 @@ admin and an empty database) drives all of it with two browser contexts.
 
 `web/e2e/update-progress.cjs <url>` (the same kind of server) mocks the update
 status to check that the Server admin progress cards (downloading, restarting
-for an update and for a rollback, and reopening the page mid-restart) say the
-page can be closed.
+for an update and for a rollback, and reopening the page mid-restart) show the
+progress and never ask the admin to keep the page open.
 
 ### Results and replays
 
